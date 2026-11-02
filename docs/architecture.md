@@ -4,24 +4,23 @@
 
 ```text
 ┌ entry points ─────────────────────────────────────────────────┐
-│ arbor CLI (people, scripts, the model through bash)            │
-│ direct tools (the model)  ·  host API (consoles, adapters)     │
-├ command layer ─────────── the one implementation ─────────────┤
-│ branch · context · note · history · links · message · task     │
-├ core ─────────────────────────────────────────────────────────┤
-│ event DAG · branches and contexts · trunk · budget · effects   │
+│ direct tools (the model) · code mode modules (the model)       │
+│ host API (operators, consoles, adapters)                       │
+├ service layer ─────────── the one implementation ─────────────┤
+│ journal · windows · dispatch · board · notes · workspaces      │
+│ effects · schedules                                            │
 ├ interfaces ───────────────── every one replaceable ───────────┤
-│ AgentBackend · Storage · NoteStore · EventStore · Scheduler    │
-│ Scorer · TaskSource · EffectExecutor · ToolGroup · Judge       │
+│ AgentBackend · Journal · NoteStore · Workspace · Judge         │
+│ Channel · TaskSource · EffectExecutor · ToolGroup · Scheduler  │
 ├ defaults ─────────────────────────────────────────────────────┤
-│ pi · LayerFS · SQLite events · simple scheduler · bash tools   │
+│ pi · SQLite · LayerFS · Jev · simple scheduler                 │
 └───────────────────────────────────────────────────────────────┘
 ```
 
-**One command layer.** Every operation is implemented once. A direct tool is a
-thin wrapper of one command: same arguments, same behaviour, same errors. The
-CLI and the host API call the same layer. There is no second code path that a
-tool or a script could take around it.
+**One service layer.** Every operation is implemented once. A direct tool and
+a code mode function are thin wrappers of one service call: same arguments,
+same behaviour, same errors. The host API calls the same layer. There is no
+CLI and no second path around the layer.
 
 ## Interfaces
 
@@ -30,16 +29,16 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one context: send the prompt and tools to a model, stream tool calls, accept inputs inserted between tool calls, report token usage | [pi](https://github.com/badlogic/pi-mono) (pi-agent-core) |
-| `Storage` | branch files: fork, read, write, commit, merge, publish, diff, mount a workspace for a command | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
-| `EventStore` | the event DAG: append, read, search, walk by parent | SQLite beside the LayerFS Store |
-| `NoteStore` | notes: revisions, summaries, anchors, the active set | files in a fixed directory of the project, on `Storage` |
-| `Scheduler` | choose a branch for a task, or open one | activity, context share, cache warmth ([scheduling.md](scheduling.md)) |
-| `Scorer` | one score of a task against a branch profile, for the scheduler | none beyond the default's own terms |
-| `TaskSource` | turn outside events into tasks with ownership keys | the CLI (`arbor task add`) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted between tool calls, report token usage | [pi](https://github.com/badlogic/pi-mono) (pi-agent-core, with its code mode) |
+| `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
+| `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
+| `Workspace` | files: fork from `main`, read, write, commit, merge into `main`, diff, mount for a command | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
+| `Judge` | answer the host's decisions: filter, route, notice, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
+| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; adapters provide them |
+| `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; adapters provide them |
-| `ToolGroup` | a set of model tools and their CLI commands | context and notes, history, branch, workspace ([cli.md](cli.md)) |
-| `Judge` | optional model-based answers the host asks (relevance, active-note choice) | none |
+| `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
+| `Scheduler` | insertion timing, backpressure, scheduled tasks | simple rules ([dispatch.md](dispatch.md)) |
 
 Rules for every interface:
 
@@ -48,20 +47,31 @@ Rules for every interface:
 - **Errors name the next action.** An implementation returns errors in the
   core's error shape, so the model always reads the same kind of refusal.
 - **Adapters add, they do not patch.** A domain (a chat bot, a coding agent)
-  is an adapter: task sources, effect executors, tool groups and judges. It
+  is an adapter: channels, task sources, effect executors and tool groups. It
   does not change the core.
 
 ## Data placement
 
 | Data | Where |
 | --- | --- |
-| files of a branch | LayerFS branch |
-| trunk files | LayerFS `main` |
-| notes | LayerFS, under the project's note directory, written only through `NoteStore` |
-| events | `EventStore`; an event that changed files records the LayerFS commit id |
+| events, watermarks, links | `Journal` |
+| notes | `NoteStore` |
+| files | `Workspace`: LayerFS `main` and one branch per active workspace |
+| an event that changed files | the journal, with the LayerFS commit id |
 | effect queue, schedules, settings | host database |
 
-Multiple projects share one host. Each project is one LayerFS project with its
-own Store, its own trunk and its own events. LayerFS requires every process
-that opens a Store to share one Linux kernel and one local filesystem, so one
-project's branches run on one machine.
+Multiple projects share one host. Each project has its own journal, notes
+and LayerFS project.
+
+## Room for many machines
+
+For now one host runs on one machine. LayerFS requires every process that
+opens a Store to share one Linux kernel and one local filesystem, so one
+project's workspaces stay on one machine. To leave room for more:
+
+- Tools and adapters reach the host only through the host API, never through
+  local files or the database.
+- Ids and refs do not depend on a machine.
+- `Journal` and `NoteStore` are interfaces, not tied to SQLite.
+
+The first step out is placing different projects on different machines.
