@@ -11,11 +11,11 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 | `id` | the event's ref, `r902` |
 | `window` | the window that wrote it, `c41`; empty for an outside event not yet dispatched |
 | `time` | when it was written |
-| `kind` | input, tool call, tool result, send, note revision, window start or end, publish, ... |
+| `kind` | input, tool call, tool result, send, note revision, window start or end, ... |
 | `targets` | what it touches (below) |
 | `refs` | the refs it names: what it answers, cites, continues or quotes |
 | `external` | the native id of an outside message, with a short channel prefix |
-| `commit` | the LayerFS commit, for an event that changed files |
+| `snapshot` | the workspace snapshot, for an event that changed files |
 
 ## Targets
 
@@ -65,7 +65,7 @@ One reference format points at anything, in every tool argument and result:
 | `n012@3` | note `n012`, revision 3 (`n012` alone means the latest) |
 | `t9` | a task |
 | `m55` | a message between windows |
-| `ws3` | a workspace |
+| `ws3`, `ws3@r902` | a workspace, or its snapshot at an event |
 | `qq:12345` | an outside message, by its native id |
 
 A ref may carry a project prefix, `shop/r42`; inside the current project it
@@ -74,7 +74,7 @@ is left out.
 ## Links and tracing
 
 The host records links between refs - cite, evidence, range, origin,
-revision, handoff, continuation, notice, reply, publish - and never asks the
+revision, handoff, continuation, notice, reply - and never asks the
 model to declare one. Every read appends one line of related items by weight,
 with the exact call that pages the rest.
 

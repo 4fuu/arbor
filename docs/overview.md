@@ -12,9 +12,9 @@
 4. **No sessions to manage.** Nobody - neither a person nor the model -
    manages a session or a context. Windows are disposable; the model looks up
    what it needs.
-5. **Low load on the model.** The model decides what to do. Dispatch,
-   insertion timing, prefix caching, file merges and bookkeeping stay with the
-   host; hard operations reach the model as tasks with instructions.
+5. **Full use of the agent.** The framework provides mechanisms; the agent
+   does the work, including git, merges and conflicts, the way a capable
+   developer would.
 6. **Replaceable modules.** Every part sits behind an interface
    ([architecture.md](architecture.md)).
 
@@ -27,10 +27,10 @@
 | **Event** | One immutable record: an input, a tool call, a result, a send, a note revision. |
 | **Target** | What an event touches: a conversation, a file path, a note, an issue. |
 | **Window** | One context window: a model run over a prompt. Disposable; owns nothing ([windows.md](windows.md)). |
-| **Task** | A unit of input to dispatch: a batch of outside events, a scheduled firing, or a system task ([dispatch.md](dispatch.md)). |
+| **Task** | A unit of input to dispatch: a batch of outside events or a scheduled firing ([dispatch.md](dispatch.md)). |
 | **Board** | The host's live view of which windows are running and what they touch ([coordination.md](coordination.md)). |
 | **Note** | Shared, versioned long-term memory; one copy per project ([memory.md](memory.md)). |
-| **Workspace** | A LayerFS branch a window writes files in ([workspaces.md](workspaces.md)). |
+| **Workspace** | A window's own directory, with forks and snapshots ([workspaces.md](workspaces.md)). |
 | **Effect** | An action on the outside world, such as a send. |
 | **Judge** | The module that answers the host's decisions - dispatch, notices, the active set. Jev by default. |
 | **Host** | The process that runs windows, dispatches tasks and owns the rules. |
@@ -44,16 +44,20 @@
    cacheable prefix, works, and ends. What it did stays in the journal; the
    next window reads it on demand.
 3. **Share by reference.** Whatever crosses windows - a notice, a handoff, a
-   publish message - is short text that carries refs, and every ref resolves
+   board line - is short text that carries refs, and every ref resolves
    to the full events behind it.
 4. **Check only where it shows.** Windows run in parallel without locks.
    Inconsistency only does harm when it leaves the system - a send, a note
-   write, a file publish - so those are checked against what the window has
-   seen.
-5. **The host does the hard operations.** Merging files, choosing notes,
-   dispatching and rotating are the host's. When one needs a model - a file
-   conflict - the host makes it a task with instructions. A note conflict is
-   resolved by the model writing the note, when it writes.
+   write - so those are checked against what the window has seen.
+5. **Mechanisms in the framework, policy in the agent.** The framework
+   guarantees only what an agent cannot guarantee for itself: the record
+   never loses anything, windows are isolated, effects run once and in order,
+   visible moments are checked, inputs are dispatched, prompts stay
+   cacheable, secrets stay safe. Everything that takes judgment or is a
+   workflow - cloning, committing, pushing, resolving file and note
+   conflicts, cleaning up - is the agent's. The framework surfaces a conflict
+   with what the agent needs to resolve it, and leaves no maintenance task
+   behind.
 
 ## Routes considered
 
@@ -85,5 +89,5 @@ sources:
 | errors name the next action; guard rules live in the refusal | unchanged |
 
 What is new: many windows at once, dispatch by a judge, the board and
-notices between windows, consistency checks at sends and writes, and files on
-LayerFS.
+notices between windows, consistency checks at sends and writes, and a
+directory per window on LayerFS.

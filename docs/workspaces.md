@@ -1,44 +1,51 @@
 # Workspaces
 
-Files are the only thing that is isolated per window, because a file change
-in progress must not break another window's work. Everything else is in the
-shared journal and notes.
+A workspace is a directory a window works in. It is a plain directory, not
+bound to any repository: the framework gives isolation, continuity and
+snapshots, and the agent does the rest.
+
+## What the framework guarantees
+
+1. **Isolation.** Every window gets its own directory. `read`, `write`,
+   `edit` and `bash` work in it, and nothing one window does there reaches
+   another window's directory.
+2. **Continuity.** A continuation window forks the previous window's
+   directory, so cloned repositories, installed dependencies and work in
+   progress carry over and long work spans windows. A fork copies no files.
+3. **Snapshots.** Every write and every `bash` call ends with a snapshot of
+   the directory, and the event records its id. A snapshot is the directory's
+   state at that event and can be read later.
+4. **Read-only views.** Any window can mount another workspace's latest
+   snapshot, or any snapshot by its event, read-only by its ref (`ws3`,
+   `ws3@r902`), to look at work that is not pushed anywhere.
+5. **Means.** Credentials the deployment configures (git, package
+   registries), network access within the egress rules, background jobs for
+   long commands, and a disk quota per workspace.
+
+The default `Workspace` is [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs),
+used only for cheap forks, snapshots and mounts.
+
+## What the agent does
+
+Everything that is a judgment or a workflow: cloning, branching, committing,
+pushing, opening pull requests, resolving merge conflicts, running tests,
+tidying its own directory. Changes reach others through the repository's own
+flow - push, review, CI - not through the framework. The framework neither
+merges files nor makes tasks for the agent to do so.
+
+Two windows may change the same repository at once; the conflict shows when
+the second one pulls or merges, and that window resolves it with git. The
+board shows who is working where, and the judge takes it into account when
+dispatching ([coordination.md](coordination.md#the-board)).
 
 ## Lifecycle
 
-1. **Fork.** A window's first file write forks a workspace from LayerFS
-   `main`. A fork copies no files. A window that only reads files reads `main`.
-2. **Work.** `read`, `write` and `edit` go to the workspace; every write is
-   one commit. `bash` mounts the workspace, runs the command, commits what it
-   changed and unmounts.
-3. **Continue.** A continuation window keeps the workspace, so long work spans
-   windows.
-4. **Publish.** `publish(message)` asks the host to merge the workspace into
-   `main`; a window that ends with unpublished changes publishes them. A
-   workspace can publish any number of times and keep working.
+- A window's directory is created on first use; a window that never touches
+  files has none.
+- When the last window of a continuation chain ends, the directory keeps its
+  snapshots, read-only. Whether work was pushed before the end is the agent's
+  responsibility; nothing in the directory is lost either way.
+- After a retention period the host reclaims the snapshots by itself. This is
+  a setting, not a task for a model.
 
-Any window can read another workspace's unpublished files, for reference.
-
-## Merging
-
-The host merges, never the model. A publish first takes `main`'s new changes
-into the workspace, then merges into `main`. Files changed on one side only,
-files with equal bytes and compatible text edits merge by themselves; paths
-configured last-writer-wins (LayerFS `.lww`) never conflict.
-
-## Conflicts
-
-When LayerFS refuses a file as a conflict, the host:
-
-1. writes that file into the workspace with conflict markers built from the
-   common base and the two sides;
-2. makes a system task with instructions - which files, which publishes
-   collided, with refs - and dispatches it to the window that published if it
-   is still live, otherwise to a new window with its ref
-   ([dispatch.md](dispatch.md#system-tasks));
-3. publishes again once the model has edited the files and called `publish`.
-
-## Cleanup
-
-A workspace that has been unpublished and unused for a set time becomes a
-system task to publish or discard it.
+A project that never works with files needs no workspace and no LayerFS.

@@ -68,7 +68,6 @@ the ref leads to the full event.
 | --- | --- | --- |
 | a send to a conversation | no event on that conversation is newer than the window's watermark | refused with the newer events' refs; read them, then send again |
 | a note write | the revision is the one the window read | refused with the changes since then; the writing model merges them and writes again ([memory.md](memory.md#conflicts)) |
-| a file publish | LayerFS three-way merge into `main` | the host makes a conflict task ([workspaces.md](workspaces.md#conflicts)) |
 
 Reading the refs a refusal names moves the window's watermark, so the next
 attempt passes unless something newer arrived meanwhile. Everything else runs

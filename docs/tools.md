@@ -13,9 +13,8 @@ service layer ([architecture.md](architecture.md#layers)).
 | `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue |
 | `note_write`, `note_replace`, `note_delete` | write memory ([memory.md](memory.md)) |
 | `end(handoff?)` | end the run; with a handoff, continue in a new window ([windows.md](windows.md#ending-and-continuing)) |
-| `publish(message)` | merge the workspace into `main` ([workspaces.md](workspaces.md)) |
 | `search(query, scope?)` | the journal, notes and the board in one query |
-| `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the workspace |
+| `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
 
 Adapters add their own tools (a chat bot's send variants). A deployment may
@@ -33,15 +32,15 @@ how often the logs show it used.
 | `channels` | `list`, `get(ref)` |
 | `tasks` | `list`, `show(t…)` |
 | `schedule` | `list`, `create`, `update`, `cancel` |
-| `workspace` | `status`, `diff(ws?, paths?)`, `grep`, `find`, `ls` |
+| `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
 A module whose backing feature is not configured is absent. Adapters and MCP
 servers add modules of their own.
 
 ## Rules
 
-- **Decisions stay direct.** Anything that speaks, ends a window, writes
-  memory or publishes is a direct call. A script that names one is refused
+- **Decisions stay direct.** Anything that speaks, ends a window or writes
+  memory is a direct call. A script that names one is refused
   with the rule and never reaches the host.
 - **A plain command is a direct call, a chain is a script.**
 - **One behaviour per tool.** A command that outlives `bash`'s wait window is

@@ -32,7 +32,7 @@ interface and registering it; nothing else changes.
 | `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted between tool calls, report token usage | [pi](https://github.com/badlogic/pi-mono) (pi-agent-core, with its code mode) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
-| `Workspace` | files: fork from `main`, read, write, commit, merge into `main`, diff, mount for a command | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
+| `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
 | `Judge` | answer the host's decisions: filter, route, notice, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; adapters provide them |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
@@ -56,8 +56,8 @@ Rules for every interface:
 | --- | --- |
 | events, watermarks, links | `Journal` |
 | notes | `NoteStore` |
-| files | `Workspace`: LayerFS `main` and one branch per active workspace |
-| an event that changed files | the journal, with the LayerFS commit id |
+| files | `Workspace`: one directory per window, with its snapshots |
+| an event that changed files | the journal, with the snapshot id |
 | effect queue, schedules, settings | host database |
 
 Multiple projects share one host. Each project has its own journal, notes

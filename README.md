@@ -14,12 +14,16 @@ and every window can find everything that was ever done.
   live window takes a new input, or opens a new one. There is no router
   session and no main line.
 - **Consistency at the moments that are visible.** Windows run without locks.
-  A send, a note write and a file publish are checked against what the window
-  has seen, and refused with the newer events named when it is behind.
-- **Files on LayerFS.** Only file changes are isolated: a window that writes
-  files gets a [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) branch,
-  the host merges it into `main`, and a real conflict becomes a task for a
-  model.
+  A send and a note write are checked against what the window has seen, and
+  refused with the newer events named when it is behind.
+- **Mechanisms in the framework, policy in the agent.** The framework
+  guarantees what an agent cannot guarantee for itself - the record, isolation,
+  exactly-once effects, the checks, dispatch. Everything that takes judgment,
+  such as git, merges and conflicts, is the agent's.
+- **A directory per window.** Each window gets its own directory on
+  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs), with forks for
+  continuations and snapshots for every change. It is not bound to a
+  repository; the agent clones and pushes what it needs.
 - **Direct tools plus code mode.** Decisions are direct tools; everything else
   is a module called from `code_exec`. There is no CLI.
 - **Every module is replaceable.** The agent backend (pi by default), the
@@ -39,8 +43,8 @@ Status: design. No code yet.
 | [docs/architecture.md](docs/architecture.md) | layers, interfaces, data placement, room for many machines |
 | [docs/journal.md](docs/journal.md) | events, targets, watermarks, external ids, channels, refs, tracing |
 | [docs/windows.md](docs/windows.md) | window lifecycle, prompt layout, reminders, continuation |
-| [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled and system tasks |
+| [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled tasks |
 | [docs/coordination.md](docs/coordination.md) | the board, notices, window messages, consistency checks, effects |
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
-| [docs/workspaces.md](docs/workspaces.md) | files on LayerFS, publishing, conflicts |
+| [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |

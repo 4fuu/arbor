@@ -12,9 +12,10 @@ A task is one unit of input:
 - a **batch** of outside events from a `TaskSource`. Batching is the source's
   business; a chat source debounces per conversation, so several messages
   sent in a row become one task;
-- a **scheduled** firing ([below](#scheduled-tasks));
-- a **system** task the host makes for a hard operation
-  ([below](#system-tasks)).
+- a **scheduled** firing ([below](#scheduled-tasks)).
+
+The host makes no tasks of its own for maintenance; work that needs judgment
+is the agent's ([overview.md](overview.md#principles)).
 
 A task carries its targets, a reason, a time and its content, rendered as an
 input block.
@@ -85,13 +86,3 @@ and age.
 A scheduled task is a task source driven by time: a first time, a repeat rule,
 optional daily skip periods, optional targets. Spreading colliding repeating
 tasks apart and their jitter are settings, off by default.
-
-## System tasks
-
-When a hard operation needs a model, the host makes it a task with
-instructions and dispatches it like any other:
-
-| Task | Made when | Goes to |
-| --- | --- | --- |
-| resolve a file conflict | a publish conflicts ([workspaces.md](workspaces.md#conflicts)) | the window that published, if live; otherwise a new window with its ref |
-| clean up a workspace | a workspace has been unpublished and unused for a set time | a new window with its ref |
