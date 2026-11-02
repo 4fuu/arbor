@@ -28,7 +28,7 @@ how often the logs show it used.
 | --- | --- |
 | `journal` | `search`, `show(ref)`, `around(ref, before?, after?)`, `trace(ref)`, `links(ref, offset?)` |
 | `windows` | `list`, `show(c…)`, `send(to, text, reply_to?)`, `yield(to, note?)`, `inbox` |
-| `board` | `list`, `set(line)` |
+| `board` | `list`, `set(line)`, `expect(item? \| description?)`, `unexpect(ref)` |
 | `notes` | `search(query?, status?, about?, visibility?, linked?)`, `read(ref)`, `context(ref)`, `active` |
 | `channels` | `list`, `get(ref)` |
 | `tasks` | `list`, `show(t…)` |

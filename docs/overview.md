@@ -52,7 +52,8 @@
    seen.
 5. **The host does the hard operations.** Merging files, choosing notes,
    dispatching and rotating are the host's. When one needs a model - a file
-   conflict, tidying notes - the host makes it a task with instructions.
+   conflict - the host makes it a task with instructions. A note conflict is
+   resolved by the model writing the note, when it writes.
 
 ## Routes considered
 

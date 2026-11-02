@@ -24,10 +24,11 @@ input block.
 1. **Filter.** The judge decides whether the batch needs handling at all.
    Explicit requests always pass.
 2. **Hard rule.** A batch that replies to or quotes something a live window
-   produced goes to that window.
+   produced, or matches a window's exact expectation
+   ([coordination.md](coordination.md#expectations)), goes to that window.
 3. **Judge.** Candidates are the live windows that share a target with the
-   task or worked recently, at most 8. The judge scores each, against one more
-   option: a new window.
+   task, describe an expectation, or worked recently, at most 8. The judge
+   scores each, against one more option: a new window.
 4. **Act.** The best candidate above the threshold takes the task as an
    inserted input; otherwise a new window opens, and its first input lists the
    live windows related to the task.
@@ -54,8 +55,8 @@ default judge is Jev; every decision is on by default, and each can be set to
 - Every request is scrubbed of secrets on the way out, and every decision is
   logged with its scores and the state the judge saw.
 - A window's profile for the judge is assembled by the host, with no extra
-  model call: its tasks, the targets it touched, its board line, its last
-  inputs.
+  model call: its tasks, the targets it touched, its board line with its
+  expectations, its last inputs.
 
 ## Insertion timing
 
@@ -93,5 +94,4 @@ instructions and dispatches it like any other:
 | Task | Made when | Goes to |
 | --- | --- | --- |
 | resolve a file conflict | a publish conflicts ([workspaces.md](workspaces.md#conflicts)) | the window that published, if live; otherwise a new window with its ref |
-| tidy notes | duplicate or stale notes pass a threshold | a new window |
 | clean up a workspace | a workspace has been unpublished and unused for a set time | a new window with its ref |

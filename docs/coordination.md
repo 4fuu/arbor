@@ -13,10 +13,32 @@ The host keeps one line per live window, from the journal:
 | window | its ref, `c41` |
 | doing | its first task's title, until the model sets a line with `board.set` |
 | targets | the targets it has touched |
+| expects | what it expects to be routed to it, set by the model with `board.expect` ([below](#expectations)) |
 | state | running or idle, and its usage |
 
 A new window's first input carries the board lines related to its task.
 `board.list` shows the rest.
+
+## Expectations
+
+A window can say what it expects to arrive, so the input reaches it instead
+of a new window:
+
+- **Exact:** a specific outside item or thread - the CI result of
+  `gh:pr:57`, a reply from one person in `qq:group:123`, an issue. A matching
+  input goes to this window by the hard rule
+  ([dispatch.md](dispatch.md#routing)).
+- **Described:** one sentence, such as "the user will send a screenshot of the
+  checkout error". It is not a rule: it joins the window's profile for the
+  judge, and the window is always a candidate.
+
+Rules:
+
+- A whole conversation cannot be expected, because that would make it one
+  window's again; an exact expectation names a person or a thread in it. The
+  refusal says so and names what to expect instead.
+- Expectations end with the window; a continuation inherits them.
+- When several windows expect the same item, the judge chooses among them.
 
 ## Notices
 
@@ -45,7 +67,7 @@ the ref leads to the full event.
 | Moment | Check | When it fails |
 | --- | --- | --- |
 | a send to a conversation | no event on that conversation is newer than the window's watermark | refused with the newer events' refs; read them, then send again |
-| a note write | the revision is the one the window read | refused with the current revision; read it, then write again |
+| a note write | the revision is the one the window read | refused with the changes since then; the writing model merges them and writes again ([memory.md](memory.md#conflicts)) |
 | a file publish | LayerFS three-way merge into `main` | the host makes a conflict task ([workspaces.md](workspaces.md#conflicts)) |
 
 Reading the refs a refusal names moves the window's watermark, so the next

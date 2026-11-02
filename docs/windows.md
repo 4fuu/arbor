@@ -67,7 +67,8 @@ lower ones it jumped over are recorded as sent with it.
 - Ending with unfinished work below 60 % of the window is refused, with the
   usage named.
 - A continuation keeps the previous window's workspace
-  ([workspaces.md](workspaces.md)) and its watermarks.
+  ([workspaces.md](workspaces.md)), its watermarks and its expectations
+  ([coordination.md](coordination.md#expectations)).
 
 ## Hard limit
 

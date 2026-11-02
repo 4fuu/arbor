@@ -8,13 +8,26 @@ window, written only through the note tools.
 - **Fields:** id, title, a summary of at most 200 characters, body,
   visibility, revision, anchor. Lists show summaries; `notes.read` returns the
   body, paged.
-- **One copy, checked writes.** A write names the revision it read; a write
-  over a newer revision is refused with that revision
-  ([coordination.md](coordination.md#consistency-checks)).
+- **One copy, checked writes.** A write names the revision it read
+  ([conflicts](#conflicts)).
 - **Revisions are append-only.** An anchor keeps working after the note is
   edited, archived or deleted.
 - **Quotas:** a cap on new notes per window, and a token budget on the active
   set that refuses growth and never tidying.
+
+## Conflicts
+
+A note conflict is resolved by the model that is writing, at the moment it
+writes. Nothing is left for later and there is no tidying task.
+
+- A write, replace or delete names the revision it read. When the note has a
+  newer revision, the call is refused, and the refusal carries what changed
+  since the revision it read: the revisions in between, their windows and
+  the differences.
+- The model merges those changes with its own and writes again against the
+  current revision. If the two contradict each other, it decides which holds,
+  reading the refs the revisions carry when it needs the evidence.
+- A refused call changes nothing.
 
 ## The active set
 
