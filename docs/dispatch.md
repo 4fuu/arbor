@@ -63,7 +63,11 @@ default judge is Jev; every decision is on by default, and each can be set to
 ## Insertion timing
 
 A running window receives inserted tasks and deliveries
-([coordination.md](coordination.md#deliveries)) at a tool-call boundary:
+([coordination.md](coordination.md#deliveries)) at a tool-call boundary: once
+every tool call of the current turn has finished, before the next model
+request. The host inserts through the backend's own steering (pi's
+`agent.steer`); the rules below only decide when it calls it. An input meant
+for after the run goes in as a follow-up (`agent.followUp`).
 
 - **Protection period** (default 60 s, configurable, 0 inserts at once): when
   a window starts on a target, only inputs for that target enter during the

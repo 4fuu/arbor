@@ -82,5 +82,7 @@ sent again.
 
 ## Restart
 
-A host restart ends every running window the way the hard limit does and
-opens their continuations from the journal.
+The default backend keeps a run in memory and the journal is the only
+persistent record. A host restart therefore ends every running window the way
+the hard limit does and opens their continuations from the journal; effects
+already made are not made again.
