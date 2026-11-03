@@ -50,6 +50,7 @@ default judge is Jev; every decision is on by default, and each can be set to
 | --- | --- | --- | --- |
 | filter | does this batch need handling | explicit requests always pass | pass |
 | route | how well does each candidate window fit this task | the hard rule first; at most 8 candidates | a new window |
+| model tier | which tier of model does a new window need ([below](#model-tiers)) | only configured tiers | the default tier |
 | notice | does this window need to know about this new event ([coordination.md](coordination.md#notices)) | only windows that touched the event's target | no notice |
 | broadcast | does this window need this broadcast ([coordination.md](coordination.md#broadcasts)) | environment deltas are never filtered | deliver |
 | active set | is this note still needed ([memory.md](memory.md#the-active-set)) | a bounded share of the score | the rule score alone |
@@ -74,7 +75,7 @@ for after the run goes in as a follow-up (`agent.followUp`).
 - **Protection period** (default 60 s, configurable, 0 inserts at once): when
   a window starts on a target, only inputs for that target enter during the
   period. Inputs for the same target do not restart it. Environment deltas
-  are not held back.
+  and conversation updates are not held back.
 - **After the period:** an input for the current target that is still being
   batched goes in first; then the others, by priority and age.
 - **No insertion after the final usage reminder.** Waiting inputs are
@@ -88,6 +89,13 @@ The model sees only input blocks; it never manages timing.
 There is no cap on windows. How many run at once is bounded by the backend:
 when it reports rate limits, new windows wait in a queue ordered by priority
 and age.
+
+## Model tiers
+
+When a new window opens, the judge picks a tier for it - for example light
+for chat, strong for code - and settings map each tier to a model from the
+backend's catalog ([architecture.md](architecture.md#models)). A
+continuation keeps its window's tier.
 
 ## Scheduled tasks
 

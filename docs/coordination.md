@@ -2,7 +2,8 @@
 
 Windows run in parallel without locks. They work together through the
 board and through deliveries - window messages, notices and broadcasts - and
-stay consistent through checks at the moments their work becomes visible.
+stay current because new events on their conversations are steered into
+them.
 
 ## The board
 
@@ -24,7 +25,8 @@ A new window's first input carries the board lines related to its task.
 A window can say what it expects to arrive, so the input reaches it instead
 of a new window:
 
-- **Exact:** a specific outside item or thread - the CI result of
+- **Exact:** a specific outside item, thread or whole conversation - the CI
+  result of
   `gh:pr:57`, a reply from one person in `qq:group:123`, an issue. A matching
   input goes to this window by the hard rule
   ([dispatch.md](dispatch.md#routing)).
@@ -34,20 +36,18 @@ of a new window:
 
 Rules:
 
-- A whole conversation cannot be expected, because that would make it one
-  window's again; an exact expectation names a person or a thread in it. The
-  refusal says so and names what to expect instead.
 - Expectations end with the window; a continuation inherits them.
 - When several windows expect the same item, the judge chooses among them.
 
 ## Deliveries
 
 Every delivery is an input block that enters a window at a tool-call
-boundary. The three kinds differ only in who receives them:
+boundary. The kinds differ only in who receives them:
 
 | Kind | Receivers | Filtered by |
 | --- | --- | --- |
 | window message | one live window | nobody |
+| conversation update | live windows that touched the conversation ([below](#staying-current)) | nobody |
 | notice | live windows that touched the event's target | the judge |
 | broadcast | every live window | the judge, except for environment deltas |
 
@@ -74,7 +74,6 @@ the ref leads to the full event.
   needs no reply, and when one is really needed it goes to the sender as a
   window message. A broadcast cannot be replied to as such, so it starts no
   chain of replies.
-- A model broadcast counts against the window's send rate limit.
 
 ## Window messages
 
@@ -87,19 +86,23 @@ the ref leads to the full event.
 - A reply is routed back as an input block; a sender never blocks waiting for
   one.
 - The send and the delivery are events, linked to each other.
-- A chain of replies has a hop limit, and each window has a send rate limit;
-  both refusals name the reason and the next action.
+- A chain of replies has a hop limit, so two windows cannot answer each
+  other forever; the refusal names the reason and the next action.
 
-## Consistency checks
+## Staying current
 
-| Moment | Check | When it fails |
-| --- | --- | --- |
-| a send to a conversation | no event on that conversation is newer than the window's watermark | refused with the newer events' refs; read them, then send again |
-| a note write | the revision is the one the window read | refused with the changes since then; the writing model merges them and writes again ([memory.md](memory.md#conflicts)) |
+A window that has touched a conversation gets every new event on it as it
+arrives: each is steered in at the next tool-call boundary, unfiltered and
+not held back by the protection period. So a window rarely acts on stale
+input, and nothing is refused for it.
 
-Reading the refs a refusal names moves the window's watermark, so the next
-attempt passes unless something newer arrived meanwhile. Everything else runs
-unchecked.
+- A send goes out as made. If events on the conversation arrived after the
+  window's watermark and have not reached it yet, the send's result says how
+  many and that they come with the next turn; whether to add anything is the
+  model's call.
+- A note write is the one checked write: it names the revision it read, and
+  a stale one is refused with the changes since
+  ([memory.md](memory.md#conflicts)).
 
 ## Effects
 

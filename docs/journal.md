@@ -1,6 +1,6 @@
 # Journal
 
-The journal is the project's one record. Every window appends to it and reads
+The journal is the one record. Every window appends to it and reads
 from it; an event is visible to every window as soon as it is written. It is
 append-only: nothing is edited, nothing is deleted, nothing merges.
 
@@ -8,7 +8,7 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 
 | Field | Meaning |
 | --- | --- |
-| `id` | the event's ref, `r902` |
+| `id` | the event's ref, `r902`; its number is the event's place in the one global order |
 | `window` | the window that wrote it, `c41`; empty for an outside event not yet dispatched |
 | `time` | when it was written |
 | `kind` | input, tool call, tool result, send, note revision, window start or end, ... |
@@ -16,6 +16,10 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 | `refs` | the refs it names: what it answers, cites, continues or quotes |
 | `external` | the native id of an outside message, with a short channel prefix |
 | `snapshot` | the workspace snapshot, for an event that changed files |
+
+Events have one global order: the number in their id, assigned at append and
+only growing. Watermarks and every comparison use it; `time` is for display
+only.
 
 ## Targets
 
@@ -34,7 +38,8 @@ the target of a send, the paths a tool read or wrote, the note it changed. The
 model never fills it in.
 
 Targets serve three things with one index: dispatch candidates
-([dispatch.md](dispatch.md)), notices between windows and consistency checks
+([dispatch.md](dispatch.md)), steering new events into the windows in a
+conversation, and notices between windows
 ([coordination.md](coordination.md)).
 
 ## Watermarks
@@ -42,7 +47,9 @@ Targets serve three things with one index: dispatch candidates
 For every target a window has touched, the host keeps the newest event on
 that target the window has seen - in its prompt, in a tool result, or by
 writing it. A target with events newer than the window's watermark is one the
-window is behind on. This is what the consistency checks compare.
+window is behind on. Steering keeps a window's watermarks current, and a
+send's result says when it is still behind
+([coordination.md](coordination.md#staying-current)).
 
 ## External ids
 
@@ -71,9 +78,6 @@ One reference format points at anything, in every tool argument and result:
 | `sk:deploy@4`, `mcp:weather@2`, `svc:crawler@3` | a skill, an MCP server or a service, at a revision |
 | `qq:12345` | an outside message, by its native id |
 
-A ref may carry a project prefix, `shop/r42`; inside the current project it
-is left out.
-
 ## Links and tracing
 
 The host records links between refs - cite, evidence, range, origin,
@@ -92,3 +96,20 @@ All text search is lexical and built for Chinese and mixed text: a word index
 by jieba segmentation with BM25, a trigram index for exact substrings, and a
 fallback for one- or two-character queries. Results are merged, exact
 substring hits first, and each carries its ref and window.
+
+## Media
+
+Images and files that arrive or are produced are stored once by content
+beside the journal; events hold their refs. Only models that take images are
+offered, so an image always reaches the model as itself.
+
+## Redaction and archiving
+
+The journal is never edited, with one exception for data that must not
+stay, such as a secret or personal data recorded by mistake. Redacting
+appends an event that names the event it covers; the original content is
+erased from storage, and every ref to it keeps working and shows that it was
+redacted, and by which event.
+
+Old events can move to an archive store. Refs into the archive still
+resolve, more slowly.

@@ -1,6 +1,6 @@
 # Memory
 
-Notes are the project's long-term memory. There is one copy, shared by every
+Notes are the long-term memory. There is one copy, shared by every
 window, written only through the note tools.
 
 ## Notes
@@ -12,8 +12,9 @@ window, written only through the note tools.
   ([conflicts](#conflicts)).
 - **Revisions are append-only.** An anchor keeps working after the note is
   edited, archived or deleted.
-- **Quotas:** a cap on new notes per window, and a token budget on the active
-  set that refuses growth and never tidying.
+- **Budget:** a token budget on the active set, because the active set is
+  part of every prefix. It refuses growth and never tidying. There is no cap
+  on how many notes a window writes.
 
 ## Conflicts
 

@@ -8,14 +8,14 @@ and every window can find everything that was ever done.
   number run at the same time; none of them owns anything, and a window that
   ends loses nothing. The model looks up what it needs instead of carrying it.
 - **One record, shared live.** Every input, tool call, result, send and note
-  revision goes into one journal per project and is visible to every window as
+  revision goes into one journal and is visible to every window as
   soon as it is written. Records never merge and are never lost.
 - **Dispatch by a judge.** A judge (Jev by default, replaceable) decides which
   live window takes a new input, or opens a new one. There is no router
   session and no main line.
-- **Consistency at the moments that are visible.** Windows run without locks.
-  A send and a note write are checked against what the window has seen, and
-  refused with the newer events named when it is behind.
+- **Current without locks.** Windows run in parallel. New events on a
+  conversation a window is in are steered into it as they arrive; only a note
+  write is checked against the revision the window read.
 - **Mechanisms in the framework, policy in the agent.** The framework
   guarantees what an agent cannot guarantee for itself - the record, isolation,
   exactly-once effects, the checks, dispatch. Everything that takes judgment,
@@ -25,8 +25,11 @@ and every window can find everything that was ever done.
   continuations and snapshots for every change. It is not bound to a
   repository; the agent clones and pushes what it needs.
 - **A self-changing environment.** The model adds and changes skills, MCP
-  servers and resident services itself; a `reload` validates the change and broadcasts it to every
-  live window as a delta of names and descriptions.
+  servers and resident services itself; a `reload` validates the change and
+  broadcasts it to every live window as a delta of names and descriptions.
+- **Minimal limits.** The framework sets no policy. Permissions, privacy
+  review, budgets and approvals belong to deployments built on it, through
+  hooks.
 - **Direct tools plus code mode.** Decisions are direct tools; everything else
   is a module called from `code_exec`. There is no CLI.
 - **Every module is replaceable.** The agent backend (pi by default), the
@@ -43,11 +46,11 @@ Status: design. No code yet.
 | Page | Contents |
 | --- | --- |
 | [docs/overview.md](docs/overview.md) | goals, concepts, principles, routes considered |
-| [docs/architecture.md](docs/architecture.md) | layers, interfaces, data placement, room for many machines |
-| [docs/journal.md](docs/journal.md) | events, targets, watermarks, external ids, channels, refs, tracing |
+| [docs/architecture.md](docs/architecture.md) | layers, interfaces, stack, models, hooks, data placement |
+| [docs/journal.md](docs/journal.md) | events and their order, targets, watermarks, external ids, refs, tracing, media, redaction |
 | [docs/windows.md](docs/windows.md) | window lifecycle, prompt layout, reminders, continuation |
 | [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled tasks |
-| [docs/coordination.md](docs/coordination.md) | the board, expectations, deliveries and broadcasts, consistency checks, effects |
+| [docs/coordination.md](docs/coordination.md) | the board, expectations, deliveries and broadcasts, staying current, effects |
 | [docs/environment.md](docs/environment.md) | skills, MCP servers and services: using, changing, reload, built-in skills, deltas |
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
 | [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |

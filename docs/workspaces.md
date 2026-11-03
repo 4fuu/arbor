@@ -23,7 +23,8 @@ snapshots, and the agent does the rest.
    long commands, and a disk quota per workspace.
 
 The default `Workspace` is [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs),
-used only for cheap forks, snapshots and mounts.
+used only for cheap forks, snapshots and mounts
+([architecture.md](architecture.md#stack) lists what it requires).
 
 ## What the agent does
 
@@ -48,4 +49,4 @@ dispatching ([coordination.md](coordination.md#the-board)).
 - After a retention period the host reclaims the snapshots by itself. This is
   a setting, not a task for a model.
 
-A project that never works with files needs no workspace and no LayerFS.
+A deployment that never works with files needs no workspace and no LayerFS.

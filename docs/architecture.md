@@ -30,11 +30,11 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage | [pi](https://github.com/badlogic/pi-mono) (pi-agent-core, with its code mode) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
-| `Judge` | answer the host's decisions: filter, route, notice, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
+| `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; adapters provide them |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; adapters provide them |
@@ -42,6 +42,9 @@ interface and registering it; nothing else changes.
 | `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory on `Workspace` |
 | `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor |
 | `Scheduler` | insertion timing, backpressure, scheduled tasks | simple rules ([dispatch.md](dispatch.md)) |
+
+Besides the interfaces, hooks let a deployment add policy without replacing
+a module ([below](#hooks)).
 
 Rules for every interface:
 
@@ -53,6 +56,50 @@ Rules for every interface:
   is an adapter: channels, task sources, effect executors and tool groups. It
   does not change the core.
 
+## Stack
+
+- **TypeScript on Node.js**, one host process. pi-agent-core runs every
+  window in process, so steering, tool hooks and code mode are direct calls.
+- **SQLite** for the journal, notes and host data.
+- **LayerFS** for workspaces. Its core is Rust; TypeScript reaches it through
+  its JavaScript packages (`@layerfs/agent`, `@layerfs/backend`,
+  `@layerfs/runtime`) and a native binding, and `bash` runs in workspaces its
+  daemon mounts over FUSE. That shapes the deployment:
+  - Linux with `/dev/fuse`; macOS and Windows only through a Linux VM.
+  - Its Store runs without crash or power-loss durability, so the journal
+    never depends on it: a lost snapshot loses a view of files, never a
+    record.
+  - It is young and its JavaScript API broke between 1.0 and 1.1, so its
+    version is pinned behind `Workspace`.
+  - pi already has a LayerFS extension, `pi-layerfs`, that backs pi's file
+    and bash tools with LayerFS; it is a reference for the integration, not
+    a dependency.
+
+## Models
+
+`AgentBackend` provides both the agent loop and the model list. The default
+takes providers, models and login from pi's model runtime and the catalog
+distributed through pi.dev, so a new model appears without code changes.
+Only models that take images are offered. The judge picks a tier for each new
+window ([dispatch.md](dispatch.md#model-tiers)), and settings map each tier
+to a model.
+
+## Hooks
+
+The framework sets no policy of its own. A deployment adds it through hooks;
+each can observe, change or refuse, refusing in the core's error shape:
+
+| Hook | Runs |
+| --- | --- |
+| before and after a tool call | around every direct tool and module call |
+| before an effect | when an effect leaves the queue; it can hold the effect for approval and release or drop it later |
+| before and after dispatch | around routing a task |
+| window start and end | when a window opens and ends |
+
+The host API lets an operator list, pause and end windows, steer an input
+into one, and read the board. Permissions, privacy review, budgets and
+approvals are built from these.
+
 ## Data placement
 
 | Data | Where |
@@ -60,23 +107,23 @@ Rules for every interface:
 | events, watermarks, links | `Journal` |
 | notes | `NoteStore` |
 | files | `Workspace`: one directory per window, with its snapshots |
-| skills, MCP and service configurations | `Environment`: the project's `/env` directory, with revisions |
+| skills, MCP and service configurations, settings | `Environment`: the `/env` directory, with revisions |
 | service directories and logs | `Supervisor`, on `Workspace` |
 | an event that changed files | the journal, with the snapshot id |
 | effect queue, schedules, settings | host database |
 
-Multiple projects share one host. Each project has its own journal, notes
-and LayerFS project.
+There is no project boundary: a host has one journal, one set of notes and
+one `/env`, and every window can read all of it.
 
 ## Room for many machines
 
-For now one host runs on one machine. LayerFS requires every process that
-opens a Store to share one Linux kernel and one local filesystem, so one
-project's workspaces stay on one machine. To leave room for more:
+For now one host runs on one machine. To leave room for more:
 
 - Tools and adapters reach the host only through the host API, never through
   local files or the database.
 - Ids and refs do not depend on a machine.
 - `Journal` and `NoteStore` are interfaces, not tied to SQLite.
 
-The first step out is placing different projects on different machines.
+How one host spreads over several machines is open. It depends among other
+things on how far a LayerFS Store can be shared across machines, which is not
+yet verified.

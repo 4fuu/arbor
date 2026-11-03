@@ -6,34 +6,32 @@ change reaches every live window as a delta, without rebuilding any context.
 
 ## What the model can change
 
-The model can extend what it is able to do; it cannot loosen what bounds it.
+The model can change everything about itself: skills, MCP servers,
+services, and the settings - identity and general rules, judge modes,
+thresholds and criteria, model tiers. Two things are outside its reach: the
+value of a secret, because a configuration names a secret and never holds
+its value, and the built-in skills ([below](#built-in-skills)), which ship
+with the framework. A deployment that wants to restrict more does it through
+hooks ([architecture.md](architecture.md#hooks)).
 
-| The model changes | Only an operator changes |
-| --- | --- |
-| skills: add, change, remove | identity and general rules (the system prompt) |
-| MCP servers: add, change, remove, enable, disable | credentials and secrets; a configuration names a secret, never holds its value |
-| services: add, change, remove, enable, disable ([below](#services)) | the built-in skills ([below](#built-in-skills)) |
-| | egress rules, quotas, rate limits |
-| | judge modes, thresholds and criteria |
-| | the model, the channels |
-
-Project rules and guidance files are ordinary files in a workspace. The
-framework does not manage or restrict them.
+Rules and guidance files for a piece of work are ordinary files in a
+workspace. The framework does not manage or restrict them.
 
 ## Layout
 
-The environment is one shared directory per project, mounted read-only into
+The environment is one shared directory, mounted read-only into
 every window at `/env`:
 
 ```text
 /env/skills/<name>/SKILL.md     a skill, with any scripts and files beside it
 /env/mcp/<name>.json            one MCP server's configuration
 /env/services/<name>/svc.json   one service's configuration, beside its files
+/env/settings.json              identity, general rules, judge, model tiers
 ```
 
-Each item - one skill, one server, one service - has its own revision, so
-changes to different items never conflict. A window without a workspace still reads
-`/env` through `read`; changing it needs a workspace.
+Each item - one skill, one server, one service, the settings - has its own
+revision, so changes to different items never conflict. A window without a
+workspace still reads `/env` through `read`; changing it needs a workspace.
 
 ## Using a skill or a server
 
@@ -144,5 +142,5 @@ skills hold the procedure, and every refusal names the section to read.
   the environment folded in, so windows opened in one epoch share a prefix.
   Changes since the epoch go into the first input as a delta
   ([windows.md](windows.md#prompt-layout)).
-- Operator changes to the identity or general rules are not deltas: they
-  apply from the next epoch.
+- Changes to the identity or general rules are not deltas: they are part of
+  the system prompt and apply from the next epoch.
