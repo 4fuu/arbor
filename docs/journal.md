@@ -27,6 +27,7 @@ A target is anything two windows can collide on:
 | file | `file:src/cart.ts` |
 | note | `n012` |
 | outside item | `gh:issue:42`, `gh:pr:57` |
+| service | `svc:crawler` |
 
 The host fills `targets` from the event itself - the conversation of an input,
 the target of a send, the paths a tool read or wrote, the note it changed. The
@@ -67,7 +68,7 @@ One reference format points at anything, in every tool argument and result:
 | `m55` | a message between windows |
 | `ws3`, `ws3@r902` | a workspace, or its snapshot at an event |
 | `e7` | an environment revision |
-| `sk:deploy@4`, `mcp:weather@2` | a skill or an MCP server, at a revision |
+| `sk:deploy@4`, `mcp:weather@2`, `svc:crawler@3` | a skill, an MCP server or a service, at a revision |
 | `qq:12345` | an outside message, by its native id |
 
 A ref may carry a project prefix, `shop/r42`; inside the current project it

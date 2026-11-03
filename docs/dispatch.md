@@ -12,7 +12,9 @@ A task is one unit of input:
 - a **batch** of outside events from a `TaskSource`. Batching is the source's
   business; a chat source debounces per conversation, so several messages
   sent in a row become one task;
-- a **scheduled** firing ([below](#scheduled-tasks)).
+- a **scheduled** firing ([below](#scheduled-tasks));
+- a **service event**: a service's state change, or an event a service
+  appended ([environment.md](environment.md#services)).
 
 The host makes no tasks of its own for maintenance; work that needs judgment
 is the agent's ([overview.md](overview.md#principles)).
