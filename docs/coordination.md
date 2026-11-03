@@ -1,8 +1,8 @@
 # Coordination
 
-Windows run in parallel without locks. They work together through three
-things - the board, notices and window messages - and stay consistent through
-checks at the moments their work becomes visible.
+Windows run in parallel without locks. They work together through the
+board and through deliveries - window messages, notices and broadcasts - and
+stay consistent through checks at the moments their work becomes visible.
 
 ## The board
 
@@ -40,6 +40,17 @@ Rules:
 - Expectations end with the window; a continuation inherits them.
 - When several windows expect the same item, the judge chooses among them.
 
+## Deliveries
+
+Every delivery is an input block that enters a window at a tool-call
+boundary. The three kinds differ only in who receives them:
+
+| Kind | Receivers | Filtered by |
+| --- | --- | --- |
+| window message | one live window | nobody |
+| notice | live windows that touched the event's target | the judge |
+| broadcast | every live window | the judge, except for environment deltas |
+
 ## Notices
 
 When an event touches a target, every other live window that touched the same
@@ -47,6 +58,23 @@ target is a candidate for a notice. The judge decides which ones need it
 ([dispatch.md](dispatch.md#judge-decisions)); each of those gets one input
 block with the event's opening words and its ref. The host writes no summary;
 the ref leads to the full event.
+
+## Broadcasts
+
+- **Environment deltas** ([environment.md](environment.md#deltas-in-a-window))
+  go to every live window, unfiltered and not held back by the protection
+  period, because they change what a window can call.
+- **Model broadcasts.** `windows.broadcast(text)` offers a message to every
+  live window; the judge decides for each one whether it needs it
+  ([dispatch.md](dispatch.md#judge-decisions)).
+- A broadcast wakes no window. A running window gets it at its next tool-call
+  boundary, an idle one when it next runs; an ended window gets nothing, and
+  a new window gets the environment through its prefix or first input.
+- Every broadcast block carries one fixed host line: it is a broadcast, it
+  needs no reply, and when one is really needed it goes to the sender as a
+  window message. A broadcast cannot be replied to as such, so it starts no
+  chain of replies.
+- A model broadcast counts against the window's send rate limit.
 
 ## Window messages
 

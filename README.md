@@ -24,6 +24,9 @@ and every window can find everything that was ever done.
   [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs), with forks for
   continuations and snapshots for every change. It is not bound to a
   repository; the agent clones and pushes what it needs.
+- **A self-changing environment.** The model adds and changes skills and MCP
+  servers itself; a `reload` validates the change and broadcasts it to every
+  live window as a delta of names and descriptions.
 - **Direct tools plus code mode.** Decisions are direct tools; everything else
   is a module called from `code_exec`. There is no CLI.
 - **Every module is replaceable.** The agent backend (pi by default), the
@@ -44,7 +47,8 @@ Status: design. No code yet.
 | [docs/journal.md](docs/journal.md) | events, targets, watermarks, external ids, channels, refs, tracing |
 | [docs/windows.md](docs/windows.md) | window lifecycle, prompt layout, reminders, continuation |
 | [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled tasks |
-| [docs/coordination.md](docs/coordination.md) | the board, notices, window messages, consistency checks, effects |
+| [docs/coordination.md](docs/coordination.md) | the board, expectations, deliveries and broadcasts, consistency checks, effects |
+| [docs/environment.md](docs/environment.md) | skills and MCP servers: using, changing, reload, deltas |
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
 | [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |

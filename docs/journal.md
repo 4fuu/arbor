@@ -66,6 +66,8 @@ One reference format points at anything, in every tool argument and result:
 | `t9` | a task |
 | `m55` | a message between windows |
 | `ws3`, `ws3@r902` | a workspace, or its snapshot at an event |
+| `e7` | an environment revision |
+| `sk:deploy@4`, `mcp:weather@2` | a skill or an MCP server, at a revision |
 | `qq:12345` | an outside message, by its native id |
 
 A ref may carry a project prefix, `shop/r42`; inside the current project it

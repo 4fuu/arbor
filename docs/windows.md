@@ -22,28 +22,29 @@ in the journal ([journal.md](journal.md)).
 ## Prompt layout
 
 ```text
-┌ system prompt ───────────────────────── the same for every window ┐
+┌ system prompt ────────────────────── the same within one epoch ───┐
 │ identity, general rules, direct tools one per line, modules one   │
-│ per line                                                          │
+│ per line, skills and MCP servers one per line                     │
 ├ memory snapshot ────────────────── the same within one epoch ─────┤
 │ the active notes, by summary                                       │
 ├ first input ──────────────────────────── this window's own ───────┤
 │ the task; the board lines related to it; for a continuation, the  │
-│ previous window's ref and handoff; notes changed since the        │
-│ snapshot                                                           │
+│ previous window's ref and handoff; notes and environment changed  │
+│ since the epoch                                                    │
 ├ inputs ───────────────────────────────────── append-only ─────────┤
-│ inserted tasks, notices, window messages, tool calls and results, │
-│ reminders                                                          │
+│ inserted tasks, deliveries (messages, notices, broadcasts and     │
+│ environment deltas), tool calls and results, reminders             │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
 - Windows do not inherit another window's transcript. A transcript is used
   once, so its prefix rarely pays off in the cache; a standard prefix is
   shared by every window and stays cached.
-- **Snapshot epochs.** The memory snapshot is rebuilt at most every
-  `snapshot.min_interval` (default 10 minutes), and only when notes changed.
-  Every window opened in one epoch has the same prefix. Notes changed since
-  the epoch go into the first input.
+- **Snapshot epochs.** The system prompt and memory snapshot are rebuilt at
+  most every `snapshot.min_interval` (default 10 minutes), and only when notes
+  or the environment ([environment.md](environment.md)) changed. Every window
+  opened in one epoch has the same prefix. Changes since the epoch go into
+  the first input.
 - The prefix never changes while a window is open. Rendering is
   deterministic: no timestamps or counters in the system prompt or snapshot.
 - Anything that changes per input - its time, people or items seen for the

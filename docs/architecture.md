@@ -8,7 +8,7 @@
 │ host API (operators, consoles, adapters)                       │
 ├ service layer ─────────── the one implementation ─────────────┤
 │ journal · windows · dispatch · board · notes · workspaces      │
-│ effects · schedules                                            │
+│ effects · schedules · environment                              │
 ├ interfaces ───────────────── every one replaceable ───────────┤
 │ AgentBackend · Journal · NoteStore · Workspace · Judge         │
 │ Channel · TaskSource · EffectExecutor · ToolGroup · Scheduler  │
@@ -38,6 +38,7 @@ interface and registering it; nothing else changes.
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; adapters provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
+| `Environment` | skills and MCP servers: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory on `Workspace` |
 | `Scheduler` | insertion timing, backpressure, scheduled tasks | simple rules ([dispatch.md](dispatch.md)) |
 
 Rules for every interface:
@@ -57,6 +58,7 @@ Rules for every interface:
 | events, watermarks, links | `Journal` |
 | notes | `NoteStore` |
 | files | `Workspace`: one directory per window, with its snapshots |
+| skills, MCP configurations | `Environment`: the project's `/env` directory, with revisions |
 | an event that changed files | the journal, with the snapshot id |
 | effect queue, schedules, settings | host database |
 

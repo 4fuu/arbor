@@ -13,6 +13,7 @@ service layer ([architecture.md](architecture.md#layers)).
 | `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue |
 | `note_write`, `note_replace`, `note_delete` | write memory ([memory.md](memory.md)) |
 | `end(handoff?)` | end the run; with a handoff, continue in a new window ([windows.md](windows.md#ending-and-continuing)) |
+| `reload(install?, remove?)` | change the environment and broadcast the delta ([environment.md](environment.md#changing-the-environment)) |
 | `search(query, scope?)` | the journal, notes and the board in one query |
 | `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
@@ -26,7 +27,8 @@ how often the logs show it used.
 | Module | Functions |
 | --- | --- |
 | `journal` | `search`, `show(ref)`, `around(ref, before?, after?)`, `trace(ref)`, `links(ref, offset?)` |
-| `windows` | `list`, `show(c…)`, `send(to, text, reply_to?)`, `yield(to, note?)`, `inbox` |
+| `windows` | `list`, `show(c…)`, `send(to, text, reply_to?)`, `broadcast(text)`, `yield(to, note?)`, `inbox` |
+| `env` | `list`, `history(item?)` |
 | `board` | `list`, `set(line)`, `expect(item? \| description?)`, `unexpect(ref)` |
 | `notes` | `search(query?, status?, about?, visibility?, linked?)`, `read(ref)`, `context(ref)`, `active` |
 | `channels` | `list`, `get(ref)` |
@@ -35,13 +37,15 @@ how often the logs show it used.
 | `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
 A module whose backing feature is not configured is absent. Adapters and MCP
-servers add modules of their own.
+servers add modules of their own; an MCP server the model installs arrives as
+a module through an environment delta
+([environment.md](environment.md#deltas-in-a-window)).
 
 ## Rules
 
-- **Decisions stay direct.** Anything that speaks, ends a window or writes
-  memory is a direct call. A script that names one is refused
-  with the rule and never reaches the host.
+- **Decisions stay direct.** Anything that speaks, ends a window, writes
+  memory or changes the environment is a direct call. A script that names one
+  is refused with the rule and never reaches the host.
 - **A plain command is a direct call, a chain is a script.**
 - **One behaviour per tool.** A command that outlives `bash`'s wait window is
   followed with `bash_output` and stopped with `bash_stop`.
@@ -51,7 +55,9 @@ servers add modules of their own.
 - **Two lookups.** `tool_search` (direct tool and script global) takes
   keywords, an exact `module.function` name, or nothing for every module;
   `tool_describe("module.function")` (script global) returns one signature.
-  Both read the catalog frozen with the window.
+  Both read the catalog frozen with the window plus the environment deltas
+  since. `tool_search` also answers skills and MCP servers by name or
+  keyword, with how to use them.
 - **The prompt names modules, not functions.** The system prompt lists the
   direct tools one per line and the modules one per line; a module's line
   describes what it can do and never names a function.
