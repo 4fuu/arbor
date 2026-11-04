@@ -6,6 +6,25 @@ the first input, deliveries, reminders, tool and parameter descriptions,
 The aim is low noise, clear layers and a closed loop: each layer carries only
 what the next step needs, and every layer leads to the next.
 
+## Blocks and the renderer
+
+No component writes prompt text. Everything that reaches a model - a system
+prompt section, a delivery, a reminder, a note, a result, an error - is a
+typed block: a kind and its fields. One renderer turns blocks into text when
+a request is built, by fixed rules:
+
+- each kind maps to one shape, with its tag, field order and fixed lines
+  taken from the text table;
+- content inside a block is escaped, so outside text cannot close a tag or
+  pose as host text;
+- data blocks are marked as data ([below](#data-and-instructions));
+- the output is deterministic, so the same blocks always give the same bytes.
+
+The core defines the built-in kinds below. An adapter registers kinds of its
+own - its prompt section, its message shapes - as a kind with fields and a
+mapping, and hands the host blocks, never finished text. Changing how
+something reads is a change to one mapping or one table entry, in one place.
+
 ## No built-in pi prompt
 
 arbor uses pi-agent-core's `Agent` with its own system prompt. pi's default
@@ -58,8 +77,8 @@ this order:
    description and, for a skill, its path. The built-in skills are listed
    here like any other.
 6. One section per adapter that registered one
-   ([architecture.md](architecture.md#adapters)), wrapped by the host in a tag
-   named after the adapter.
+   ([architecture.md](architecture.md#adapters)), rendered from its block in a
+   tag named after the adapter.
 
 A section with nothing to say is not rendered. The whole prompt is frozen
 with the snapshot epoch ([windows.md](windows.md#prompt-layout)).
@@ -79,13 +98,13 @@ with the snapshot epoch ([windows.md](windows.md#prompt-layout)).
 
 ## Deliveries
 
-Each kind of block has one fixed shape, with its kind, its source window or
+Each delivery is a block kind with one fixed shape, with its source window or
 target, its refs and its content:
 
 | Block | Fixed line |
 | --- | --- |
 | inserted task | none; the task renders as it would open a window |
-| conversation update | the conversation, then the new events in the adapter's format |
+| conversation update | the conversation, then the new events in the adapter's block kinds |
 | notice | the event's opening words and its ref, from which window |
 | broadcast | it is a broadcast, needs no reply, and a reply when really needed goes to the sender as a window message |
 | window message | from which window, and its `reply_to` when it has one |
@@ -155,11 +174,10 @@ infer. Everything left out stays reachable from something shown.
 ## Input format
 
 The framework fixes the envelope of an outside input: time, source channel,
-target, its ref, and first-appearance details. How a channel renders its own
-messages inside the envelope - senders, quotes, images, its own habits - is
-the adapter's, registered with its channel
-([architecture.md](architecture.md#adapters)), and follows the density rules
-above.
+target, its ref, and first-appearance details. What goes inside - senders,
+quotes, images, a channel's own shapes - is blocks of the kinds its adapter
+registered ([architecture.md](architecture.md#adapters)); their mappings
+follow the density rules above.
 
 ## Data and instructions
 

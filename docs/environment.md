@@ -133,8 +133,11 @@ skills hold the procedure, and every refusal names the section to read.
 - `tool_search` and `tool_describe` read the window's catalog: the one frozen
   when it opened plus every delta since, so the lookup and the deltas never
   disagree.
-- A call to a removed function, or a read of a removed skill, is refused with
-  the ref of the change that removed it.
+- **Removal never changes a prompt.** An open window keeps what it was built
+  with. A call to a removed function, or a read of a removed skill, is
+  refused with the rule and the ref of the change that removed it; the
+  removal also reaches live windows as a delta, and the next epoch leaves the
+  item out.
 - An item is replaced as a whole, so a window never reads a half-installed
   skill. A window in the middle of using the old version gets the delta and
   reads the new one next time.

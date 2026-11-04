@@ -86,25 +86,31 @@ to a model.
 ## Adapters
 
 An adapter is one plug-in that brings a domain to the host - a chat channel,
-a code host, a webhook source. It registers, all at once and removed all at
-once:
+a code host, a webhook source. It registers, all at once:
 
 | Part | What it gives |
 | --- | --- |
 | channels | sources and sinks, with their native ids ([journal.md](journal.md#external-ids)) |
 | task sources | how its outside events become tasks, including batching |
 | effect executors | how its effects are carried out |
-| input renderer | how its messages render inside the input envelope ([prompting.md](prompting.md#input-format)) |
-| tools and modules | direct tools and code mode modules of its own |
-| skills and MCP servers | installed into `/env` as read-only items under its name |
-| a prompt section | one text the host wraps in an XML tag named after the adapter and places in the system prompt ([prompting.md](prompting.md#system-prompt)) |
+| capabilities | MCP servers and skills, installed into `/env` as ordinary items under its name ([environment.md](environment.md)) |
+| prompt blocks | a system prompt section, and the block kinds its inputs use, given as typed blocks the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
 | judge questions | extra criteria or decisions for its own inputs |
 | hooks | any of the hooks below |
 
-Plugging an adapter in or out is an environment change: its items arrive or
-leave as a delta, and its prompt section applies from the next epoch. Events
-it recorded stay in the journal and their refs keep resolving after it is
-gone.
+- **Capabilities are MCP servers, not tools.** An adapter adds no direct
+  tool or module of its own; what the model can do with it is an MCP server
+  and skills in `/env`. The model reads, changes and reinstalls them with
+  `reload` like any item, so it can improve an adapter's abilities itself. An
+  adapter upgrade installs a new revision on top; the model's changes stay in
+  the item's history.
+- **Plugging in** is an environment change: its items arrive in live windows
+  as a delta, and its prompt section applies from the next epoch.
+- **Unplugging never changes a prompt.** Open windows keep the system prompt
+  and catalog they were built with. A call into a removed capability is
+  refused with the rule and the ref of the change that removed it, and live
+  windows get the removal as a delta. The next epoch leaves it out. Events
+  the adapter recorded stay in the journal and their refs keep resolving.
 
 ## Hooks
 

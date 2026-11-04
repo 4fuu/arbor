@@ -18,9 +18,10 @@ service layer ([architecture.md](architecture.md#layers)).
 | `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
 
-Adapters add their own tools (a chat bot's send variants). A deployment may
-move a function into or out of the direct set through configuration, guided by
-how often the logs show it used.
+Adapters add no tools; their abilities are MCP servers
+([architecture.md](architecture.md#adapters)). A deployment may move a
+function into or out of the direct set through configuration, guided by how
+often the logs show it used.
 
 ## Modules
 
@@ -37,9 +38,9 @@ how often the logs show it used.
 | `schedule` | `list`, `create`, `update`, `cancel` |
 | `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
-A module whose backing feature is not configured is absent. Adapters and MCP
-servers add modules of their own; an MCP server the model installs arrives as
-a module through an environment delta
+A module whose backing feature is not configured is absent. Every MCP
+server - an adapter's or one the model installed - is a module of its own,
+and arrives through an environment delta
 ([environment.md](environment.md#deltas-in-a-window)).
 
 ## Rules
