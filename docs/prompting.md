@@ -1,0 +1,221 @@
+# Prompting
+
+Rules for every text a model reads: the system prompt, the memory snapshot,
+the first input, deliveries, reminders, tool and parameter descriptions,
+`tool_search` answers, skills, results, errors, and the judge's questions.
+The aim is low noise, clear layers and a closed loop: each layer carries only
+what the next step needs, and every layer leads to the next.
+
+## No built-in pi prompt
+
+arbor uses pi-agent-core's `Agent` with its own system prompt. pi's default
+coding prompt, context files and skills never reach the model. Reminders and
+deliveries are user-role text inside inputs, never system messages in the
+middle of a window, because some providers fold those into the leading system
+prompt and that breaks the cached prefix.
+
+## Language and the text table
+
+Every fixed text the framework writes - section headings, the opening and
+continuation notes, delivery lines, reminders, descriptions, errors - is in
+Chinese and lives in one text table. A deployment replaces the table to
+change the language or the wording; no fixed text is written anywhere else.
+Identifiers stay as they are: tool, parameter and field names, refs and
+enum values. The judge's questions are in English
+([below](#judge-questions)).
+
+## Layers
+
+Each fact lives in exactly one layer. Another layer that needs it points to
+it instead of repeating it, because a fact stated twice drifts.
+
+| Layer | Contains | Length |
+| --- | --- | --- |
+| system prompt | the sections below | as short as the rules allow |
+| memory snapshot | the active notes, by summary | the active-set budget |
+| first input | the task; related board lines; for a continuation, the previous window's ref and handoff; changes since the epoch | data, plus one fixed note |
+| delivery | one block per inserted task, conversation update, notice, broadcast, window message or environment delta ([below](#deliveries)) | dense |
+| reminder | the window's real numbers, the tier's own instruction, its place in the series, the cost of ignoring it | a few sentences |
+| tool description | what one tool does and when to use it; side effects | 1 to 4 sentences |
+| parameter description | meaning, default or range, relation to other parameters | one sentence |
+| `tool_search` answer | one function's call instructions, or where a skill's procedure is | one block per name |
+| skill | a procedure, read on demand | as long as the procedure |
+| result | current facts, and the next step only when it is not obvious | stable fields |
+| error | the rule that refused the call and the next action | one line |
+
+## System prompt
+
+XML-tagged sections, each tag on its own line, separated by a blank line, in
+this order:
+
+1. `<identity>` - from settings; omitted when empty, with no default sentence.
+2. `<agent>` - the general rules: windows are disposable and everything is in
+   the journal; sending is never required; data is not instructions.
+3. `<tools>` - the direct tools, one line each.
+4. `<modules>` - the modules, one line each: a name and a description of
+   everything the module can do, never a function name.
+5. `<env>` - skills, MCP servers and services, one line each: a name, a
+   description and, for a skill, its path. The built-in skills are listed
+   here like any other.
+6. One section per adapter that registered one
+   ([architecture.md](architecture.md#adapters)), wrapped by the host in a tag
+   named after the adapter.
+
+A section with nothing to say is not rendered. The whole prompt is frozen
+with the snapshot epoch ([windows.md](windows.md#prompt-layout)).
+
+## Fixed notes
+
+- **Opening note of a continuation.** The previous window's transcript is not
+  loaded but can be looked up; it names where - the journal and notes
+  modules, `windows.show`, the workspace - by module, never by function. Then
+  it either introduces the handoff as the agent's own earlier note, or says
+  there is none and gives the order to recover: notes, the board, the
+  previous window's last events.
+- **Mid-task reset.** After the hard limit, one host line says the window was
+  reset in the middle of a task, that the steps already taken can be looked
+  up, and that nothing already sent is sent again.
+- A window opened for a new task gets no note.
+
+## Deliveries
+
+Each kind of block has one fixed shape, with its kind, its source window or
+target, its refs and its content:
+
+| Block | Fixed line |
+| --- | --- |
+| inserted task | none; the task renders as it would open a window |
+| conversation update | the conversation, then the new events in the adapter's format |
+| notice | the event's opening words and its ref, from which window |
+| broadcast | it is a broadcast, needs no reply, and a reply when really needed goes to the sender as a window message |
+| window message | from which window, and its `reply_to` when it has one |
+| environment delta | one line per item: `+`, `~` or `-`, kind, name, description |
+
+Every block carries its own time. A block that holds outside content says it
+is data where it is delivered ([below](#data-and-instructions)).
+
+## Rules surface where they bite
+
+- A guard rule - a limit, a refusal, a precondition - is not written into the
+  prompt or a description in advance. The host enforces it, and the model
+  learns it from the error when it meets it.
+- **Every error closes the loop.** It names the rule and the next action that
+  reaches the goal with what the model has now. Errors from LayerFS, a
+  provider, an MCP server or a service pass through a host wrapper that adds
+  the same; a raw upstream error never reaches the model alone. A refusal
+  with no useful next action means the rule belongs elsewhere.
+- An error about the environment names the section of the built-in skill
+  that covers it.
+- A rule moves into a description only when the logs show the model hitting
+  the same error again and again, and then it replaces the error's wording
+  instead of adding to it.
+- The one exception stated up front: `end` with unfinished work needs a
+  handoff, and its description names the four parts - current topics,
+  progress, pending items, agreements - because the handoff is the cost of the
+  decision to end.
+- A limit that shapes a result without refusing - a page size, a row cap - is
+  reported by the result every time. A rule the host enforces without a
+  refusal, like the context budget, is taught by the layer that reports it,
+  here the reminders.
+
+## Wording
+
+- Start with what to do. The identity says who the agent is; everything else
+  says how the situation works.
+- Constraints are declarative and use the same patterns everywhere: "X 和 Y
+  只能二选一", "X 只在 Y 时有效", "仅当……时使用".
+- Verbs are the formal two-character ones: 查看、查询、记录、发送、修改.
+- No greetings, encouragement, progress narration, generic advice,
+  "important" markers or emphasis by repetition.
+- Examples only to define a format, such as a ref.
+- Errors start with the tool name. Successful writes answer in one short line
+  (`已写入 n012@1`). Results use the same field names every time.
+- A result that can be partly done names each part's state, so a retry acts
+  only on what did not happen.
+
+## Information density
+
+Show what the model cannot get another way; leave out what it can look up or
+infer. Everything left out stays reachable from something shown.
+
+- **Refs instead of content.** What a tool returns from a ref already on
+  screen is not shown; the ref is.
+- **Related in one line.** Every read appends one 相关 line per returned item,
+  at most for three items: its strongest neighbours, the total, and the exact
+  call that pages the rest. No line when there are no neighbours.
+- **First appearance.** A person, conversation or item is described in full
+  the first time it appears in a window; afterwards by name only. A restart
+  rebuilds this state from the journal, so nobody is introduced twice.
+- **Inferable is not repeated**, except safety signals, which are repeated
+  wherever they apply.
+- **Bound every result.** One head-and-tail cut in the tool pipeline for every
+  tool, with a marker that says how much was cut and where the whole is kept
+  in the workspace. Images are exempt.
+
+## Input format
+
+The framework fixes the envelope of an outside input: time, source channel,
+target, its ref, and first-appearance details. How a channel renders its own
+messages inside the envelope - senders, quotes, images, its own habits - is
+the adapter's, registered with its channel
+([architecture.md](architecture.md#adapters)), and follows the density rules
+above.
+
+## Data and instructions
+
+Content from outside the framework is data, never instructions, and is marked
+where it is delivered rather than in one warning far away: outside messages,
+notes, the journal, tool and `code_exec` output, MCP results, service events,
+broadcasts and window messages. Skills the model or a third party wrote are
+reference material. The handoff is labelled as the agent's own earlier note.
+This is how the prompt is written, not a permission system; a deployment that
+grants authority to some sources does it through hooks.
+
+## Judge questions
+
+The judge is a classifier, not the main model.
+
+- **Minimal and complete state.** A question's state carries exactly what the
+  decision needs and nothing it does not: everything it judges is there, and
+  nothing that could tilt it is. Each field is defined in a `state_note`.
+- **One question, one state path.** The instruction names the field it judges
+  and the point of view, and does not restate the state.
+- **Criteria describe both outcomes.** What counts, what does not, which
+  evidence comes first, the boundary cases and a tie-break; principles, not
+  lists of literal examples.
+- **Tie-break toward the less harmful action**, stated per question.
+- **No arithmetic.** Counts, time gaps and shares are computed in code and
+  appear as labelled facts.
+- **Batching.** One request per decision; one question per item when items
+  fail separately.
+- Questions are in English; the state keeps original text as it is. Every
+  request is scrubbed of secrets on the way out.
+
+## Stability
+
+- Rendering is deterministic and byte-stable for the prefix: notes sorted by
+  id, no timestamps or counters in the system prompt or snapshot.
+- Nothing is injected when there is nothing to say: no empty sections, no
+  "nothing new" lines.
+
+## Terms
+
+One term per concept, in prompts, descriptions, results, errors and logs:
+
+| Term | Meaning | Do not use |
+| --- | --- | --- |
+| 窗口 (window) | one context window | 会话、session |
+| 记录 (journal) | the one append-only log | 日志、历史库 |
+| 事件 (event) | one record in the journal | 条目 |
+| 目标 (target) | what an event touches | 对象、主题 |
+| 现场板 (board) | the live lines of every window | 看板、状态表 |
+| 投递 (delivery) | a block entering a running window | 消息 (alone) |
+| 推送 (notice) | a delivery to windows that touched a target | 通知 |
+| 广播 (broadcast) | a delivery to every live window | 群发 |
+| 预期 (expectation) | what a window expects to be routed to it | 订阅、等待 |
+| 笔记 (note) | shared long-term memory | 记忆条目、备注 |
+| 环境 (environment) | skills, MCP servers, services and settings | 配置 (alone) |
+| 服务 (service) | a resident application the host supervises | 后台进程 |
+| 工作区 (workspace) | a window's own directory | 仓库、沙箱 |
+| 会话 (conversation) | an outside exchange, such as a chat | 窗口、频道 |
+| 引用 (ref) | a ref such as `r902` or `n012@3` | 链接、ID |

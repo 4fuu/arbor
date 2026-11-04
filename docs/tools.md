@@ -62,11 +62,8 @@ a module through an environment delta
 - **The prompt names modules, not functions.** The system prompt lists the
   direct tools one per line and the modules one per line; a module's line
   describes what it can do and never names a function.
-- **Low noise, layered, closed loop.** Each layer carries only what the next
-  step needs: the prompt names a thing in one line, `tool_search` says where
-  its details are, a skill holds a procedure, and an error names the rule and
-  the next action. Nothing is stated twice, and every layer leads to the
-  next.
+- **Low noise, layered, closed loop.** How every description, result and
+  error is written is in [prompting.md](prompting.md).
 - **Errors name the next action.** Every refusal states the rule that refused
   the call and what to do instead. Guard rules live only in those errors, not
   in descriptions or the prompt.

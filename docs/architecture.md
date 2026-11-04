@@ -53,8 +53,7 @@ Rules for every interface:
 - **Errors name the next action.** An implementation returns errors in the
   core's error shape, so the model always reads the same kind of refusal.
 - **Adapters add, they do not patch.** A domain (a chat bot, a coding agent)
-  is an adapter: channels, task sources, effect executors and tool groups. It
-  does not change the core.
+  is an adapter ([below](#adapters)). It does not change the core.
 
 ## Stack
 
@@ -84,17 +83,48 @@ Only models that take images are offered. The judge picks a tier for each new
 window ([dispatch.md](dispatch.md#model-tiers)), and settings map each tier
 to a model.
 
+## Adapters
+
+An adapter is one plug-in that brings a domain to the host - a chat channel,
+a code host, a webhook source. It registers, all at once and removed all at
+once:
+
+| Part | What it gives |
+| --- | --- |
+| channels | sources and sinks, with their native ids ([journal.md](journal.md#external-ids)) |
+| task sources | how its outside events become tasks, including batching |
+| effect executors | how its effects are carried out |
+| input renderer | how its messages render inside the input envelope ([prompting.md](prompting.md#input-format)) |
+| tools and modules | direct tools and code mode modules of its own |
+| skills and MCP servers | installed into `/env` as read-only items under its name |
+| a prompt section | one text the host wraps in an XML tag named after the adapter and places in the system prompt ([prompting.md](prompting.md#system-prompt)) |
+| judge questions | extra criteria or decisions for its own inputs |
+| hooks | any of the hooks below |
+
+Plugging an adapter in or out is an environment change: its items arrive or
+leave as a delta, and its prompt section applies from the next epoch. Events
+it recorded stay in the journal and their refs keep resolving after it is
+gone.
+
 ## Hooks
 
-The framework sets no policy of its own. A deployment adds it through hooks;
-each can observe, change or refuse, refusing in the core's error shape:
+The framework sets no policy of its own. A deployment or an adapter adds it
+through hooks; each can observe, change or refuse, refusing in the core's
+error shape:
 
 | Hook | Runs |
 | --- | --- |
+| before and after append | around every journal event |
+| before and after dispatch | around routing a task, with the judge's answer |
+| before and after a judge request | around every judge decision, with its state |
+| window start, end and continuation | when a window opens, ends or is continued |
+| before a model request | with the rendered prompt and inputs, before they reach the backend |
+| before a delivery | before a block is steered into a window |
 | before and after a tool call | around every direct tool and module call |
 | before an effect | when an effect leaves the queue; it can hold the effect for approval and release or drop it later |
-| before and after dispatch | around routing a task |
-| window start and end | when a window opens and ends |
+| before and after a note write | around every note revision |
+| before and after `reload` | around every environment change |
+| service state change | when a service starts, fails or stops |
 
 The host API lets an operator list, pause and end windows, steer an input
 into one, and read the board. Permissions, privacy review, budgets and

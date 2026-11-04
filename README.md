@@ -46,7 +46,7 @@ Status: design. No code yet.
 | Page | Contents |
 | --- | --- |
 | [docs/overview.md](docs/overview.md) | goals, concepts, principles, routes considered |
-| [docs/architecture.md](docs/architecture.md) | layers, interfaces, stack, models, hooks, data placement |
+| [docs/architecture.md](docs/architecture.md) | layers, interfaces, stack, models, adapters, hooks, data placement |
 | [docs/journal.md](docs/journal.md) | events and their order, targets, watermarks, external ids, refs, tracing, media, redaction |
 | [docs/windows.md](docs/windows.md) | window lifecycle, prompt layout, reminders, continuation |
 | [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled tasks |
@@ -55,3 +55,4 @@ Status: design. No code yet.
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
 | [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |
+| [docs/prompting.md](docs/prompting.md) | how every model-facing text is written: layers, notes, deliveries, errors, judge questions, terms |
