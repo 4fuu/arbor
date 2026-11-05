@@ -29,7 +29,12 @@
  *   writing to. That log is read before the daemon is asked anything, because
  *   the engine proves every process it recorded is still the one it started and
  *   refuses a whole `process.list` when one finished job's pid has been reused:
- *   a status read must not depend on a call one stale record can refuse.
+ *   a status read must not depend on a call one stale record can refuse. The
+ *   wrapper's exit-code line is also what a release measures against: the
+ *   wrapper holds its process open for a moment after the line, so releasing
+ *   the mount stops the jobs that may still hold a process and forgets the
+ *   rest - a release that signalled every command a mount ever ran cost one
+ *   engine call each, and an unmount is refused while any of them still runs.
  *
  * Two limits come from LayerFS itself and are worth stating: its Store has no
  * per-Branch delete, so `reclaim` drops this package's refs and leaves the
@@ -115,10 +120,45 @@ interface ActiveMount {
   exec: Mutex;
   /**
    * The background commands this mount started, each with the command a caller
-   * passed for it, so releasing the mount stops them and a status read names
-   * the command without asking the daemon.
+   * passed for it and what is known about its process, so releasing the mount
+   * stops exactly those that may still hold one and a status read names the
+   * command without asking the daemon.
    */
-  jobs: Map<string, string>;
+  jobs: Map<string, JobRecord>;
+}
+
+/**
+ * One background command a mount started, and what is known about the process
+ * the daemon holds for it.
+ */
+interface JobRecord {
+  /** The command a caller passed for the job. */
+  command: string;
+  /**
+   * When the wrapper's exit-code line was first seen in this job's log, or null
+   * while the command has not ended. The wrapper writes that line and then
+   * holds its process open for `JOB_TAIL_SECONDS`, so the line's arrival opens
+   * the only window in which a command that has ended can still hold a process.
+   * The first sighting is the one kept: a later read of the same log would push
+   * it forward and make a command that ended long ago look like one that just
+   * ended.
+   */
+  endedAt: number | null;
+  /** True once the caller stopped the job, so its process is gone. */
+  stopped: boolean;
+}
+
+/**
+ * Whether one background job may still hold the process the daemon recorded
+ * for it, which is what decides whether releasing its mount has to signal it
+ * before it unmounts: a command that has not ended may still run, one that
+ * ended holds its process open for the wrapper's tail and no longer, and one
+ * the caller stopped holds nothing.
+ */
+function mayHoldProcess(record: JobRecord, now: number): boolean {
+  if (record.stopped) return false;
+  if (record.endedAt === null) return true;
+  return now - record.endedAt < JOB_TAIL_MS;
 }
 
 interface MountedIn {
@@ -160,11 +200,16 @@ const JOB_OUTPUT_BYTES = 262144;
  *
  * The observation happens inside the same call that starts the command, so a
  * pause of a couple of seconds is far longer than the one command the engine
- * needs; the process is gone before anything else could want it, and a mount
- * that is released stops whatever it started anyway. A command that outlives
- * the pause keeps running: the pause only follows the command's end.
+ * needs; the process is gone before anything else could want it. A command
+ * that outlives the pause keeps running: the pause only follows the command's
+ * end. The pause is also the whole of what releasing a mount has to stop: a
+ * job whose exit-code line is older than this has already let its process go,
+ * so the release forgets it instead of signalling it.
  */
 const JOB_TAIL_SECONDS = 2;
+
+/** The same pause in the milliseconds this package's clock reports. */
+const JOB_TAIL_MS = JOB_TAIL_SECONDS * 1000;
 
 /**
  * The line a wrapped command ends with: its exit code, after a record
@@ -703,7 +748,7 @@ export class LayerfsWorkspace implements Workspace {
       handle,
       path: mounted.path,
       exec,
-      jobs: new Map<string, string>(),
+      jobs: new Map<string, JobRecord>(),
     };
     this.mounts.set(id, active);
     return {
@@ -889,6 +934,11 @@ export class LayerfsWorkspace implements Workspace {
    * from the log alone, and one that does not is answered as still running
    * rather than with the refusal - `bash` reads a job while it waits, so the
    * refusal would otherwise reach the model instead of the command's output.
+   *
+   * A read also records when a command ended, because it is the only moment
+   * this package sees the wrapper's exit-code line: that is what releasing the
+   * mount measures the wrapper's tail against, so it stops a job that may still
+   * hold a process and forgets one that cannot.
    */
   private jobsOf(active: ActiveMount): WorkspaceJobs {
     return {
@@ -897,7 +947,7 @@ export class LayerfsWorkspace implements Workspace {
         if (backend === null) throw this.noBackend(active.ref);
         try {
           const started = await backend.daemon.process.start(active.handle, jobScript(command));
-          active.jobs.set(started.process, command);
+          active.jobs.set(started.process, { command, endedAt: null, stopped: false });
           // The daemon answers with the script it ran; the command a caller
           // passed is the one it asked for.
           return { id: started.process, command, running: true, output: "" };
@@ -913,18 +963,32 @@ export class LayerfsWorkspace implements Workspace {
       output: async (job: string): Promise<BackgroundJob> => {
         const backend = await this.backendOf();
         if (backend === null) throw this.noBackend(active.ref);
-        const log = await this.jobOutput(active.handle, job);
+        const log = await this.readJobLog(active, job);
         const ended = exitOf(log);
         // The answer is already known: the wrapper's exit-code line is the
         // command's own, so it needs nothing the daemon has to say.
         if (ended.exitCode !== undefined) {
           return {
             id: job,
-            command: active.jobs.get(job) ?? "",
+            command: active.jobs.get(job)?.command ?? "",
             running: false,
             output: ended.output,
             exitCode: ended.exitCode,
           };
+        }
+        // A job this mount holds no record of is not followed: its id names
+        // another Sandbox, or one that is gone. A mount that was released
+        // forgets the jobs it no longer had to stop, and the log it would have
+        // to answer from went with the mount that could read it.
+        const record = active.jobs.get(job);
+        if (record === undefined) {
+          throw arborError({
+            code: "not_found",
+            rule: "workspace.job.unknown",
+            message: `workspace ${active.workspace} has no background job ${job}`,
+            nextAction: "start the command again with bash, then follow the job it names",
+            refs: [active.ref],
+          });
         }
         let found: { command: string; running: boolean } | undefined;
         try {
@@ -937,7 +1001,7 @@ export class LayerfsWorkspace implements Workspace {
           // started has written no exit code, so it is still running: that is
           // what its log says, and what the daemon was asked to confirm. Every
           // other refusal is the Sandbox's own, and is reported as one.
-          if (!staleIdentity(error) || !active.jobs.has(job)) {
+          if (!staleIdentity(error)) {
             throw refusal(
               error,
               "workspace.job.list",
@@ -945,25 +1009,13 @@ export class LayerfsWorkspace implements Workspace {
               "check that the Sandbox still runs, then read the command's output again",
             );
           }
-          return { id: job, command: active.jobs.get(job) ?? "", running: true, output: ended.output };
+          return { id: job, command: record.command, running: true, output: ended.output };
         }
-        // A job this mount never started is not followed: its id names another
-        // Sandbox, or one that is gone.
-        if (found === undefined && !active.jobs.has(job)) {
-          throw arborError({
-            code: "not_found",
-            rule: "workspace.job.unknown",
-            message: `workspace ${active.workspace} has no background job ${job}`,
-            nextAction: "start the command again with bash, then follow the job it names",
-            refs: [active.ref],
-          });
-        }
-        // The daemon holds a record of the job, or this mount started one it no
-        // longer holds. Either way the job has written no exit code, so what the
-        // daemon says about its process is the whole answer.
+        // The daemon holds a record of the job. It has written no exit code, so
+        // what the daemon says about its process is the whole answer.
         return {
           id: job,
-          command: active.jobs.get(job) ?? found?.command ?? "",
+          command: record.command,
           running: found?.running ?? false,
           output: log,
         };
@@ -976,10 +1028,14 @@ export class LayerfsWorkspace implements Workspace {
         // stays in the mount's bookkeeping, because its process holds itself
         // open for a moment after the line and releasing the mount stops it
         // then, exactly as it stops a command that is still running.
-        const ended = exitOf(await this.jobOutput(active.handle, job)).exitCode !== undefined;
+        const ended = exitOf(await this.readJobLog(active, job)).exitCode !== undefined;
         if (ended) return;
         await this.cancelJob(job);
-        active.jobs.delete(job);
+        // The job keeps its record, marked stopped: its process is gone, so
+        // releasing the mount has nothing left to signal for it, and a read
+        // that follows still names the command it ran.
+        const record = active.jobs.get(job);
+        if (record !== undefined) record.stopped = true;
       },
     };
   }
@@ -1026,6 +1082,28 @@ export class LayerfsWorkspace implements Workspace {
     }
   }
 
+  /**
+   * One job's log, read with one command in its mount, and the fact that the
+   * wrapper's exit-code line is in it.
+   *
+   * Reading a log is also when this package learns that a command ended, and
+   * when: the wrapper writes the line and then holds its process open for
+   * `JOB_TAIL_SECONDS`, so the sighting opens the only window in which a job
+   * that has ended can still hold a process. The first sighting is the one
+   * kept - a later read of the same log would push it forward and make a
+   * command that ended long ago look like one that just ended - and it is what
+   * releasing the mount measures against, so that a release makes no call for a
+   * command that already let its process go.
+   */
+  private async readJobLog(active: ActiveMount, job: string): Promise<string> {
+    const log = await this.jobOutput(active.handle, job);
+    const record = active.jobs.get(job);
+    if (record !== undefined && record.endedAt === null && exitOf(log).exitCode !== undefined) {
+      record.endedAt = this.options.now();
+    }
+    return log;
+  }
+
   /** The backend client of the open SDK client, or null when the checkout has none. */
   private async backendOf(): Promise<LayerfsBackendClient | null> {
     const client = this.client;
@@ -1046,11 +1124,19 @@ export class LayerfsWorkspace implements Workspace {
    * is lost by releasing it; a read-only view is discarded instead, because a
    * view must never publish anything.
    *
-   * A background command still running there is stopped first: LayerFS refuses
-   * to unmount a Workspace whose daemon still holds a process it started, and
-   * a command the host never stopped would keep the Workspace - and its
-   * Sandbox - alive. A cancel that fails is left to the unmount that follows,
-   * which reports what is still holding the Workspace.
+   * A background command that may still hold a process is stopped first:
+   * LayerFS refuses to unmount a Workspace whose daemon still holds a process
+   * it started, and a command the host never stopped would keep the Workspace -
+   * and its Sandbox - alive. What may still hold one is narrow: a command that
+   * has not ended, one the caller has not stopped, and one whose wrapper wrote
+   * its exit-code line less than the wrapper's tail ago, because the wrapper
+   * holds the process open for that long after the line. Every other job ended
+   * long before the mount was released and is forgotten - dropping it without
+   * signalling it - so a release costs nothing per command that already ran:
+   * cancelling every job a mount ever started made releasing one linear in
+   * every command it ever ran, at one engine call each. A cancel that fails is
+   * left to the unmount that follows, which reports what is still holding the
+   * Workspace.
    */
   private async release(id: number): Promise<void> {
     const active = this.mounts.get(id);
@@ -1058,9 +1144,11 @@ export class LayerfsWorkspace implements Workspace {
     this.mounts.delete(id);
     const client = this.client;
     if (client === null) return;
-    for (const job of [...active.jobs.keys()]) {
-      await this.cancelJob(job).catch(() => {});
+    const now = this.options.now();
+    for (const [job, record] of [...active.jobs]) {
       active.jobs.delete(job);
+      if (!mayHoldProcess(record, now)) continue;
+      await this.cancelJob(job).catch(() => {});
     }
     if (active.readOnly) {
       try {

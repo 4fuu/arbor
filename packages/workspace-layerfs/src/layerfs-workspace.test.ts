@@ -80,15 +80,15 @@ const mounts = () => opsCalled("workspace.mount").map((args) => pick(args, ["san
 let clock = 0;
 let directory: string;
 
-function workspace(options: { quotaBytes?: number } = {}): LayerfsWorkspace {
+function workspace(options: { quotaBytes?: number; now?: () => number } = {}): LayerfsWorkspace {
   return new LayerfsWorkspace({
     project: "arbor-test",
     stateDir: join(directory, "registry"),
     quotaBytes: options.quotaBytes,
-    now: () => {
+    now: options.now ?? (() => {
       clock += 1;
       return 1_700_000_000_000 + clock;
-    },
+    }),
     deployment: {
       home: join(directory, "home"),
       storePath: join(directory, "store", "store.sqlite"),
@@ -799,6 +799,123 @@ describe("background jobs", () => {
     const unmountAt = standin.calls.findIndex((call) => call.op === "workspace.unmount");
     assert.ok(cancelAt >= 0 && unmountAt > cancelAt);
     assert.equal(standin.mounts().length, 0);
+    await ws.close();
+  });
+
+  it("forgets the jobs that already ended, so a release makes no cancel for them", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    // A clock the test moves by hand, so it can stand where the wrapper's tail
+    // ends: the wrapper holds a process open for two seconds after the
+    // exit-code line, and a release is decided against exactly that.
+    let now = 1_700_000_000_000;
+    const ws = workspace({ now: () => now });
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    // A burst of quick commands, the way a window runs them: each one ends at
+    // once, `bash` reads it while it waits, and the wrapper holds its process
+    // open for the tail after the exit-code line it wrote.
+    const jobs: string[] = [];
+    for (let command = 0; command < 200; command += 1) {
+      const started = await mount.jobs?.start(`printf 'quick ${command}\\n'`);
+      standin.jobLog(started?.id ?? "", `quick ${command}\n`);
+      standin.jobFinish(started?.id ?? "", 0);
+      jobs.push(started?.id ?? "");
+    }
+    // What `bash` saw: every command answered ended, with its code, from the
+    // log the wrapper wrote.
+    for (const job of jobs) {
+      const answered = await mount.jobs?.output(job);
+      assert.equal(answered?.running, false);
+      assert.equal(answered?.exitCode, 0);
+    }
+    // The wrapper's pause has run out on every one of them: each process let go
+    // of the machine, exactly as one does once its sleep is over.
+    now += 10_000;
+    for (const job of jobs) standin.jobExit(job);
+
+    await mount.release();
+
+    // Not one of them was signalled, and the unmount was answered: a release
+    // no longer walks every command the mount ever ran, at one engine call
+    // each - and an unmount with a process still running is refused Busy.
+    assert.equal(opsCalled("backend.daemon.process.cancel").length, 0);
+    assert.equal(standin.mounts().length, 0);
+    await ws.close();
+  });
+
+  it("stops a job that just ended and one that still runs, and forgets one past the tail", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    let now = 1_700_000_000_000;
+    const ws = workspace({ now: () => now });
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    // A command that ended long past the wrapper's tail ago: its process is
+    // gone, so there is nothing left to stop for it.
+    const forgotten = await mount.jobs?.start("printf 'forgotten\\n'");
+    standin.jobLog(forgotten?.id ?? "", "forgotten\n");
+    standin.jobFinish(forgotten?.id ?? "", 0);
+    assert.equal((await mount.jobs?.output(forgotten?.id ?? ""))?.exitCode, 0);
+    now += 10_000;
+    standin.jobExit(forgotten?.id ?? "");
+
+    // A command that ended a moment ago: the wrapper wrote its exit-code line
+    // and is still holding its process open, so the unmount would be refused
+    // without the cancel that stops it.
+    const ended = await mount.jobs?.start("printf 'just ended\\n'");
+    standin.jobLog(ended?.id ?? "", "just ended\n");
+    standin.jobFinish(ended?.id ?? "", 0);
+    assert.equal((await mount.jobs?.output(ended?.id ?? ""))?.exitCode, 0);
+    now += 1_000;
+
+    // A command that still runs, which has written no exit code at all.
+    const running = await mount.jobs?.start("sleep 30");
+
+    await mount.release();
+
+    // Both jobs that may still hold a process were stopped, each with its own
+    // cancel before the unmount, and the one past the tail was not signalled.
+    assert.deepEqual(
+      opsCalled("backend.daemon.process.cancel").map((args) => args.process),
+      [ended?.id, running?.id],
+    );
+    const lastCancelAt = standin.calls.reduce(
+      (at, call, index) => (call.op === "backend.daemon.process.cancel" ? index : at),
+      -1,
+    );
+    const unmountAt = standin.calls.findIndex((call) => call.op === "workspace.unmount");
+    assert.ok(lastCancelAt >= 0 && unmountAt > lastCancelAt);
+    assert.equal(standin.mounts().length, 0);
+    await ws.close();
+  });
+
+  it("refuses a read of a job the release forgot, and says what to do instead", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    let now = 1_700_000_000_000;
+    const ws = workspace({ now: () => now });
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const ended = await mount.jobs?.start("printf 'ended\\n'");
+    standin.jobLog(ended?.id ?? "", "ended\n");
+    standin.jobFinish(ended?.id ?? "", 0);
+    assert.equal((await mount.jobs?.output(ended?.id ?? ""))?.exitCode, 0);
+    now += 10_000;
+    standin.jobExit(ended?.id ?? "");
+
+    await mount.release();
+
+    // The job was past the wrapper's tail, so the release forgot it instead of
+    // signalling a process that is gone - and the log it would answer from went
+    // with the mount that could read it. A read that comes later is refused,
+    // with what to do instead, rather than answered as a job that never ends.
+    await assert.rejects(() => mount.jobs?.output(ended?.id ?? "") as Promise<unknown>, (error: unknown) => {
+      assert.ok(isArborError(error));
+      assert.equal(error.rule, "workspace.job.unknown");
+      assert.equal(error.code, "not_found");
+      assert.match(error.nextAction ?? "", /start the command again/);
+      return true;
+    });
     await ws.close();
   });
 
