@@ -205,8 +205,12 @@ describe("a background job", () => {
     assert.equal(followed?.running, true);
     assert.match(followed?.output ?? "", /first/);
 
-    // A command that ends on its own stops being reported as running.
-    const quick = await mount.jobs?.start("printf 'quick\\n'");
+    // A command that ends on its own stops being reported as running. It has
+    // to outlive the call that starts it: LayerFS observes the process's
+    // identity in a second command, and a Sandbox's first process reaps an
+    // orphan that already ended, so the engine refuses a start it cannot
+    // observe - which is why this command sleeps before it ends.
+    const quick = await mount.jobs?.start("printf 'quick\\n'; sleep 1");
     let ended = false;
     for (let attempt = 0; attempt < 50 && !ended; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -273,6 +277,7 @@ describe("staged files", () => {
     if (typeof made === "string") return t.skip(made);
     const ws = made;
     const mount = await ws.mount("ws1");
+    const before = await ws.quota("ws1");
 
     const at = await mount.stage?.("/env", [
       { path: "skills/deploy/SKILL.md", text: "# deploy\n" },
@@ -281,6 +286,8 @@ describe("staged files", () => {
     assert.ok(at !== undefined);
     // Staged beside the mount, never inside the Workspace's tree.
     assert.match(at ?? "", /^\/tmp\/arbor-env\//);
+    // Staging writes outside the Workspace, so the quota is untouched by it.
+    assert.deepEqual(await ws.quota("ws1"), before);
 
     // A command in the mount reads what was staged, where it landed.
     const read = await mount.exec?.(`cat ${at}/settings.json`);
@@ -292,15 +299,19 @@ describe("staged files", () => {
     assert.notEqual(changed?.exitCode, 0);
 
     // One write in the workspace, then the snapshot the event records. The
-    // staged files were made before it and are not the workspace's own, so the
-    // snapshot holds the write and no /env file, and a read-only view of it
-    // reads neither the staged copy nor anything under the prefix.
+    // staged files were made before it and are not the workspace's own, so
+    // the snapshot holds the write and no /env file: the quota grows by
+    // exactly the one file the command wrote, six bytes of it, and nothing
+    // the staging left beside the mount.
     const written = await mount.exec?.("printf 'staged' > staged.txt");
     assert.equal(written?.exitCode, 0);
-    const counted = await ws.quota("ws1");
     const snapshot = await ws.snapshot("ws1", "r911");
     assert.equal(snapshot.ref, "ws1@r911");
-    assert.deepEqual(await ws.quota("ws1"), counted);
+    assert.deepEqual(await ws.quota("ws1"), {
+      bytes: before.bytes,
+      used: before.used + 6,
+      files: before.files + 1,
+    });
     const view = await ws.mount("ws1@r911");
     assert.equal(view.readOnly, true);
     assert.equal(await view.readFile?.("staged.txt"), "staged");
