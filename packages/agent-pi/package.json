@@ -1,0 +1,28 @@
+{
+  "name": "@arbor/agent-pi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default AgentBackend: pi-agent-core in process, with its own system prompt and no pi type crossing the interface.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*",
+    "@arbor/prompt": "workspace:*",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}
