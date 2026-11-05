@@ -329,7 +329,7 @@ export class NotesModuleGroup implements ToolGroup {
     if (this.services.notes === undefined) return [];
     return [
       moduleSpec(this.services.table, "notes", [
-        { name: "notes.search", signature: "notes.search(query?, status?, about?, visibility?, linked?)" },
+        { name: "notes.search", signature: "notes.search(query?, status?, about?, linked?)" },
         { name: "notes.read", signature: "notes.read(ref)" },
         { name: "notes.context", signature: "notes.context(ref)" },
         { name: "notes.active", signature: "notes.active()" },

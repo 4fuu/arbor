@@ -200,7 +200,6 @@ export const zhTextTable: TextTable = {
   "param.title": "笔记标题。",
   "param.summary": "不超过 200 字的摘要。",
   "param.body": "笔记正文。",
-  "param.visibility": "可见范围：shared 或 private。",
   "param.id": "笔记引用，例如 n012。",
   "param.revision": "写入方读取的修订号。",
 
@@ -225,7 +224,7 @@ export const zhTextTable: TextTable = {
   "function.board.set": "设置本窗口在做的事。",
   "function.board.expect": "声明本窗口预期收到的输入。",
   "function.board.unexpect": "取消一条预期。",
-  "function.notes.search": "按查询词、状态、主题、可见性或关联引用搜索笔记。",
+  "function.notes.search": "按查询词、状态、主题或关联引用搜索笔记。",
   "function.notes.read": "读取一个笔记的正文，按字符分页。",
   "function.notes.context": "恢复一处修订发生时的环境。",
   "function.notes.active": "列出当前启用的笔记。",

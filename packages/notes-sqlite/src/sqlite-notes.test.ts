@@ -65,7 +65,6 @@ describe("writes", () => {
     assert.equal(note.title, "deploy runbook");
     assert.equal(note.summary, "step one step two");
     assert.equal(note.body, "step one\nstep two");
-    assert.equal(note.visibility, "shared");
     assert.equal(note.revision, 1);
     assert.equal(note.time, 5_000);
     assert.equal(note.window, null);
@@ -108,15 +107,14 @@ describe("writes", () => {
     assert.equal(event.body, "deploy runbook\nstep one");
   });
 
-  it("keeps the summary and visibility a replace was not given, when the body holds", async () => {
+  it("keeps the summary a replace was not given, when the body holds", async () => {
     const { store } = memoryStore();
-    await store.write({ title: "a", body: "one", summary: "the first summary", visibility: "private" });
+    await store.write({ title: "a", body: "one", summary: "the first summary" });
     const second = await store.write({ title: "a renamed", body: "one", id: "n1", expectedRevision: 1 });
 
     assert.equal(second.ref, "n1@2");
     assert.equal(second.title, "a renamed");
     assert.equal(second.summary, "the first summary");
-    assert.equal(second.visibility, "private");
     assert.equal((await store.read("n1"))?.body, "one");
     // Revisions are append-only: the one it replaced still resolves.
     assert.equal((await store.read("n1@1"))?.body, "one");
@@ -522,16 +520,6 @@ describe("search", () => {
     assert.equal((await store.search({ query: "missing" })).total, 0);
     assert.equal((await store.search({})).total, 2);
     assert.equal((await store.search({ status: "active" })).total, 0);
-  });
-
-  it("filters by status and visibility", async () => {
-    const { store } = memoryStore();
-    await store.write({ title: "a", body: "one", visibility: "private" });
-    await store.write({ title: "b", body: "two" });
-
-    assert.equal((await store.search({ visibility: "private" })).total, 1);
-    assert.equal((await store.search({ visibility: "shared" })).total, 1);
-    assert.equal((await store.search({ visibility: "private", query: "two" })).total, 0);
   });
 
   it("finds the notes about a target, and the notes linked to a ref", async () => {

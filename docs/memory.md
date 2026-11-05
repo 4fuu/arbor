@@ -6,14 +6,13 @@ window, written only through the note tools.
 ## Notes
 
 - **Fields:** id, title, a summary of at most 200 characters, body,
-  visibility, revision, anchor. Lists show summaries; `notes.read` returns the
+  revision, anchor. Lists show summaries; `notes.read` returns the
   body, paged.
 - **One copy, checked writes.** A write names the revision it read
   ([conflicts](#conflicts)).
 - **A replace that changes the body names a summary**, so a list never shows
-  yesterday's line on today's note. A replace that names no summary or
-  visibility keeps the ones the note has; a new note takes the opening of its
-  body as its summary.
+  yesterday's line on today's note. A replace that names no summary keeps the
+  one the note has; a new note takes the opening of its body as its summary.
 - **Revisions are append-only.** An anchor keeps working after the note is
   edited, archived or deleted. A delete leaves every revision and every ref to
   them resolving, and no list, search or active set returns the note again.

@@ -6,9 +6,6 @@
 import type { EventRef, NoteId, NoteRef, Ref, Target, WindowRef } from "./refs.ts";
 import type { Page } from "./events.ts";
 
-/** Deployments may add values; `shared` is the default. */
-export type NoteVisibility = "shared" | "private" | (string & {});
-
 /**
  * A note is `active` in the current epoch's active set, `archived` when it is
  * not, and `deleted` once a delete wrote a tombstone: every revision and every
@@ -32,7 +29,6 @@ export interface NoteWriteInput {
   /** At most 200 characters. */
   summary?: string;
   body: string;
-  visibility?: NoteVisibility;
   /** The revision the writer read. A stale one is refused with what changed. */
   expectedRevision?: number;
   anchor?: Anchor;
@@ -48,7 +44,6 @@ export interface Note {
   title: string;
   summary: string;
   body: string | null;
-  visibility: NoteVisibility;
   status: NoteStatus;
   revision: number;
   anchor?: Anchor;
@@ -62,7 +57,6 @@ export interface NoteSummary {
   id: NoteId;
   title: string;
   summary: string;
-  visibility: NoteVisibility;
   status: NoteStatus;
   revision: number;
   time: number;
@@ -103,7 +97,6 @@ export interface NoteQuery {
   status?: NoteStatus;
   /** Notes about a target. */
   about?: Target;
-  visibility?: NoteVisibility;
   linked?: Ref;
   limit?: number;
   offset?: number;

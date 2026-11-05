@@ -104,7 +104,6 @@ export type {
 } from "./windows.ts";
 
 export type {
-  NoteVisibility,
   NoteStatus,
   Anchor,
   NoteWriteInput,

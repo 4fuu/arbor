@@ -37,7 +37,6 @@ export class NoteToolGroup implements ToolGroup {
         title: { type: "string", required: true },
         summary: { type: "string" },
         body: { type: "string", required: true },
-        visibility: { type: "string" },
       }),
       toolSpec(table, "note_replace", {
         id: { type: "string", required: true },
@@ -80,7 +79,6 @@ export class NoteToolGroup implements ToolGroup {
       title,
       body,
       ...(stringArg(request.args, "summary") === "" ? {} : { summary: stringArg(request.args, "summary") }),
-      ...(stringArg(request.args, "visibility") === "" ? {} : { visibility: stringArg(request.args, "visibility") }),
     });
   }
 

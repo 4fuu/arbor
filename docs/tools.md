@@ -32,7 +32,7 @@ often the logs show it used.
 | `env` | `list`, `history(item?)` |
 | `services` | `list`, `status(name)`, `logs(name)` |
 | `board` | `list`, `set(line)`, `expect(item? \| description?)`, `unexpect(ref)` |
-| `notes` | `search(query?, status?, about?, visibility?, linked?)`, `read(ref)`, `context(ref)`, `active` |
+| `notes` | `search(query?, status?, about?, linked?)`, `read(ref)`, `context(ref)`, `active` |
 | `channels` | `list`, `get(ref)` |
 | `tasks` | `list`, `show(t…)` |
 | `schedule` | `list`, `create`, `update`, `cancel` |

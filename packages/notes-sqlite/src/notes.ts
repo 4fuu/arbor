@@ -47,7 +47,6 @@ import type {
   NoteStatus,
   NoteSummary,
   NoteUseInput,
-  NoteVisibility,
   NoteWriteInput,
   NotesSnapshot,
   NoteStore,
@@ -103,7 +102,6 @@ interface NoteRow {
   title: string;
   summary: string;
   body: string;
-  visibility: string;
   status: string;
   window: string | null;
   anchor: string | null;
@@ -117,7 +115,6 @@ interface RevisionRow {
   title: string;
   summary: string;
   body: string;
-  visibility: string;
   deleted: number;
   time: number;
   window: string | null;
@@ -139,7 +136,6 @@ interface SummaryRow {
   revision: number;
   title: string;
   summary: string;
-  visibility: string;
   status: string;
   updated: number;
 }
@@ -244,7 +240,6 @@ function toSummary(row: SummaryRow): NoteSummary {
     id: noteIdOf(id),
     title: row.title,
     summary: row.summary,
-    visibility: row.visibility as NoteVisibility,
     status: row.status as NoteStatus,
     revision,
     time: toNumber(row.updated),
@@ -261,7 +256,6 @@ function toNote(row: NoteRow): Note {
     summary: row.summary,
     // A deleted note has no current body; its revisions still resolve by ref.
     body: row.status === "deleted" ? null : row.body,
-    visibility: row.visibility as NoteVisibility,
     status: row.status as NoteStatus,
     revision,
     ...(row.anchor === null ? {} : { anchor: JSON.parse(row.anchor) as Anchor }),
@@ -288,7 +282,6 @@ function searchCall(query: NoteQuery, offset: number, limit: number): string {
   const parts: string[] = [];
   if (query.query !== undefined) parts.push(`query=${JSON.stringify(query.query)}`);
   if (query.status !== undefined) parts.push(`status=${query.status}`);
-  if (query.visibility !== undefined) parts.push(`visibility=${query.visibility}`);
   if (query.about !== undefined) parts.push(`about=${query.about}`);
   if (query.linked !== undefined) parts.push(`linked=${query.linked}`);
   parts.push(`offset=${offset + limit}`);
@@ -482,9 +475,8 @@ export class SqliteNoteStore implements NoteStore {
 
     const anchor = input.anchor ?? null;
     const deleted = input.delete === true;
-    // A replace that names no summary or visibility keeps the ones it has.
+    // A replace that names no summary keeps the one it has.
     const summary = input.summary ?? (previous === null ? deriveSummary(input.body) : previous.summary);
-    const visibility = input.visibility ?? (previous === null ? "shared" : (previous.visibility as NoteVisibility));
     const status: NoteStatus = deleted ? "deleted" : ((previous?.status as NoteStatus | undefined) ?? "archived");
     const body = deleted ? "" : input.body;
     const refs =
@@ -495,27 +487,27 @@ export class SqliteNoteStore implements NoteStore {
     if (created) {
       const info = this.db
         .prepare(
-          `INSERT INTO notes (created, updated, revision, title, summary, body, visibility, status, window, anchor, event)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+          `INSERT INTO notes (created, updated, revision, title, summary, body, status, window, anchor, event)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
         )
-        .run(time, time, revision, input.title, summary, body, visibility, status, window, anchorJson);
+        .run(time, time, revision, input.title, summary, body, status, window, anchorJson);
       id = toNumber(info.lastInsertRowid);
     } else {
       this.db
         .prepare(
-          `UPDATE notes SET updated = ?, revision = ?, title = ?, summary = ?, body = ?, visibility = ?,
+          `UPDATE notes SET updated = ?, revision = ?, title = ?, summary = ?, body = ?,
                              status = ?, window = ?, anchor = ?, event = NULL
            WHERE id = ?`,
         )
-        .run(time, revision, input.title, summary, body, visibility, status, window, anchorJson, id);
+        .run(time, revision, input.title, summary, body, status, window, anchorJson, id);
     }
 
     this.db
       .prepare(
-        `INSERT INTO note_revisions (note, revision, title, summary, body, visibility, deleted, time, window, event, anchor, refs)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+        `INSERT INTO note_revisions (note, revision, title, summary, body, deleted, time, window, event, anchor, refs)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
       )
-      .run(id, revision, input.title, summary, body, visibility, deleted ? 1 : 0, time, window, anchorJson, refs);
+      .run(id, revision, input.title, summary, body, deleted ? 1 : 0, time, window, anchorJson, refs);
 
     // The search index holds the current state; a deleted note is not found.
     this.db.prepare(`DELETE FROM ${FTS_TABLE} WHERE rowid = ?`).run(id);
@@ -569,7 +561,7 @@ export class SqliteNoteStore implements NoteStore {
       const previous = written.previous as NoteRow;
       this.db
         .prepare(
-          `UPDATE notes SET updated = ?, revision = ?, title = ?, summary = ?, body = ?, visibility = ?,
+          `UPDATE notes SET updated = ?, revision = ?, title = ?, summary = ?, body = ?,
                              status = ?, window = ?, anchor = ?, event = ?
            WHERE id = ?`,
         )
@@ -579,7 +571,6 @@ export class SqliteNoteStore implements NoteStore {
           previous.title,
           previous.summary,
           previous.body,
-          previous.visibility,
           previous.status,
           previous.window,
           previous.anchor,
@@ -878,7 +869,7 @@ export class SqliteNoteStore implements NoteStore {
   private noteRow(id: number): NoteRow | null {
     const row = this.db
       .prepare(
-        `SELECT id, created, updated, revision, title, summary, body, visibility, status, window, anchor, event
+        `SELECT id, created, updated, revision, title, summary, body, status, window, anchor, event
          FROM notes WHERE id = ?`,
       )
       .get(id) as NoteRow | undefined;
@@ -888,7 +879,7 @@ export class SqliteNoteStore implements NoteStore {
   private revisionRow(note: number, revision: number): RevisionRow | null {
     const row = this.db
       .prepare(
-        `SELECT wseq, note, revision, title, summary, body, visibility, deleted, time, window, event, anchor, refs
+        `SELECT wseq, note, revision, title, summary, body, deleted, time, window, event, anchor, refs
          FROM note_revisions WHERE note = ? AND revision = ?`,
       )
       .get(note, revision) as RevisionRow | undefined;
@@ -939,15 +930,11 @@ export class SqliteNoteStore implements NoteStore {
       clauses.push("n.status = ?");
       params.push(query.status);
     }
-    if (query.visibility !== undefined) {
-      clauses.push("n.visibility = ?");
-      params.push(query.visibility);
-    }
     const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
     const rows = this.db
       .prepare(
         `SELECT n.id AS id, n.revision AS revision, n.title AS title, n.summary AS summary,
-                n.visibility AS visibility, n.status AS status, n.updated AS updated
+                n.status AS status, n.updated AS updated
          FROM notes n${where} ORDER BY n.id LIMIT ? OFFSET ?`,
       )
       .all(...params, limit, offset) as unknown as SummaryRow[];
@@ -974,13 +961,9 @@ export class SqliteNoteStore implements NoteStore {
       clauses.push("status = ?");
       params.push(query.status);
     }
-    if (query.visibility !== undefined) {
-      clauses.push("visibility = ?");
-      params.push(query.visibility);
-    }
     const rows = this.db
       .prepare(
-        `SELECT id, revision, title, summary, visibility, status, updated FROM notes
+        `SELECT id, revision, title, summary, status, updated FROM notes
          WHERE ${clauses.join(" AND ")}`,
       )
       .all(...params) as unknown as SummaryRow[];
@@ -1111,7 +1094,7 @@ export class SqliteNoteStore implements NoteStore {
     const rows = this.db
       .prepare(
         `SELECT i.note AS note, i.revision AS revision, i.title AS title, i.summary AS summary,
-                i.time AS time, n.visibility AS visibility, n.status AS status
+                i.time AS time, n.status AS status
          FROM note_epoch_items i JOIN notes n ON n.id = i.note
          WHERE i.epoch = ? AND n.status != 'deleted'
          ORDER BY i.note`,
@@ -1122,7 +1105,6 @@ export class SqliteNoteStore implements NoteStore {
       title: string;
       summary: string;
       time: number;
-      visibility: string;
       status: string;
     }>;
     return rows.map((row) => {
@@ -1133,7 +1115,6 @@ export class SqliteNoteStore implements NoteStore {
         id: noteIdOf(note),
         title: row.title,
         summary: row.summary,
-        visibility: row.visibility as NoteVisibility,
         status: row.status as NoteStatus,
         revision,
         time: toNumber(row.time),
