@@ -43,6 +43,15 @@ export function turn(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * How long `ScriptedBackend.finished` waits for a scripted run to finish
+ * before it reports one that never did. It is generous on purpose: it bounds a
+ * run that is genuinely stuck, and a run that works finishes in milliseconds,
+ * so the only thing a larger bound costs is the wait before a real failure is
+ * reported.
+ */
+const FINISHED_TIMEOUT_MS = 10_000;
+
 /** Timers a test fires by hand. */
 export class ManualTimers {
   private next = 1;
@@ -282,9 +291,21 @@ export class ScriptedBackend implements AgentBackend {
    * Resolves when every scripted run has used up its steps and the host has
    * seen the events it produced. A window is opened asynchronously, so this
    * waits for the session to exist before it waits for the run.
+   *
+   * The wait is bounded in time, never in yields. One `turn` is one pass of the
+   * event loop, which costs microseconds while nothing blocks in it, while the
+   * work a run waits on - a tool call that writes a file, then snapshots the
+   * directory it changed - costs milliseconds of real time on the thread pool.
+   * A budget of yields therefore expires on a loaded machine long before the
+   * run has finished, and a test that failed for no other reason reports "the
+   * scripted run never finished": a run that needs ten yields when the machine
+   * is quiet needs a thousand when it is not, and neither number says anything
+   * about how long the run takes. So the bound is a deadline, and the loop
+   * keeps yielding to the event loop until it passes.
    */
   async finished(): Promise<void> {
-    for (let attempt = 0; attempt < 500; attempt += 1) {
+    const deadline = Date.now() + FINISHED_TIMEOUT_MS;
+    for (;;) {
       if (this.steps.length === 0) {
         const busy = [...this.sessions].filter((session) => !session.settled);
         if (busy.length === 0) {
@@ -293,6 +314,7 @@ export class ScriptedBackend implements AgentBackend {
           return;
         }
       }
+      if (Date.now() >= deadline) break;
       await turn();
     }
     throw new Error("the scripted run never finished");
