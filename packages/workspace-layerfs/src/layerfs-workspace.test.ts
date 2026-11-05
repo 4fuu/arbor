@@ -50,6 +50,12 @@ interface Standin {
   jobExit(id: string): void;
   /** The exit-code line a wrapped command leaves in its log when it ends. */
   jobFinish(id: string, exitCode: number): void;
+  /**
+   * Mark one background process's identity no longer provable, the way a
+   * finished job whose pid a later group leader reused is: the engine then
+   * refuses every `process.list` in that Sandbox.
+   */
+  staleJob(id: string): void;
   /** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */
   containerFiles(sandbox: string): { path: string; text: string; readOnly: boolean }[];
 }
@@ -603,6 +609,128 @@ describe("background jobs", () => {
     assert.equal(answered2?.running, false);
     assert.equal(answered2?.exitCode, 3);
     assert.equal(answered2?.output, "bad\n");
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("answers a quick command from its log when one stale record refuses the list", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    // A command that ended before this one: the wrapper wrote its exit code and
+    // holds its process open, and the pid it ran as has since been reused by a
+    // later group leader. The engine proves every process it recorded is still
+    // the one it started, by comparing the start time it wrote down with the
+    // one /proc/<pid>/stat reports, so that one record refuses the whole list
+    // call - and the status read of every job in the Sandbox with it.
+    const earlier = await mount.jobs?.start("printf 'earlier\n'");
+    standin.jobLog(earlier?.id ?? "", "earlier\n");
+    standin.jobFinish(earlier?.id ?? "", 0);
+    standin.staleJob(earlier?.id ?? "");
+    const listing = await standin.backendCall("backend.daemon.process.list", {});
+    assert.equal(listing.refused?.code, "Unknown");
+    assert.equal(listing.refused?.message, "process group identity is no longer provable; no signal sent");
+
+    // A quick command this mount started after it. `bash` waits for it and
+    // reads it while it waits, and its answer is already in the log: the
+    // wrapper's exit-code line, which needs nothing the daemon has to say.
+    const quick = await mount.jobs?.start("printf 'quick\n'");
+    standin.jobLog(quick?.id ?? "", "quick\n");
+    standin.jobFinish(quick?.id ?? "", 0);
+    const listed = opsCalled("backend.daemon.process.list").length;
+    const answered = await mount.jobs?.output(quick?.id ?? "");
+    // The list was never asked, so its refusal cannot reach the answer.
+    assert.equal(opsCalled("backend.daemon.process.list").length, listed);
+    assert.equal(answered?.running, false);
+    assert.equal(answered?.exitCode, 0);
+    assert.equal(answered?.output, "quick\n");
+    assert.equal(answered?.command, "printf 'quick\n'");
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("keeps following a command that still runs when one stale record refuses the list", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const earlier = await mount.jobs?.start("printf 'earlier\n'");
+    standin.jobFinish(earlier?.id ?? "", 0);
+    standin.staleJob(earlier?.id ?? "");
+
+    const running = await mount.jobs?.start("sleep 30");
+    standin.jobLog(running?.id ?? "", "working\n");
+    // `bash` reads the job it started once and again while it waits, up to its
+    // wait window. Every read answers what the command wrote so far, so one
+    // that outlives the window is handed to `bash_output` rather than answered
+    // with the refusal - and a read that lands after the command ended answers
+    // it, with its code.
+    for (let read = 0; read < 3; read += 1) {
+      const followed = await mount.jobs?.output(running?.id ?? "");
+      assert.equal(followed?.running, true);
+      assert.equal(followed?.output, "working\n");
+      assert.equal(followed?.exitCode, undefined);
+    }
+    standin.jobFinish(running?.id ?? "", 0);
+    const ended = await mount.jobs?.output(running?.id ?? "");
+    assert.equal(ended?.running, false);
+    assert.equal(ended?.exitCode, 0);
+    assert.equal(ended?.output, "working\n");
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("stops a command that already ended without signalling it", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const ended = await mount.jobs?.start("printf 'ended\n'");
+    standin.jobLog(ended?.id ?? "", "ended\n");
+    standin.jobFinish(ended?.id ?? "", 0);
+    standin.staleJob(ended?.id ?? "");
+
+    // There is nothing left to signal: the engine's own cancel answers Stopped
+    // for a process that is no longer alive, and a stale record refuses the
+    // call instead of answering, so an ended command is left alone.
+    await mount.jobs?.stop(ended?.id ?? "");
+    assert.equal(opsCalled("backend.daemon.process.cancel").length, 0);
+    const answered = await mount.jobs?.output(ended?.id ?? "");
+    assert.equal(answered?.running, false);
+    assert.equal(answered?.exitCode, 0);
+
+    // The mount still releases: the job is one it stops as it goes, and the
+    // unmount is answered - the wrapper holds its process open for a moment
+    // after the exit-code line, and releasing the mount ends that.
+    await mount.release();
+    assert.equal(standin.mounts().length, 0);
+    assert.deepEqual(pick(opsCalled("backend.daemon.process.cancel").at(-1) ?? {}, ["process"]), {
+      process: ended?.id,
+    });
+    await ws.close();
+  });
+
+  it("still refuses a list the Sandbox itself refused", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const running = await mount.jobs?.start("sleep 30");
+    standin.refuse("backend.daemon.process.list", "NoSuchSandbox", "the project has no Sandbox 1");
+
+    // A refusal that is not the stale identity is the Sandbox's own, and is
+    // reported as one: only that one is answered from the log.
+    await assert.rejects(() => mount.jobs?.output(running?.id ?? "") as Promise<unknown>, (error: unknown) => {
+      assert.ok(isArborError(error));
+      assert.equal(error.rule, "workspace.job.list");
+      assert.equal(error.code, "not_found");
+      return true;
+    });
 
     await mount.release();
     await ws.close();

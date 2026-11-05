@@ -26,7 +26,10 @@
  *   and refuses one that has already been reaped, so a bare quick command would
  *   never start, and the daemon reports whether a process runs and never how a
  *   command ended, so the wrapper leaves the exit code in the log it is already
- *   writing to.
+ *   writing to. That log is read before the daemon is asked anything, because
+ *   the engine proves every process it recorded is still the one it started and
+ *   refuses a whole `process.list` when one finished job's pid has been reused:
+ *   a status read must not depend on a call one stale record can refuse.
  *
  * Two limits come from LayerFS itself and are worth stating: its Store has no
  * per-Branch delete, so `reclaim` drops this package's refs and leaves the
@@ -110,8 +113,12 @@ interface ActiveMount {
   path: string;
   /** One command at a time in this mount. */
   exec: Mutex;
-  /** The background jobs this mount started, so releasing it stops them. */
-  jobs: Set<string>;
+  /**
+   * The background commands this mount started, each with the command a caller
+   * passed for it, so releasing the mount stops them and a status read names
+   * the command without asking the daemon.
+   */
+  jobs: Map<string, string>;
 }
 
 interface MountedIn {
@@ -280,6 +287,24 @@ function refusal(error: unknown, rule: string, message: string, nextAction: stri
     message,
     nextAction,
   });
+}
+
+/**
+ * The refusal LayerFS answers when it can no longer prove that a process it
+ * recorded is the one it started: it reads the process's start time from
+ * `/proc/<pid>/stat` and refuses one that does not match, which is what a
+ * finished job whose pid a later group leader reused looks like. Its
+ * `process.list` proves every record it holds that way, so a single stale
+ * record refuses the whole call - and the status read of every job in the
+ * Sandbox with it.
+ */
+function staleIdentity(error: unknown): boolean {
+  const refused = error as { code?: unknown; message?: unknown };
+  return (
+    refused.code === "Unknown" &&
+    typeof refused.message === "string" &&
+    refused.message.includes("process group identity is no longer provable")
+  );
 }
 
 function parse(ref: string): ParsedRef {
@@ -678,7 +703,7 @@ export class LayerfsWorkspace implements Workspace {
       handle,
       path: mounted.path,
       exec,
-      jobs: new Set<string>(),
+      jobs: new Map<string, string>(),
     };
     this.mounts.set(id, active);
     return {
@@ -855,6 +880,15 @@ export class LayerfsWorkspace implements Workspace {
    * the daemon reports whether a process still runs and never how it ended, so
    * the code comes back in the log and a job that carries it is answered as
    * ended even while its pause keeps the process observable.
+   *
+   * The log is read before the daemon is asked anything, because one finished
+   * job can refuse every status read in its Sandbox: the engine proves each
+   * process it recorded is still the one it started, and a finished job whose
+   * pid a later group leader reused is not, so its `process.list` is refused
+   * outright (`staleIdentity`). A job that carries the exit-code line answers
+   * from the log alone, and one that does not is answered as still running
+   * rather than with the refusal - `bash` reads a job while it waits, so the
+   * refusal would otherwise reach the model instead of the command's output.
    */
   private jobsOf(active: ActiveMount): WorkspaceJobs {
     return {
@@ -863,7 +897,7 @@ export class LayerfsWorkspace implements Workspace {
         if (backend === null) throw this.noBackend(active.ref);
         try {
           const started = await backend.daemon.process.start(active.handle, jobScript(command));
-          active.jobs.add(started.process);
+          active.jobs.set(started.process, command);
           // The daemon answers with the script it ran; the command a caller
           // passed is the one it asked for.
           return { id: started.process, command, running: true, output: "" };
@@ -879,18 +913,39 @@ export class LayerfsWorkspace implements Workspace {
       output: async (job: string): Promise<BackgroundJob> => {
         const backend = await this.backendOf();
         if (backend === null) throw this.noBackend(active.ref);
+        const log = await this.jobOutput(active.handle, job);
+        const ended = exitOf(log);
+        // The answer is already known: the wrapper's exit-code line is the
+        // command's own, so it needs nothing the daemon has to say.
+        if (ended.exitCode !== undefined) {
+          return {
+            id: job,
+            command: active.jobs.get(job) ?? "",
+            running: false,
+            output: ended.output,
+            exitCode: ended.exitCode,
+          };
+        }
         let found: { command: string; running: boolean } | undefined;
         try {
           const page = await backend.daemon.process.list(PAGE_SIZE, 0);
           const listed = page.items.find((item) => item.id === job);
           if (listed !== undefined) found = { command: listed.command, running: listed.status === "running" };
         } catch (error) {
-          throw refusal(
-            error,
-            "workspace.job.list",
-            `the background commands of workspace ${active.workspace} could not be listed`,
-            "check that the Sandbox still runs, then read the command's output again",
-          );
+          // One stale record refuses the whole list call, and with it the
+          // status read of every job in the Sandbox. A command this mount
+          // started has written no exit code, so it is still running: that is
+          // what its log says, and what the daemon was asked to confirm. Every
+          // other refusal is the Sandbox's own, and is reported as one.
+          if (!staleIdentity(error) || !active.jobs.has(job)) {
+            throw refusal(
+              error,
+              "workspace.job.list",
+              `the background commands of workspace ${active.workspace} could not be listed`,
+              "check that the Sandbox still runs, then read the command's output again",
+            );
+          }
+          return { id: job, command: active.jobs.get(job) ?? "", running: true, output: ended.output };
         }
         // A job this mount never started is not followed: its id names another
         // Sandbox, or one that is gone.
@@ -903,19 +958,26 @@ export class LayerfsWorkspace implements Workspace {
             refs: [active.ref],
           });
         }
-        const log = await this.jobOutput(active.handle, job);
-        const ended = exitOf(log);
+        // The daemon holds a record of the job, or this mount started one it no
+        // longer holds. Either way the job has written no exit code, so what the
+        // daemon says about its process is the whole answer.
         return {
           id: job,
-          command: found?.command ?? "",
-          // A command that recorded its exit has ended, whatever the daemon
-          // still says about the process that is holding itself open for it.
-          running: (found?.running ?? false) && ended.exitCode === undefined,
-          output: ended.output,
-          ...(ended.exitCode === undefined ? {} : { exitCode: ended.exitCode }),
+          command: active.jobs.get(job) ?? found?.command ?? "",
+          running: found?.running ?? false,
+          output: log,
         };
       },
       stop: async (job: string): Promise<void> => {
+        // A command that already ended - its exit-code line is in the log - is
+        // left alone: the engine's own cancel answers Stopped for a process
+        // that is no longer alive, and a stale record refuses the call instead,
+        // so signalling an ended command is neither needed nor possible. It
+        // stays in the mount's bookkeeping, because its process holds itself
+        // open for a moment after the line and releasing the mount stops it
+        // then, exactly as it stops a command that is still running.
+        const ended = exitOf(await this.jobOutput(active.handle, job)).exitCode !== undefined;
+        if (ended) return;
         await this.cancelJob(job);
         active.jobs.delete(job);
       },
@@ -996,7 +1058,7 @@ export class LayerfsWorkspace implements Workspace {
     this.mounts.delete(id);
     const client = this.client;
     if (client === null) return;
-    for (const job of [...active.jobs]) {
+    for (const job of [...active.jobs.keys()]) {
       await this.cancelJob(job).catch(() => {});
       active.jobs.delete(job);
     }

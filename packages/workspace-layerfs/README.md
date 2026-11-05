@@ -101,6 +101,23 @@ that outlives `bash`'s wait window keeps running and is followed with
 `bash_output` and stopped with `bash_stop`, and a command its caller stopped
 never wrote an exit code and so has none.
 
+The log is therefore read before the daemon is asked anything. The engine proves
+every process it recorded is still the one it started, by comparing the start
+time it wrote down with the one `/proc/<pid>/stat` reports, and it proves every
+record before it answers `process.list` - so a finished job whose pid a later
+group leader reused refuses the whole call, and the status read of every job in
+that Sandbox with it. One such record shows up in a burst of quick commands,
+about once in twenty, and a retry a moment later succeeds. A job that carries the
+exit-code line is answered from its log alone, which needs no `process.list` at
+all, and one that does not is answered as still running with what it has written
+so far, because that is what its log says and what the daemon was asked to
+confirm. `bash` reads a job while it waits, so the refusal would otherwise reach
+the model instead of the command's output. `stop` holds the same way: a command
+that already ended is not signalled, because the engine's own cancel answers
+`Stopped` for a process that is no longer alive and a stale record refuses the
+call instead of answering. Every other refusal is the Sandbox's own and is
+reported as one.
+
 Two things come from LayerFS itself. A background command holds its Workspace
 mounted, so releasing a mount stops the commands it started first - an unmount
 with one still running is refused `Busy`. And the daemon's own answer about a
@@ -258,11 +275,13 @@ Two rules come from LayerFS itself, not from this package:
   package's side of the contract: which Branch a ref names, which Commit an
   event's snapshot holds, what a mount does and what it never publishes, what
   a background command does - the stand-in refuses a command that ends before
-  the engine observes it, and a wrapped command that ended answers with its
-  exit code - and that what staging writes beside the mount never reaches a
-  snapshot. It loads `@layerfs/backend` too, so the checkout's packages must be
-  linked (`npm install` in `.layerfs/api`) for it to run; without them every
-  case skips with that as the reason.
+  the engine observes it, a wrapped command that ended answers with its
+  exit code, and one stale record - a finished job whose pid a later group
+  leader reused - refuses every `process.list` without breaking the status
+  read of any job - and that what staging writes beside the mount never
+  reaches a snapshot. It loads `@layerfs/backend` too, so the checkout's
+  packages must be linked (`npm install` in `.layerfs/api`) for it to run;
+  without them every case skips with that as the reason.
 - `layerfs-workspace.real.test.ts` runs against a real Store, and a real mount
   where the machine has one, and skips with its reason otherwise. Its
   `a background job` case starts a command that outlives the call, reads what

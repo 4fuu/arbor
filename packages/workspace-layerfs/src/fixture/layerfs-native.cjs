@@ -24,6 +24,7 @@ const state = {
   diffs: new Map(),
   refusals: new Map(),
   processes: new Map(),
+  stale: new Set(),
   container: new Map(),
   initialized: false,
   calls: [],
@@ -144,6 +145,7 @@ function reset() {
   state.diffs.clear();
   state.refusals.clear();
   state.processes.clear();
+  state.stale.clear();
   state.container.clear();
   state.initialized = false;
   state.calls.length = 0;
@@ -480,6 +482,14 @@ function answer(op, args) {
       return value({ kind: "running", process: id, command: args.command ?? "" });
     }
     case "backend.daemon.process.list": {
+      // The engine proves every process it recorded is still the one it
+      // started, by reading `/proc/<pid>/stat` and comparing the start time it
+      // wrote down. A finished job whose pid a later group leader reused fails
+      // that proof, and the whole listing is refused - so one stale record
+      // takes the status read of every job in the Sandbox with it.
+      if ([...state.processes.values()].some((process) => state.stale.has(process.id))) {
+        return refused("Unknown", "process group identity is no longer provable; no signal sent", { op });
+      }
       const items = [...state.processes.values()].map((process) => ({
         id: process.id,
         sandbox: process.sandbox,
@@ -562,6 +572,19 @@ exports.jobFinish = (id, exitCode) => {
   const process = state.processes.get(id);
   if (process === undefined) throw new Error(`no process ${id}`);
   process.log += `\n\u001e${exitCode}\n`;
+};
+
+/**
+ * Mark one background process's identity no longer provable: the pid it ran as
+ * has since been reused by a later group leader, so the start time the engine
+ * recorded for it no longer matches the one `/proc/<pid>/stat` reports. The
+ * engine proves every record it holds before it answers `process.list`, so one
+ * such record refuses the whole call - which is what a burst of quick commands
+ * hits when an earlier command's pid is reused.
+ */
+exports.staleJob = (id) => {
+  if (!state.processes.has(id)) throw new Error(`no process ${id}`);
+  state.stale.add(id);
 };
 
 /** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */
