@@ -26,7 +26,6 @@ import type {
   Ref,
   SearchHit,
   TextTable,
-  ToolCall,
   ToolResult,
   WindowRef,
   Workspace,
@@ -196,15 +195,4 @@ export function moduleSpec(
   };
 }
 
-/** One call a group did not own. */
-export function unknownTool(table: TextTable, call: ToolCall): ToolResult {
-  return {
-    callId: call.callId,
-    ok: false,
-    content: "",
-    error: {
-      rule: "tool.unknown",
-      message: messageOf(table, "unknown_tool", { name: call.name }),
-    },
-  };
-}
+

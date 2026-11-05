@@ -11,7 +11,7 @@
 
 import type { EnvRef, NoteSummary, Settings, TextTable } from "@arbor/interfaces";
 import type { NoteStore } from "@arbor/interfaces";
-import { Renderer, memoryBlocks, renderMemorySnapshot, renderSystemPrompt } from "@arbor/prompt";
+import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@arbor/prompt";
 import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@arbor/interfaces";
 
 /** The default: the prefix is rebuilt at most every ten minutes. */
@@ -98,11 +98,6 @@ export class SnapshotBuilder {
     if (notes === undefined) return [];
     const snapshot = await notes.snapshot();
     return snapshot.items;
-  }
-
-  /** The blocks the memory snapshot renders as, for the first input's delta. */
-  memoryBlocksOf(notes: readonly NoteSummary[]) {
-    return memoryBlocks(notes);
   }
 
   /** Force the next `epoch()` to rebuild, after an environment change. */

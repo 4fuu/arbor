@@ -22,7 +22,6 @@ export {
   moduleSpec,
   refused,
   toolSpec,
-  unknownTool,
   type LiveWindow,
   type SearchOutcome,
   type SendOutcome,

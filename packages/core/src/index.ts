@@ -11,7 +11,7 @@
 export { Arbor, type ArborOptions, type Timer, type Timers, type WindowRecord } from "./host.ts";
 export { Board, hostBody, readNumber, readString, type BoardEntry } from "./board.ts";
 export { EffectQueue, type EffectInput, type EffectOutcome } from "./effects.ts";
-export { RefAllocator, eventRefOf, highestOf, noteRefOf, type RefSeed } from "./refs.ts";
+export { RefAllocator, eventRefOf, highestOf, type RefSeed } from "./refs.ts";
 export {
   DEFAULT_MIN_INTERVAL_MS,
   SnapshotBuilder,

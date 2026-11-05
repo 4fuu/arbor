@@ -6,7 +6,7 @@
  * continues the one global order instead of starting a second one.
  */
 
-import type { EventRef, MessageRef, NoteRef, TaskRef, WindowRef } from "@arbor/interfaces";
+import type { EventRef, MessageRef, TaskRef, WindowRef } from "@arbor/interfaces";
 import type { Journal } from "@arbor/interfaces";
 
 export interface RefSeed {
@@ -73,11 +73,6 @@ export class RefAllocator {
     this.message += 1;
     return `m${this.message}`;
   }
-}
-
-/** A note ref, for a board line that names one. */
-export function noteRefOf(id: string): NoteRef | undefined {
-  return /^n\d+(@\d+)?$/.test(id) ? (id as NoteRef) : undefined;
 }
 
 /** An event ref, for a tool call recorded at one. */
