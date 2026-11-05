@@ -110,6 +110,22 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  packages/workspace-dir:
+    dependencies:
+      '@arbor/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@arbor/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
 packages:
 
   '@node-rs/jieba-android-arm-eabi@2.0.4':
