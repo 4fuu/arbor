@@ -22,6 +22,12 @@ export interface Settings {
     activeSetJudgeShare?: number;
     /** How many candidate windows the route decision may score. At most 8. */
     maxCandidates?: number;
+    /**
+     * What each configured tier is for, as the `model tier` question reads it:
+     * one line of text per tier name (docs/dispatch.md#model-tiers). A tier
+     * named here with no text falls back to the judge's own description of it.
+     */
+    tierCriteria?: Record<string, string>;
   };
 
   /** Each tier maps to a model from the backend's catalog. */

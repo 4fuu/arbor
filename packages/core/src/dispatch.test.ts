@@ -423,6 +423,47 @@ describe("model tiers", () => {
     const asked = judge.requests.find((request) => request.decision === "model_tier");
     assert.deepEqual(asked?.state.tiers, ["light", "strong"]);
   });
+
+  it("describes each configured tier with what settings say it is for", async () => {
+    const judge = newWindowJudge();
+    const { arbor, backend } = await host({
+      judge,
+      settings: {
+        modelTiers: { chat: "model-chat", code: "model-code" },
+        defaultTier: "chat",
+        judge: {
+          tierCriteria: {
+            chat: "回复、查询和转述：快且便宜的模型就够。",
+            code: "代码、设计和排查：需要深度推理，错的代价高。",
+          },
+        },
+      },
+    });
+
+    await arbor.dispatch(batch("gh:pr:57", "看下 CI"));
+    await opened(backend, 1);
+
+    const asked = judge.requests.find((request) => request.decision === "model_tier");
+    assert.deepEqual(asked?.state.tiers, ["chat", "code"]);
+    // The judge reads the deployment's own tiers through its own words, so a
+    // tier that is not the judge's own is not described as light or strong.
+    assert.deepEqual(asked?.state.criteria, {
+      chat: "回复、查询和转述：快且便宜的模型就够。",
+      code: "代码、设计和排查：需要深度推理，错的代价高。",
+    });
+    assert.equal(backend.opened[0]?.model, "model-chat");
+  });
+
+  it("leaves the tier criteria out when settings name none", async () => {
+    const judge = newWindowJudge();
+    const { arbor, backend } = await host({ judge, settings: tiers });
+
+    await arbor.dispatch(batch("gh:pr:57", "看下 CI"));
+    await opened(backend, 1);
+
+    const asked = judge.requests.find((request) => request.decision === "model_tier");
+    assert.equal(asked?.state.criteria, undefined);
+  });
 });
 
 describe("the active set", () => {

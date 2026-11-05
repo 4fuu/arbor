@@ -296,15 +296,19 @@ export function prepareModelTier(
   tierCriteria: Record<string, string>,
 ): PreparedDecision {
   const options: Record<string, string> = {};
+  // What the host's settings say each tier is for comes first, over this
+  // package's own description of the tiers it knows
+  // (docs/dispatch.md#model-tiers).
+  const described = { ...tierCriteria, ...(state.criteria ?? {}) };
   for (const tier of state.tiers) {
-    options[tier] = tierCriteria[tier] ?? "The task fits this tier's own model better than any other tier's.";
+    options[tier] = described[tier] ?? "The task fits this tier's own model better than any other tier's.";
   }
   return {
     state: {
       task: taskState(state.task),
       tiers: [...state.tiers],
       state_note:
-        "`task`: the task a new window would open for, as `filter`'s state describes it. `tiers`: the model tiers this host has configured, in the order settings lists them; the answer names one of them.",
+        "`task`: the task a new window would open for, as `filter`'s state describes it. `tiers`: the model tiers this host has configured, in the order settings lists them; the answer names one of them, and each option's own criterion says what that tier is for.",
     },
     questions: state.tiers.length === 0 ? {} : { model_tier: choiceQuestion(MODEL_TIER_INSTRUCTION, options, criteria) },
     items: [...state.tiers],

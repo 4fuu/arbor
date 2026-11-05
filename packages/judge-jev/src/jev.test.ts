@@ -288,6 +288,25 @@ describe("model tier", () => {
     assert.equal(((await jev.decide({ decision: "model_tier", mode: "on", state })) as ModelTierAnswer).tier, "light");
   });
 
+  it("describes a tier with what the host's settings say it is for", async () => {
+    const { jev, sent } = jevWith({ model_tier: { type: "choice", choice: "code" } });
+    const state: ModelTierState = {
+      task: task(),
+      tiers: ["chat", "code"],
+      criteria: { code: "Code, design and debugging, where a mistake is expensive." },
+    };
+    const answer = (await jev.decide({ decision: "model_tier", mode: "on", state })) as ModelTierAnswer;
+
+    assert.equal(answer.tier, "code");
+    const criteria = sent[0]?.questions.model_tier?.criteria as Record<string, string>;
+    assert.equal(criteria.code, "Code, design and debugging, where a mistake is expensive.");
+    const chat = criteria.chat ?? "";
+    // A tier the settings name no text for is described generically, and never
+    // through this package's own description of light and strong.
+    assert.ok(chat.length > 0, "every option is described");
+    assert.ok(!chat.includes("conversational"));
+  });
+
   it("asks nothing when no tier is configured", async () => {
     const { jev, sent, logs } = jevWith({});
     const state: ModelTierState = { task: task(), tiers: [] };

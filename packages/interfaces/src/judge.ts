@@ -67,6 +67,12 @@ export interface ModelTierState {
   task: JudgeTask;
   /** Only configured tiers. */
   tiers: readonly string[];
+  /**
+   * What each tier is for, as the question reads it: one line per tier name,
+   * from `settings.judge.tierCriteria`. A tier named here with no text falls
+   * back to the judge's own description of it.
+   */
+  criteria?: Record<string, string>;
 }
 
 export interface NoticeState {

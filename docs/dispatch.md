@@ -162,6 +162,12 @@ for chat, strong for code - and settings map each tier to a model from the
 backend's catalog ([architecture.md](architecture.md#models)). A
 continuation keeps its window's tier.
 
+The choice question offers the configured tiers, and describes each one with
+what `settings.judge.tierCriteria` says it is for: one line of text per tier
+name. A tier the settings name no text for is described only generically, so a
+deployment whose tiers are not the judge's own says what they are for instead
+of leaving the judge to guess.
+
 ## Scheduled tasks
 
 A scheduled task is a task source driven by time: a first time, a repeat rule,

@@ -80,7 +80,12 @@ export interface JevOptions {
    * fallback when the judge is unreachable still surround every decision.
    */
   thresholds?: JevThresholds;
-  /** What each configured tier is for, as the `model tier` question reads it. */
+  /**
+   * What each configured tier is for, as the `model tier` question reads it.
+   * These are this package's own descriptions of the tiers it knows; what the
+   * host's `settings.judge.tierCriteria` says about a tier comes first, so a
+   * deployment whose tiers are not these describes them itself.
+   */
   tierCriteria?: Record<string, string>;
   /** Replaces `fetch`; tests pass a fake one, so no key and no network are needed. */
   fetchImpl?: typeof fetch;

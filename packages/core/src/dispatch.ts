@@ -391,15 +391,22 @@ export class Dispatcher {
   // ---- 4. act -------------------------------------------------------------
 
   /**
-   * Which tier a new window needs. The judge picks among the configured tiers;
-   * a decision that is `off`, `shadow`, unanswered or unreachable falls back to
-   * the default tier, then the first configured one.
+   * Which tier a new window needs. The judge picks among the configured tiers,
+   * each described by what settings say it is for, so a deployment whose tiers
+   * are not the judge's own names them itself; a decision that is `off`,
+   * `shadow`, unanswered or unreachable falls back to the default tier, then the
+   * first configured one.
    */
   private async tier(task: Task): Promise<string | undefined> {
     const tiers = Object.keys(this.host.settings?.modelTiers ?? {});
     if (tiers.length === 0) return this.host.settings?.defaultTier;
     const mode = this.modeOf("model_tier");
-    const state = { task: judgeTask(task), tiers };
+    const criteria = this.host.settings?.judge?.tierCriteria;
+    const state = {
+      task: judgeTask(task),
+      tiers,
+      ...(criteria === undefined ? {} : { criteria }),
+    };
     if (mode === "off") return this.defaultTier(tiers);
     const judge = this.host.judge;
     if (judge === undefined) return this.defaultTier(tiers);
