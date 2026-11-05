@@ -34,6 +34,7 @@ import type {
 } from "@arbor/interfaces";
 import { textOf } from "@arbor/prompt";
 import { boundResult } from "../bound.ts";
+import { envCommand } from "../env-stage.ts";
 import { toolSpec } from "../host.ts";
 
 /** How long `bash` waits before it hands the command to `bash_output`. */
@@ -101,7 +102,7 @@ export class FileToolGroup implements ToolGroup {
   async call(request: ToolCall, context: CallContext): Promise<ToolResult> {
     switch (request.name) {
       case "bash":
-        return this.bash(request, context.window);
+        return this.bash(request, context.window, context);
       case "bash_output":
         return this.bashOutput(request);
       case "bash_stop":
@@ -135,13 +136,6 @@ export class FileToolGroup implements ToolGroup {
     return inside === "" ? env.directory : join(env.directory, inside);
   }
 
-  /** A command a window runs sees `/env` where it reads it, not where it lives. */
-  private envCommand(command: string): string {
-    const env = this.services.envPaths();
-    if (env === undefined || !command.includes(env.prefix)) return command;
-    return command.split(env.prefix).join(env.directory);
-  }
-
   /** Record which revision of an item a window read, for `reload`'s check. */
   private async noteEnvRead(window: WindowRef, path: string): Promise<void> {
     const prefix = this.services.envPaths()?.prefix;
@@ -151,11 +145,16 @@ export class FileToolGroup implements ToolGroup {
   }
 
 
-  private async bash(request: ToolCall, window: WindowRef): Promise<ToolResult> {
+  private async bash(request: ToolCall, window: WindowRef, context: CallContext): Promise<ToolResult> {
     const table = this.services.table;
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
-    const command = this.envCommand(stringArg(request.args, "command"));
+    const command = await envCommand(
+      workspace,
+      stringArg(request.args, "command"),
+      this.services.envPaths(),
+      context.envRevision,
+    );
     const jobs = workspace.jobs;
     if (jobs !== undefined) {
       // The implementation owns the execution environment, so the command runs

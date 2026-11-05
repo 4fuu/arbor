@@ -24,6 +24,7 @@ const state = {
   diffs: new Map(),
   refusals: new Map(),
   processes: new Map(),
+  container: new Map(),
   initialized: false,
   calls: [],
   serial: 0,
@@ -42,6 +43,81 @@ const layerId = () => `layer${hex(58)}${nextSerial().toString(16).padStart(2, "0
 const refused = (code, message, detail = null) => ({ refused: { code, message, detail } });
 const value = (body) => ({ value: body });
 
+/** The exit a command answers with. */
+const exit = (code, stdout = "", stderr = "") => value({ kind: `exit:${code}`, exitCode: code, stdout, stderr, truncated: false });
+
+/** One Sandbox's own filesystem, outside every Workspace it holds. */
+const containerOf = (sandbox) => {
+  let files = state.container.get(sandbox);
+  if (files === undefined) {
+    files = new Map();
+    state.container.set(sandbox, files);
+  }
+  return files;
+};
+
+/** The commands a staged file is written and read with, answered from the container's own filesystem. */
+function containerExec(sandbox, command) {
+  // A staging call is a whole script: every line runs in order, and the answer
+  // is the last one, the way `bash -c` reports a script's exit.
+  let answer = null;
+  for (const line of command.split("\n")) {
+    const step = containerLine(sandbox, line);
+    if (step === null) return null;
+    answer = step;
+    if (step.value?.exitCode !== 0) return step;
+  }
+  return answer;
+}
+
+/** One command against the container's own filesystem, or null when it is not one. */
+function containerLine(sandbox, command) {
+  const files = containerOf(sandbox);
+  const clean = /^rm -rf '([^']+)'$/.exec(command);
+  if (clean !== null) {
+    const root = `${clean[1]}/`;
+    const kept = [...files.keys()].filter((path) => path === clean[1] || path.startsWith(root));
+    // A directory whose write bit is off cannot have its entries removed, so a
+    // staging makes what it finds writable first.
+    if (kept.some((path) => files.get(path)?.readOnly)) {
+      return exit(1, "", `rm: cannot remove '${clean[1]}': Permission denied`);
+    }
+    for (const path of kept) files.delete(path);
+    return exit(0);
+  }
+  const make = /^mkdir -p '?([^']+)'?$/.exec(command);
+  if (make !== null) return exit(0);
+  const write = /^printf '%s' (\S+) \| base64 -d > '?([^']+)'?$/.exec(command);
+  if (write !== null) {
+    const path = write[2];
+    // Staged files are read-only, so a command cannot change them.
+    if (files.get(path)?.readOnly) return exit(1, "", `bash: ${path}: Permission denied`);
+    files.set(path, { text: Buffer.from(write[1], "base64").toString("utf8"), readOnly: false });
+    return exit(0);
+  }
+  const readOnly = /^chmod -R a-w '?([^']+)'?$/.exec(command);
+  if (readOnly !== null) {
+    const root = `${readOnly[1]}/`;
+    for (const [path, entry] of files) if (path === readOnly[1] || path.startsWith(root)) entry.readOnly = true;
+    return exit(0);
+  }
+  // What a staging that follows another one does first: a directory whose
+  // write bit is off cannot have its entries removed.
+  const writable = /^chmod -R u\+w '?([^']+)'? 2>\/dev\/null$/.exec(command);
+  if (writable !== null) {
+    const root = `${writable[1]}/`;
+    for (const [path, entry] of files) if (path === writable[1] || path.startsWith(root)) entry.readOnly = false;
+    return exit(0);
+  }
+  const read = /^cat '?([^']+)'?$/.exec(command);
+  if (read !== null) {
+    const entry = files.get(read[1]);
+    if (entry === undefined) return exit(1, "", `cat: ${read[1]}: No such file or directory`);
+    return exit(0, entry.text);
+  }
+  return null;
+}
+
 function reset() {
   state.branches.clear();
   state.commits.clear();
@@ -51,6 +127,7 @@ function reset() {
   state.diffs.clear();
   state.refusals.clear();
   state.processes.clear();
+  state.container.clear();
   state.initialized = false;
   state.calls.length = 0;
   state.serial = 0;
@@ -305,6 +382,10 @@ function answer(op, args) {
         const kept = text.slice(-Number(log[1]));
         return value({ kind: "exit:0", exitCode: 0, stdout: kept, stderr: "", truncated: false });
       }
+      // The container's own filesystem, outside the Workspace: what a staged
+      // file lands in. It is never committed, forked or diffed.
+      const staged = containerExec(mount.sandbox, command);
+      if (staged !== null) return staged;
       const exit = /^exit (\d+)$/.exec(command);
       if (exit !== null) {
         return value({ kind: `exit:${exit[1]}`, exitCode: Number(exit[1]), stdout: "", stderr: "err", truncated: false });
@@ -437,13 +518,16 @@ exports.jobLog = (id, text) => {
   if (process === undefined) throw new Error(`no process ${id}`);
   process.log += text;
 };
-
 /** Mark one background process ended on its own, the way a finished command does. */
 exports.jobExit = (id) => {
   const process = state.processes.get(id);
   if (process === undefined) throw new Error(`no process ${id}`);
   process.exited = true;
 };
+
+/** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */
+exports.containerFiles = (sandbox) =>
+  [...(state.container.get(sandbox) ?? new Map())].map(([path, entry]) => ({ path, ...entry }));
 
 /** Marks a mounted Workspace's overlay dirty, as a command that wrote a file would. */
 exports.touch = (path) => {

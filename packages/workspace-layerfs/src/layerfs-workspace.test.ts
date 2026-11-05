@@ -46,6 +46,8 @@ interface Standin {
   jobLog(id: string, text: string): void;
   /** Mark a background process ended on its own, the way a finished command does. */
   jobExit(id: string): void;
+  /** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */
+  containerFiles(sandbox: string): { path: string; text: string; readOnly: boolean }[];
 }
 
 const standin = require(FIXTURE) as Standin;
@@ -600,6 +602,97 @@ describe("background jobs", () => {
     const view = await ws.mount("ws1@r902");
 
     assert.equal(view.jobs, undefined);
+    await view.release();
+    await ws.close();
+  });
+});
+
+describe("staged files", () => {
+  it("stages files beside the mount, and no snapshot holds them", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    const at = await mount.stage?.("/env", [
+      { path: "skills/deploy/SKILL.md", text: "# deploy\n" },
+      { path: "settings.json", text: '{"identity":"arbor"}\n' },
+    ]);
+
+    // The files are visible to a command in the mount, read the way a window
+    // reads them once the prefix is rewritten onto where they were staged.
+    assert.equal((await mount.exec?.(`cat ${at}/settings.json`))?.stdout, '{"identity":"arbor"}\n');
+    // A command cannot change what was staged: the environment changes through
+    // its own draft and reload, never through a command.
+    const overwrite = `printf '%s' ${Buffer.from("changed\n").toString("base64")} | base64 -d > '${at}/settings.json'`;
+    const refusedWrite = await mount.exec?.(overwrite);
+    assert.equal(refusedWrite?.exitCode, 1);
+
+    // The staged files are not the workspace's own: nothing was committed for
+    // them, so the snapshot holds no /env files and the workspace's tree counts
+    // none.
+    standin.touch(mount.path);
+    const handle = await ws.snapshot("ws1", "r902");
+    assert.equal(handle.ref, "ws1@r902");
+    assert.deepEqual(await ws.quota("ws1"), { bytes: 0, used: 0, files: 0 });
+    const view = await ws.mount("ws1@r902");
+    assert.equal(await view.readFile?.("env/settings.json"), null);
+    assert.equal(await view.readFile?.("settings.json"), null);
+    await view.release();
+
+    // They live in the Sandbox's own filesystem, outside every Workspace.
+    assert.deepEqual(
+      standin
+        .containerFiles("1")
+        .map((file) => ({ path: file.path, readOnly: file.readOnly }))
+        .sort((left, right) => (left.path < right.path ? -1 : 1)),
+      [
+        { path: `${at}/settings.json`, readOnly: true },
+        { path: `${at}/skills/deploy/SKILL.md`, readOnly: true },
+      ],
+    );
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("stages again what a reload landed, in the same mount", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    const first = await mount.stage?.("/env", [{ path: "settings.json", text: '{"identity":"one"}\n' }]);
+    assert.equal((await mount.exec?.(`cat ${first}/settings.json`))?.stdout, '{"identity":"one"}\n');
+
+    // A `reload` lands as a new revision, and the next command stages it again
+    // in the same mount: what the first staging made read-only is made
+    // writable first, so the new files are the ones a command reads.
+    const second = await mount.stage?.("/env", [{ path: "settings.json", text: '{"identity":"two"}\n' }]);
+    assert.equal(second, first);
+    assert.equal((await mount.exec?.(`cat ${second}/settings.json`))?.stdout, '{"identity":"two"}\n');
+    // Still read-only, and still no file the second staging dropped.
+    const refused = `printf '%s' ${Buffer.from("x\n").toString("base64")} | base64 -d > '${second}/settings.json'`;
+    assert.equal((await mount.exec?.(refused))?.exitCode, 1);
+    assert.deepEqual(
+      standin.containerFiles("1").map((file) => ({ path: file.path, readOnly: file.readOnly })),
+      [{ path: `${second}/settings.json`, readOnly: true }],
+    );
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("gives a read-only view no staging: it must never publish anything", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    standin.write("ws1", "/a.txt", "hello\n");
+    await ws.snapshot("ws1", "r902");
+
+    const view = await ws.mount("ws1@r902");
+
+    assert.equal(view.stage, undefined);
     await view.release();
     await ws.close();
   });

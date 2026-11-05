@@ -266,3 +266,48 @@ describe("a mounted file", () => {
     await again.release();
   });
 });
+
+describe("staged files", () => {
+  it("stages the environment beside the mount, and no snapshot holds it", async (t) => {
+    const made = run(true);
+    if (typeof made === "string") return t.skip(made);
+    const ws = made;
+    const mount = await ws.mount("ws1");
+
+    const at = await mount.stage?.("/env", [
+      { path: "skills/deploy/SKILL.md", text: "# deploy\n" },
+      { path: "settings.json", text: '{"identity":"arbor"}\n' },
+    ]);
+    assert.ok(at !== undefined);
+    // Staged beside the mount, never inside the Workspace's tree.
+    assert.match(at ?? "", /^\/tmp\/arbor-env\//);
+
+    // A command in the mount reads what was staged, where it landed.
+    const read = await mount.exec?.(`cat ${at}/settings.json`);
+    assert.equal(read?.exitCode, 0);
+    assert.equal(read?.stdout, '{"identity":"arbor"}\n');
+    // A command cannot change it: the environment changes through a draft and
+    // `reload`, never through a command.
+    const changed = await mount.exec?.(`printf 'changed' > ${at}/settings.json`);
+    assert.notEqual(changed?.exitCode, 0);
+
+    // One write in the workspace, then the snapshot the event records. The
+    // staged files were made before it and are not the workspace's own, so the
+    // snapshot holds the write and no /env file, and a read-only view of it
+    // reads neither the staged copy nor anything under the prefix.
+    const written = await mount.exec?.("printf 'staged' > staged.txt");
+    assert.equal(written?.exitCode, 0);
+    const counted = await ws.quota("ws1");
+    const snapshot = await ws.snapshot("ws1", "r911");
+    assert.equal(snapshot.ref, "ws1@r911");
+    assert.deepEqual(await ws.quota("ws1"), counted);
+    const view = await ws.mount("ws1@r911");
+    assert.equal(view.readOnly, true);
+    assert.equal(await view.readFile?.("staged.txt"), "staged");
+    assert.equal(await view.readFile?.("env/settings.json"), null);
+    assert.equal(await view.readFile?.("settings.json"), null);
+    await view.release();
+
+    await mount.release();
+  });
+});

@@ -133,6 +133,7 @@ export type {
   ExecResult,
   BackgroundJob,
   WorkspaceJobs,
+  StagedFile,
   WorkspaceMount,
   WorkspaceDiff,
   DiffFile,

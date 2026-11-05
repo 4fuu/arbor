@@ -42,6 +42,7 @@ import {
   type Snapshot,
   type SnapshotHandle,
   type SnapshotRef,
+  type StagedFile,
   type Workspace,
   type WorkspaceDiff,
   type WorkspaceJobs,
@@ -117,6 +118,16 @@ interface MountedIn {
 const WORKSPACES_PER_SANDBOX = 16;
 
 /**
+ * Where staged files live inside a Sandbox: beside the mount, in the
+ * container's own writable layer, never inside the Workspace's tree.
+ *
+ * `/tmp` is the container's home and the one place its unprivileged command
+ * identity can always write; the container's root is not, which is why the
+ * files cannot simply be staged at the prefix a window reads them at.
+ */
+const STAGE_ROOT = "/tmp/arbor-env";
+
+/**
  * How much of a background job's output this package hands back: the last
  * 256 KiB, read in one command. A command that writes more than that keeps
  * its own log in the Sandbox; the bound is what one read costs.
@@ -132,6 +143,43 @@ const JOB_OUTPUT_BYTES = 262144;
  */
 function logPathOf(job: string): string {
   return `/tmp/layerfs-${job}.log`;
+}
+
+/**
+ * One command that stages files into a Sandbox and makes them read-only.
+ *
+ * Every file is written from base64, so no byte of a skill, a script or a
+ * configuration can be read as shell syntax, and the write bits are dropped
+ * last, so a command that follows cannot change what was staged. A Sandbox
+ * runs `bash -c`, and the image carries coreutils, so `base64` is there.
+ */
+function stageScript(at: string, files: readonly StagedFile[]): string {
+  const lines = [
+    // A staging that follows another one first makes what it finds writable
+    // again: `chmod -R a-w` takes the write bit off the directories too, and a
+    // directory without it cannot have its entries removed. A first staging
+    // finds nothing there, which is why the error is not one.
+    `chmod -R u+w ${quotePath(at)} 2>/dev/null`,
+    `rm -rf ${quotePath(at)}`,
+    `mkdir -p ${quotePath(at)}`,
+  ];
+  for (const file of files) {
+    const target = `${at}/${file.path}`;
+    lines.push(`mkdir -p ${quotePath(dirname(target))}`);
+    lines.push(`printf '%s' ${Buffer.from(file.text, "utf8").toString("base64")} | base64 -d > ${quotePath(target)}`);
+  }
+  lines.push(`chmod -R a-w ${quotePath(at)}`);
+  return lines.join("\n");
+}
+
+/** One path quoted for the shell, so a space or a quote in it survives. */
+function quotePath(path: string): string {
+  return `'${path.replace(/'/g, "'\\''")}'`;
+}
+
+/** A path's last component. */
+function basename(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
 }
 
 type ArborError = ReturnType<typeof arborError>;
@@ -671,7 +719,59 @@ export class LayerfsWorkspace implements Workspace {
       // A read-only view starts nothing: it must never publish anything, and a
       // command that ran in it would write in the workspace it views.
       ...(readOnly ? {} : { jobs: this.jobsOf(active) }),
+      // The environment is staged beside the mount, never inside it.
+      ...(readOnly ? {} : { stage: this.stageOf(active) }),
     };
+  }
+
+  /**
+   * Stage files into the mount's execution environment, outside the Workspace.
+   *
+   * The staged files are the shared environment, which lives on the host and
+   * which a window reads at `/env` (docs/environment.md#layout). A Sandbox
+   * cannot mount a host directory - its only volume is the project's Store -
+   * and its command identity is an unprivileged user that cannot write at the
+   * container's root, so the files are written beside the mount, in the
+   * container's own writable layer, and the caller rewrites the prefix onto
+   * where they landed.
+   *
+   * They are written outside the Workspace's tree, so no Commit holds them: a
+   * snapshot, a fork, a diff and a read-only view never see them. They are
+   * read-only once staged, because a change goes through the environment's own
+   * draft and `reload`.
+   */
+  private stageOf(active: ActiveMount) {
+    return async (prefix: string, files: readonly StagedFile[]): Promise<string> => {
+      const client = this.client;
+      if (client === null) throw this.noClient();
+      // One directory per Workspace, beside the mount: a Sandbox holds up to
+      // sixteen, and two windows staging at one path would overwrite each other.
+      const at = `${STAGE_ROOT}/${basename(active.path)}`;
+      try {
+        await client.workspace.exec(active.handle, stageScript(at, files));
+      } catch (error) {
+        throw refusal(
+          error,
+          "workspace.stage",
+          `the files under ${prefix} could not be staged for workspace ${active.workspace}`,
+          "check that the Sandbox still runs, then run the command again",
+        );
+      }
+      // The caller rewrites the prefix onto this: a Sandbox's command identity
+      // cannot write at the container's root, so the files cannot be staged at
+      // the prefix itself.
+      return at;
+    };
+  }
+
+  /** Why this mount has no execution environment: the SDK is not installed. */
+  private noClient(): ReturnType<typeof arborError> {
+    return arborError({
+      code: "unavailable",
+      rule: "workspace.layerfs.sdk",
+      message: "the LayerFS JavaScript packages are not installed on this host",
+      nextAction: "run .agents/setup, or set ARBOR_LAYERFS_SDK to the LayerFS checkout's api directory",
+    });
   }
 
   /**

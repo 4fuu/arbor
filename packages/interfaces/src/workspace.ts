@@ -73,6 +73,14 @@ export interface WorkspaceJobs {
   stop(job: string): Promise<void>;
 }
 
+/** One file made visible inside a mounted workspace's execution environment. */
+export interface StagedFile {
+  /** The path under the prefix, such as `skills/deploy/SKILL.md`. */
+  path: string;
+  /** The file's text. */
+  text: string;
+}
+
 /**
  * A mounted workspace: a path in the host's filesystem, released when done.
  *
@@ -106,6 +114,24 @@ export interface WorkspaceMount {
    * The same fallback rule as `readFile` applies.
    */
   writeFile?(path: string, text: string): Promise<void>;
+  /**
+   * Make files visible inside the execution environment, and answer the path
+   * they are visible at - which may be `prefix` itself, or somewhere else the
+   * implementation owns.
+   *
+   * For the shared environment, which a window reads at `/env` and which lives
+   * on the host (docs/environment.md#layout): an implementation whose `path` is
+   * not a host path stages the files into its own execution environment, and
+   * the caller rewrites the prefix onto what this answers. A host-directory
+   * implementation leaves it out, because its `path` already reaches the
+   * directory.
+   *
+   * What is staged is not the workspace's own: it sits outside its tree, so no
+   * snapshot holds it, no fork copies it and no diff or read-only view shows
+   * it. An implementation stages it read-only, because a change goes through
+   * the environment's own draft and `reload`.
+   */
+  stage?(prefix: string, files: readonly StagedFile[]): Promise<string>;
   /**
    * Background commands in this workspace. Present when the implementation
    * owns the execution environment and can start a command that outlives the

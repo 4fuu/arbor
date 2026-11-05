@@ -44,6 +44,14 @@ gave. The interface is the same: forks and snapshots are copies instead of
 metadata, and background jobs stay on the host. The work environment degrades,
 the framework does not fail.
 
+The shared environment reaches a command the same way in both. A Sandbox
+cannot mount a host directory - its only volume is the project's Store - so
+the files are staged into it beside the mount, in the container's own writable
+layer, and the prefix `/env` is rewritten onto where they landed. What is
+staged sits outside the workspace's tree, so no snapshot holds it, no fork
+copies it and no read-only view shows it
+([environment.md](environment.md#layout)).
+
 ## What the agent does
 
 Everything that is a judgment or a workflow: cloning, branching, committing,

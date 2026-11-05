@@ -98,6 +98,34 @@ checkout's packages are linked - `.agents/setup` runs `npm install` in the
 checkout's `api`. Where they are not, a mount's `jobs` refuses with that as the
 next action instead of failing silently.
 
+## Staged files
+
+The shared environment lives on the host and a window reads it at `/env`
+([docs/environment.md](../../docs/environment.md#layout)). A Sandbox cannot
+mount a host directory - its only volume is the project's Store - and its
+command identity is an unprivileged user (`command_uid` 501) that cannot write
+at the container's root, so the files cannot be staged at the prefix itself. A
+mount therefore carries `stage`
+([`StagedFile`](../../packages/interfaces/src/workspace.ts)), which writes them
+beside the mount, in the container's own writable layer, and answers the path
+they landed at; the caller rewrites the prefix onto it:
+
+```ts
+const mount = await workspace.mount("ws3");
+const at = await mount.stage?.("/env", [{ path: "settings.json", text: "{}\n" }]);
+await mount.exec?.(`cat ${at}/settings.json`);
+```
+
+One directory per Workspace, beside the mount, because a Sandbox holds up to
+sixteen. Every file is written from base64, so no byte of a skill, a script or a
+configuration can be read as shell syntax, and the write bits are dropped last.
+
+What is staged is not the workspace's own: it is written outside its tree, so
+no Commit holds it and no snapshot, fork, diff or read-only view shows it. It
+is read-only once staged, because a change goes through the environment's own
+draft and `reload`. A read-only view carries no `stage`, for the same reason it
+carries no `jobs`: a view must never publish anything.
+
 ## Settings
 
 | Setting | Meaning |
@@ -213,11 +241,15 @@ Two rules come from LayerFS itself, not from this package:
   the stand-in native binding in `fixture/`, so it needs no Docker, no FUSE and
   no Store, and runs wherever the packages are installed. It checks this
   package's side of the contract: which Branch a ref names, which Commit an
-  event's snapshot holds, what a mount does and what it never publishes, and
-  what a background command does. It loads `@layerfs/backend` too, so the
+  event's snapshot holds, what a mount does and what it never publishes, what
+  a background command does, and that what staging writes beside the mount
+  never reaches a snapshot. It loads `@layerfs/backend` too, so the
   checkout's packages must be linked (`npm install` in `.layerfs/api`) for it
-  to run; without them its background-job tests fail with that as the reason.
+  to run; without them every case skips with that as the reason.
 - `layerfs-workspace.real.test.ts` runs against a real Store, and a real mount
   where the machine has one, and skips with its reason otherwise. Its
   `a background job` case starts a command that outlives the call, reads what
-  it wrote while it runs, watches one end on its own and stops another.
+  it wrote while it runs, watches one end on its own and stops another. Its
+  `staged files` case stages the environment beside the mount, proves a command
+  cannot change what was staged, and that the snapshot taken after it holds no
+  `/env` file.

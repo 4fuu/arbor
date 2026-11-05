@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
+import { DirectoryEnvironment } from "@arbor/environment-dir";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
 import type { Judge, JudgeAnswer, JudgeRequest } from "@arbor/interfaces";
-import type { DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@arbor/interfaces";
+import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@arbor/interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend } from "./testing.ts";
 
@@ -38,6 +39,8 @@ class QuietJudge implements Judge {
 class ProbeGroup implements ToolGroup {
   readonly id = "probe";
   readonly calls: ToolCall[] = [];
+  /** The revision of the environment each call was made against. */
+  readonly revisions: (string | undefined)[] = [];
 
   tools(): readonly DirectToolSpec[] {
     return [
@@ -53,26 +56,29 @@ class ProbeGroup implements ToolGroup {
     return [];
   }
 
-  async call(request: ToolCall): Promise<ToolResult> {
+  async call(request: ToolCall, context: CallContext): Promise<ToolResult> {
     this.calls.push(request);
+    this.revisions.push(context.envRevision);
     return { callId: request.callId, ok: true, content: "探测完成" };
   }
 }
 
 /** One scripted window: the host sees a backend it can drive by hand. */
-async function host(options: { workspace?: boolean } = {}): Promise<{
+async function host(options: { workspace?: boolean; environment?: boolean } = {}): Promise<{
   arbor: Arbor;
   journal: SqliteJournal;
   timers: ManualTimers;
   backend: ScriptedBackend;
   probe: ProbeGroup;
   root: string;
+  environment?: DirectoryEnvironment;
 }> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const timers = new ManualTimers();
   const root = await mkdtemp(join(tmpdir(), "arbor-core-"));
   const backend = new ScriptedBackend();
   const probe = new ProbeGroup();
+  const environment = options.environment === true ? new DirectoryEnvironment({ root }) : undefined;
   const arbor = new Arbor({
     journal,
     backend,
@@ -80,10 +86,11 @@ async function host(options: { workspace?: boolean } = {}): Promise<{
     now: () => 1700000000000,
     judge: new QuietJudge(),
     ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
+    ...(environment === undefined ? {} : { environment }),
     groups: [probe],
   });
   backend.attach(arbor.windowControl());
-  return { arbor, journal, timers, backend, probe, root };
+  return { arbor, journal, timers, backend, probe, root, ...(environment === undefined ? {} : { environment }) };
 }
 
 const task = {
@@ -177,6 +184,48 @@ describe("one window end to end", () => {
     // Reading it changed nothing, so the continuation's own call records no
     // snapshot - only a write or a bash call does.
     assert.equal(read.items[0]?.snapshot ?? null, null);
+  });
+
+  it("gives every call the environment's revision, so a live window reads what it holds now", async () => {
+    const { arbor, backend, probe, root, environment } = await host({ environment: true });
+    assert.ok(environment !== undefined);
+    // One skill is installed before the window opens.
+    const draft = join(root, "draft");
+    await mkdir(draft, { recursive: true });
+    await writeFile(join(draft, "SKILL.md"), "# deploy\n\n部署。\n\n1. 读这个文件。\n", "utf8");
+    await environment.install([{ kind: "skill", name: "deploy", path: draft }]);
+    const before = await environment.revision();
+
+    backend.script([{ tool: "probe", args: { text: "第一轮" } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    assert.equal(probe.revisions[0], before);
+
+    // The environment changes while the window is live, and the call that runs
+    // next carries the revision it holds then: what a command sees is staged
+    // again for the revision it reads now.
+    const second = join(root, "draft-2");
+    await mkdir(second, { recursive: true });
+    await writeFile(join(second, "SKILL.md"), "# rollback\n\n回滚。\n\n1. 读这个文件。\n", "utf8");
+    await environment.install([{ kind: "skill", name: "rollback", path: second }]);
+    const after = await environment.revision();
+
+    backend.script([{ tool: "probe", args: { text: "第二轮" } }, { text: "完成" }]);
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "inserted_task",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续处理" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+
+    assert.equal(probe.revisions.length, 2);
+    assert.equal(probe.revisions[1], after);
+    assert.notEqual(before, after);
   });
 
   it("takes no snapshot for a call that changes no file, and makes no directory", async () => {

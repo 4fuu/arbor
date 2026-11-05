@@ -35,6 +35,7 @@ import type {
 import { formatTime, textOf } from "@arbor/prompt";
 import type { LiveWindow, TaskSummary, ToolServices } from "../host.ts";
 import { moduleSpec, refused } from "../host.ts";
+import { envCommand } from "../env-stage.ts";
 
 /** `journal`: search, show, around, trace, links. */
 export class JournalModuleGroup implements ToolGroup {
@@ -720,7 +721,7 @@ export class WorkspaceModuleGroup implements ToolGroup {
   async call(request: ToolCall, context: CallContext): Promise<ToolResult> {
     switch (request.name) {
       case "workspace.ls":
-        return this.ls(request, context.window);
+        return this.ls(request, context.window, context);
       case "workspace.find":
         return this.find(request, context.window);
       case "workspace.grep":
@@ -730,11 +731,16 @@ export class WorkspaceModuleGroup implements ToolGroup {
     }
   }
 
-  private async ls(request: ToolCall, window: WindowRef): Promise<ToolResult> {
+  private async ls(request: ToolCall, window: WindowRef, context: CallContext): Promise<ToolResult> {
     const workspace = await this.services.ensureWorkspace(window);
     if (workspace === undefined) return this.absent(request);
     const path = stringArg(request.args, "path") || ".";
-    const listed = await this.runIn(workspace, `ls -1p ${quote(path)}`);
+    // A path under the environment's prefix is read where the command runs, so
+    // the prefix is resolved the same way `bash` resolves it.
+    const listed = await this.runIn(
+      workspace,
+      `ls -1p ${quote(await envCommand(workspace, path, this.services.envPaths(), context.envRevision))}`,
+    );
     if (listed !== null) {
       return { callId: request.callId, ok: listed.exitCode === 0, content: listed.stdout.trim() };
     }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -672,6 +672,69 @@ describe("tool catalog", () => {
     const missing = await run(catalog, "bash_output", { job: "proc_1_9" });
     assert.equal(missing.ok, false);
     assert.equal(missing.error?.rule, "bash.job.not_found");
+  });
+
+  it("stages the environment into a mount that owns its execution environment", async () => {
+    const { catalog } = await harness();
+    const directory = await mkdtemp(join(tmpdir(), "arbor-env-"));
+    await mkdir(join(directory, "skills", "deploy"), { recursive: true });
+    await writeFile(join(directory, "skills", "deploy", "SKILL.md"), "# deploy\n", "utf8");
+    await writeFile(join(directory, "settings.json"), '{"identity":"arbor"}\n', "utf8");
+    const commands: string[] = [];
+    const staged: { prefix: string; files: readonly { path: string; text: string }[] }[] = [];
+    const owned: WorkspaceMount = {
+      ref: "ws1",
+      path: "/workspaces/1-1",
+      readOnly: false,
+      exec: async (command: string) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+      },
+      stage: async (prefix: string, files) => {
+        staged.push({ prefix, files });
+        return "/tmp/arbor-env/1-1";
+      },
+      release: async () => {},
+    };
+    const services = (catalog as unknown as { services: ToolServices }).services;
+    services.ensureWorkspace = async () => owned;
+    services.envPaths = () => ({ prefix: "/env", directory });
+    const bash = (command: string, revision: string): Promise<ToolResult> =>
+      catalog.call({ name: "bash", args: { command, timeout: 5 }, callId: "call_1" }, { window: "c1", envRevision: revision });
+
+    // The command runs where the host's directory is not visible, so the
+    // environment is staged into the mount and the prefix is rewritten onto
+    // where it landed - the model still writes `/env`.
+    const first = await bash("cat /env/settings.json", "e1");
+    assert.equal(first.ok, true);
+    assert.deepEqual(commands, ["cat /tmp/arbor-env/1-1/settings.json"]);
+    assert.deepEqual(staged.map((one) => one.prefix), ["/env"]);
+    assert.deepEqual(
+      staged[0]?.files.map((file) => ({ path: file.path, text: file.text })),
+      [
+        { path: "settings.json", text: '{"identity":"arbor"}\n' },
+        { path: "skills/deploy/SKILL.md", text: "# deploy\n" },
+      ],
+    );
+
+    // The same revision stages once: the mount keeps what it staged.
+    await bash("cat /env/settings.json", "e1");
+    assert.equal(staged.length, 1);
+
+    // A `reload` lands as a new revision, so the next command stages again and
+    // the window reads what the environment holds now.
+    await bash("cat /env/settings.json", "e2");
+    assert.equal(staged.length, 2);
+    assert.deepEqual(commands.at(-1), "cat /tmp/arbor-env/1-1/settings.json");
+
+    // A mount whose `path` is a host path reaches the directory itself.
+    const hostDir: WorkspaceMount = { ...owned, stage: undefined };
+    services.ensureWorkspace = async () => hostDir;
+    await bash("cat /env/settings.json", "e1");
+    assert.deepEqual(commands.at(-1), `cat ${directory}/settings.json`);
+    assert.equal(staged.length, 2);
+
+    await rm(directory, { recursive: true, force: true });
   });
 
   it("writes memory through the note tools, with the host filling the anchor", async () => {
