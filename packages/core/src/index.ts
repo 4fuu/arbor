@@ -10,8 +10,24 @@
 
 export { Arbor, type ArborOptions, type Timer, type Timers, type WindowRecord } from "./host.ts";
 export { Board, hostBody, readNumber, readString, type BoardEntry } from "./board.ts";
+export { Coordinator, DELIVERY_PRIORITY, type CoordinationHost } from "./coordination.ts";
+export {
+  Dispatcher,
+  ACTIVE_SET_THRESHOLD,
+  BROADCAST_THRESHOLD,
+  FILTER_THRESHOLD,
+  MAX_CANDIDATES,
+  MAX_REPLY_HOPS,
+  NOTICE_THRESHOLD,
+  ROUTE_THRESHOLD,
+  type DecisionRecord,
+  type DispatchHost,
+  type DispatchResult,
+  type DispatchRoute,
+} from "./dispatch.ts";
 export { EffectQueue, type EffectInput, type EffectOutcome } from "./effects.ts";
 export { RefAllocator, eventRefOf, highestOf, type RefSeed } from "./refs.ts";
+export { DEFAULT_RETRY_MS, RuleScheduler, type RuleSchedulerOptions } from "./scheduler.ts";
 export {
   DEFAULT_MIN_INTERVAL_MS,
   SnapshotBuilder,

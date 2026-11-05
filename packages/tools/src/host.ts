@@ -17,6 +17,7 @@ import type {
   Expectation,
   Handoff,
   Journal,
+  MessageRef,
   ModuleSpec,
   Note,
   NoteStore,
@@ -104,7 +105,7 @@ export interface ToolServices {
   /** A window's transcript, exactly as the model saw it. */
   windowTranscript(window: WindowRef): Promise<readonly Event[]>;
   /** A message to another live window. */
-  windowMessage(from: WindowRef, to: WindowRef, text: string, replyTo?: Ref): Promise<EventRef>;
+  windowMessage(from: WindowRef, to: WindowRef, text: string, replyTo?: Ref): Promise<MessageRef>;
   /** A message to every live window. */
   broadcast(from: WindowRef, text: string): Promise<number>;
   /** What is queued for this window and not inserted yet. */

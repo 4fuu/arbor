@@ -173,7 +173,8 @@ export function dataBlock(text: string): Block {
 
 /** One outside message, by its native id (docs/journal.md#external-ids). */
 export function outsideMessageBlock(message: {
-  external: Ref;
+  /** Its native id, with the channel prefix. Absent until the channel names one. */
+  external?: Ref;
   source: string;
   time: number;
   replyTo?: Ref;
@@ -182,7 +183,7 @@ export function outsideMessageBlock(message: {
   return {
     kind: "outside_message",
     fields: {
-      external: message.external,
+      ...(message.external === undefined ? {} : { external: message.external }),
       source: message.source,
       time: formatTime(message.time),
       ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
@@ -193,7 +194,8 @@ export function outsideMessageBlock(message: {
 
 /** A notice: the event's opening words and its ref, from which window. */
 export function noticeBlock(notice: {
-  from: WindowRef;
+  /** The window that wrote the event; absent for an event the host wrote. */
+  from?: WindowRef;
   refs: readonly Ref[];
   time: number;
   content?: string;
@@ -201,7 +203,7 @@ export function noticeBlock(notice: {
   return {
     kind: "notice",
     fields: {
-      from: notice.from,
+      ...(notice.from === undefined ? {} : { from: notice.from }),
       refs: [...notice.refs],
       time: formatTime(notice.time),
       ...(notice.content === undefined || notice.content === "" ? {} : { content: notice.content }),
@@ -229,6 +231,8 @@ export function broadcastBlock(broadcast: {
 export function windowMessageBlock(message: {
   from: WindowRef;
   replyTo?: Ref;
+  /** The message's own ref, so a reply can name it. */
+  ref?: Ref;
   time: number;
   content?: readonly Block[];
 }): Block {
@@ -237,6 +241,7 @@ export function windowMessageBlock(message: {
     fields: {
       from: message.from,
       ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
+      ...(message.ref === undefined ? {} : { ref: message.ref }),
       time: formatTime(message.time),
       ...(message.content === undefined ? {} : { content: [...message.content] }),
     },

@@ -51,6 +51,12 @@ boundary. The kinds differ only in who receives them:
 | notice | live windows that touched the event's target | the judge |
 | broadcast | every live window | the judge, except for environment deltas |
 
+Outside traffic - a message from a channel, or the result of a send - keeps a
+conversation current, so it reaches every live window that touched the target
+and is behind on it, unfiltered and not held back by the protection period. Any
+other event is news about a target, so every *other* live window that touched it
+is a notice candidate and the judge decides which ones need it.
+
 ## Notices
 
 When an event touches a target, every other live window that touched the same
@@ -81,17 +87,21 @@ the ref leads to the full event.
   A message to an ended window is refused with the next action named: read its
   history, or address a live one.
 - A reply is routed back as an input block; a sender never blocks waiting for
-  one.
+  one. The block names the message's own ref, so a reply can name it in
+  `reply_to`.
 - The send and the delivery are events, linked to each other.
-- A chain of replies has a hop limit, so two windows cannot answer each
-  other forever; the refusal names the reason and the next action.
+- A chain of replies has a hop limit (5), so two windows cannot answer each
+  other forever; the refusal names the reason and the next action. The count
+  rides on the `reply` link each message was sent with, so a limit costs no
+  walk of the chain.
 
 ## Staying current
 
 A window that has touched a conversation gets every new event on it as it
 arrives: each is steered in at the next tool-call boundary, unfiltered and
 not held back by the protection period. So a window rarely acts on stale
-input, and nothing is refused for it.
+input, and nothing is refused for it. A window only hears about what it has not
+seen: its watermark decides.
 
 - A send goes out as made. If events on the conversation arrived after the
   window's watermark and have not reached it yet, the send's result says how

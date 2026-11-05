@@ -22,6 +22,7 @@ import {
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
 import { PiAgentBackend } from "@arbor/agent-pi";
+import type { ExternalRef, Judge, JudgeAnswer, JudgeRequest } from "@arbor/interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers } from "./testing.ts";
 
@@ -31,6 +32,42 @@ const FAUX_MODEL = {
   contextWindow: 200000,
   maxTokens: 8192,
 };
+
+/**
+ * The judge this stack is wired with: every batch opens a window, except the
+ * third, which goes to the window already in the conversation. The decision
+ * count is the script, because every batch makes exactly one route request.
+ */
+class StackJudge implements Judge {
+  readonly name = "stack";
+  private routes = 0;
+
+  async decide(request: JudgeRequest): Promise<JudgeAnswer> {
+    if (request.decision === "filter") return { decision: "filter", needsHandling: true };
+    if (request.decision === "model_tier") return { decision: "model_tier", tier: "" };
+    if (request.decision === "route") {
+      this.routes += 1;
+      // Every batch opens a window, except the third, which the window already
+      // in the conversation takes as an inserted input.
+      const wanted = this.routes >= 3 ? "c1" : "new";
+      return {
+        decision: "route",
+        scores: [
+          { item: wanted, score: 3 },
+          { item: "new", score: 0 },
+        ],
+        best: wanted,
+      };
+    }
+    if (request.decision === "notice" || request.decision === "broadcast") {
+      return {
+        decision: request.decision,
+        windows: request.state.candidates.map((candidate) => ({ window: candidate.window, needs: true })),
+      };
+    }
+    return { decision: "active_set", keep: [], drop: [] };
+  }
+}
 
 async function stack(): Promise<{ arbor: Arbor; journal: SqliteJournal; script: (steps: readonly unknown[]) => void }> {
   const journal = new SqliteJournal({ path: ":memory:" });
@@ -45,6 +82,7 @@ async function stack(): Promise<{ arbor: Arbor; journal: SqliteJournal; script: 
     timers: new ManualTimers(),
     now: () => 1700000000000,
     workspace: new DirectoryWorkspace({ root }),
+    judge: new StackJudge(),
   });
   return { arbor, journal, script: (steps) => faux.setResponses(steps as never) };
 }
@@ -149,5 +187,53 @@ describe("the whole stack", () => {
     assert.match(results.items[0]?.snapshot ?? "", /^ws1@r\d+$/);
     const calls = await journal.list({ kinds: ["tool_call"] });
     assert.equal(results.items[0]?.snapshot, `ws1@${calls.items[0]?.ref}`);
+  });
+
+  it("runs several windows at once, and steers a new message into the one in the conversation", async () => {
+    const { arbor, journal, script } = await stack();
+    const seen: string[] = [];
+    const record = async (context: { messages: readonly { role: string; content: unknown }[] }) => {
+      seen.push(JSON.stringify(context.messages));
+      return fauxAssistantMessage("完成");
+    };
+    script([record, record, record, record, record, record, record, record]);
+    const message = (external: ExternalRef, text: string) => ({
+      source: "qq",
+      external,
+      target: "qq:group:1",
+      time: 1700000000000,
+      content: [{ kind: "data", fields: { content: text } }],
+    });
+
+    // Three messages on one conversation: two of them open windows, and the
+    // third is routed into the window that is already in it.
+    await arbor.ingest([message("qq:100", "部署流程是什么")]);
+    await settle();
+    await arbor.ingest([message("qq:101", "灰度比例是多少")]);
+    await settle();
+
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2, "two windows run at once");
+    assert.deepEqual(
+      started.items.map((event) => event.window),
+      ["c1", "c2"],
+    );
+    // A new window's first input lists the live windows related to its task.
+    assert.ok(seen[1]?.includes("c1"), "the second window's first input names the first");
+    assert.ok(seen[1]?.includes("目标：qq:group:1"), "and the target they share");
+
+    await arbor.ingest([message("qq:102", "那把测试修了")]);
+    await settle();
+
+    assert.ok(seen.some((one) => one.includes("那把测试修了")), "the new message reached a model");
+    assert.ok(seen.some((one) => one.includes("任务 t3")), "it went in as the task the judge routed");
+    const deliveries = await journal.list({ kinds: ["delivery"] });
+    assert.ok(
+      deliveries.items.some((event) => event.window === "c1" && (event.body ?? "").includes("任务 t3")),
+      "c1 is the window that took it",
+    );
+    const board = arbor.boardLines();
+    assert.equal(board.length, 2);
+    assert.ok(board.every((line) => line.targets.includes("qq:group:1")));
   });
 });

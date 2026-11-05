@@ -137,7 +137,7 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
         expects: [],
         usage: { used: 1, limit: 200000, reserve: 4000 },
       });
-      return "r10";
+      return "m10";
     },
     broadcast: async () => 0,
     inbox: async () => inbox,
@@ -377,7 +377,7 @@ describe("tool catalog", () => {
     assert.ok(list.content.includes("c2"));
     const message = await run(catalog, "windows.send", { to: "c2", text: "CI 红了" });
     assert.equal(message.ok, true);
-    assert.ok(message.content.includes("已记录"));
+    assert.ok(message.content.includes("消息 m10 已发送给 c2"));
     const inbox = await run(catalog, "windows.inbox", {});
     assert.equal(inbox.ok, true);
   });

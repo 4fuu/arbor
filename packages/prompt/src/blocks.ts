@@ -165,10 +165,11 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
     kind: "window_message",
     tag: "window_message",
     data: true,
-    lines: ["delivery.window_message", "delivery.window_message.reply", "delivery.time"],
+    lines: ["delivery.window_message", "delivery.window_message.reply", "delivery.window_message.ref", "delivery.time"],
     fields: [
       { name: "from", type: "ref" },
       { name: "replyTo", type: "ref" },
+      { name: "ref", type: "ref" },
       { name: "time", type: "string" },
       { name: "content", type: "blocks" },
     ],

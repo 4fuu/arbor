@@ -12,6 +12,7 @@
 import type { Block } from "./blocks.ts";
 import type { TaskRef, Ref, WindowRef } from "./refs.ts";
 import type { Handoff, TokenUsage, WindowState } from "./windows.ts";
+import type { RateLimitState } from "./scheduler.ts";
 
 /** One model the backend can run. Only models that take images are offered. */
 export interface ModelInfo {
@@ -165,6 +166,14 @@ export interface AgentBackend {
   models(): Promise<ModelInfo[]>;
 
   login(request: LoginRequest): Promise<LoginResult>;
+
+  /**
+   * The backend's rate limits, when it reports any. There is no cap on windows;
+   * how many run at once is bounded by the backend, so new windows wait in a
+   * queue while it is limited (docs/dispatch.md#backpressure). A backend that
+   * reports nothing is never limited.
+   */
+  rateLimits?(): Promise<RateLimitState> | RateLimitState;
 
   /** Open one window and start its first turn. */
   open(request: OpenWindowRequest): Promise<WindowSession>;

@@ -189,13 +189,20 @@ export class WindowsModuleGroup implements ToolGroup {
       }
       case "windows.send": {
         const to = windowArg(args, "to");
-        const event = await this.services.windowMessage(
-          context.window,
-          to,
-          stringArg(args, "text"),
-          stringArg(args, "reply_to") === "" ? undefined : (stringArg(args, "reply_to") as Ref),
-        );
-        return { callId: request.callId, ok: true, content: textOf(table, "result.sent", { ref: event }) };
+        try {
+          const event = await this.services.windowMessage(
+            context.window,
+            to,
+            stringArg(args, "text"),
+            stringArg(args, "reply_to") === "" ? undefined : (stringArg(args, "reply_to") as Ref),
+          );
+          return { callId: request.callId, ok: true, content: textOf(table, "result.window_message", { ref: event, window: to }) };
+        } catch (error) {
+          // A message to an ended window, or one past the hop limit, is refused
+          // in the core's error shape, so the model reads the rule and the next
+          // action like any other refusal.
+          return refusedOf(request, error);
+        }
       }
       case "windows.broadcast": {
         const count = await this.services.broadcast(context.window, stringArg(args, "text"));
@@ -678,6 +685,30 @@ function eventRefsArg(args: Record<string, unknown>, name: string): EventRef[] {
 function windowArg(args: Record<string, unknown>, name: string): WindowRef {
   const value = refArg(args, name);
   return /^c\d+$/.test(value) ? (value as WindowRef) : ("c0" as WindowRef);
+}
+
+/**
+ * One refusal the service layer threw, as the tool result the model reads. The
+ * service layer refuses in the core's error shape (docs/architecture.md#errors),
+ * so the rule and the next action it names reach the model unchanged.
+ */
+function refusedOf(request: ToolCall, error: unknown): ToolResult {
+  const refusal = error as { rule?: unknown; message?: unknown; nextAction?: unknown; refs?: unknown };
+  const rule = typeof refusal.rule === "string" ? refusal.rule : "internal";
+  const message = typeof refusal.message === "string" ? refusal.message : String(error);
+  const nextAction = typeof refusal.nextAction === "string" ? refusal.nextAction : undefined;
+  const refs = Array.isArray(refusal.refs) ? refusal.refs.filter((one): one is Ref => typeof one === "string") : [];
+  return {
+    callId: request.callId,
+    ok: false,
+    content: "",
+    error: {
+      rule,
+      message,
+      ...(nextAction === undefined ? {} : { nextAction }),
+      ...(refs.length === 0 ? {} : { refs }),
+    },
+  };
 }
 
 export type { LiveWindow };

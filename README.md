@@ -35,10 +35,11 @@ and every window can find everything that was ever done.
 - **Every module is replaceable.** The agent backend (pi by default), the
   journal, notes, workspaces, the judge, channels and the rest are interfaces.
 
-Status: stage 1. One window runs end to end: the pi backend, the prompt
-layers, the direct tools and code mode modules, and the window lifecycle
-with its continuations. Dispatch, notes, the environment and the host API
-come next.
+Status: stage 2. Many windows run at once: dispatch decides for every task
+whether a live window takes it or a new one opens, the judge (Jev by default)
+answers what the rules leave open, and parallel windows stay current with each
+other through the board, notices, broadcasts and window messages. Notes, the
+environment and the host API come next.
 
 > The design grows out of the context, window and notes mechanisms built for
 > [qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver). This link is
@@ -78,7 +79,7 @@ check` typechecks and tests every package.
 | `packages/prompt` | typed blocks, the one deterministic renderer and the replaceable text table |
 | `packages/agent-pi` | the default `AgentBackend`: pi-agent-core in process |
 | `packages/tools` | the entry points: direct tools, code mode modules, the host API |
-| `packages/core` | the service layer: one implementation of every operation |
+| `packages/core` | the service layer: one implementation of every operation - the window lifecycle, dispatch, coordination, the board, notes access, workspaces, effects, schedules and the snapshot epochs |
 
 `mise.toml` pins the toolchain - Node, pnpm and the Rust the LayerFS engine
 builds with - installed under `~/.local/share/mise`, and `.agents/setup`

@@ -28,6 +28,11 @@ export interface TaskInput {
   source?: string;
   /** Higher goes first when insertion timing orders waiting inputs. */
   priority?: number;
+  /**
+   * The batch names the agent directly, so `filter` always passes it. The
+   * source knows this; the host does not guess it (docs/dispatch.md#routing).
+   */
+  explicit?: boolean;
 }
 
 export interface Task extends TaskInput {

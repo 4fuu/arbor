@@ -17,6 +17,7 @@
   "dependencies": {
     "@arbor/errors": "workspace:*",
     "@arbor/interfaces": "workspace:*",
+    "@arbor/judge-jev": "workspace:*",
     "@arbor/prompt": "workspace:*",
     "@arbor/tools": "workspace:*"
   },

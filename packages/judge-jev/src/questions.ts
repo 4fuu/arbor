@@ -183,14 +183,20 @@ export function prepareFilter(state: FilterState, criteria: readonly string[]): 
 
 /**
  * `filter`'s answer. A question that was not answered at all is this decision's
- * own fallback: the batch passes (docs/dispatch.md#judge-decisions).
+ * own fallback: the batch passes (docs/dispatch.md#judge-decisions). The
+ * probability rides along, because the threshold that turns it into a yes is the
+ * service layer's own.
  */
 export function filterAnswer(
   answers: Readonly<Record<string, JudgeAnswerValue>>,
   threshold: number,
 ): FilterAnswer {
   const probability = probabilityOf(answers.filter);
-  return { decision: "filter", needsHandling: probability === undefined ? true : probability >= threshold };
+  return {
+    decision: "filter",
+    needsHandling: probability === undefined ? true : probability >= threshold,
+    ...(probability === undefined ? {} : { score: probability }),
+  };
 }
 
 // --- 2. route ----------------------------------------------------------------
@@ -364,7 +370,8 @@ export function prepareNotice(state: NoticeState, maxItems: number, criteria: re
 /**
  * `notice`'s answer: one decision per window the host passed. A window the
  * request could not ask about, or one whose question was not answered, needs no
- * notice, which is this decision's own fallback.
+ * notice, which is this decision's own fallback. The probability rides along for
+ * the service layer's own threshold.
  */
 export function noticeAnswer(
   answers: Readonly<Record<string, JudgeAnswerValue>>,
@@ -377,7 +384,11 @@ export function noticeAnswer(
     windows: state.candidates.map((candidate) => {
       const index = asked.indexOf(candidate.window);
       const probability = index < 0 ? undefined : probabilityOf(answers[noticeQuestionId(index)]);
-      return { window: candidate.window, needs: probability !== undefined && probability >= threshold };
+      return {
+        window: candidate.window,
+        needs: probability !== undefined && probability >= threshold,
+        ...(probability === undefined ? {} : { score: probability }),
+      };
     }),
   };
 }
@@ -435,7 +446,9 @@ export function prepareBroadcast(
 /**
  * `broadcast`'s answer. A window the request could not ask about, or one whose
  * question was not answered, needs the broadcast, which is this decision's own
- * fallback: a delivery is never the harmful action (docs/dispatch.md#judge-decisions).
+ * fallback: a delivery is never the harmful action
+ * (docs/dispatch.md#judge-decisions). The probability rides along for the
+ * service layer's own threshold.
  */
 export function broadcastAnswer(
   answers: Readonly<Record<string, JudgeAnswerValue>>,
@@ -448,7 +461,11 @@ export function broadcastAnswer(
     windows: state.candidates.map((candidate) => {
       const index = asked.indexOf(candidate.window);
       const probability = index < 0 ? undefined : probabilityOf(answers[broadcastQuestionId(index)]);
-      return { window: candidate.window, needs: probability === undefined || probability >= threshold };
+      return {
+        window: candidate.window,
+        needs: probability === undefined || probability >= threshold,
+        ...(probability === undefined ? {} : { score: probability }),
+      };
     }),
   };
 }
@@ -517,7 +534,8 @@ export function prepareActiveSet(
  * (docs/memory.md#the-active-set), so this is the judge's own reading and never
  * the set itself. A note the request could not ask about, or one whose question
  * was not answered, is left to the rule score alone, which is this decision's
- * own fallback.
+ * own fallback. Every note's level rides along, for the service layer's own
+ * threshold.
  */
 export function activeSetAnswer(
   answers: Readonly<Record<string, JudgeAnswerValue>>,
@@ -534,9 +552,11 @@ export function activeSetAnswer(
     .sort((left, right) => right.level - left.level || (left.note.ref < right.note.ref ? -1 : 1));
   const keep: NoteRef[] = [];
   const drop: NoteRef[] = [];
+  const scores: { ref: NoteRef; score: number }[] = [];
   for (const entry of ranked) {
     if (entry.level >= threshold) keep.push(entry.note.ref);
     else drop.push(entry.note.ref);
+    scores.push({ ref: entry.note.ref, score: entry.level });
   }
-  return { decision: "active_set", keep, drop };
+  return { decision: "active_set", keep, drop, scores };
 }

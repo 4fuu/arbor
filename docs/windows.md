@@ -15,7 +15,10 @@ in the journal ([journal.md](journal.md)).
 3. **Idle.** When the model ends its run, the window stays open for a while
    (`window.idle_s`, default 300 s, matched to the provider's cache lifetime),
    so a related input can still be inserted into a warm prefix.
-4. **End.** The idle time runs out, the model ends the window, or the window
+4. **Paused.** An operator holds insertion without ending the window; what
+   waits for it goes in when it resumes
+   ([dispatch.md](dispatch.md#insertion-timing)).
+5. **End.** The idle time runs out, the model ends the window, or the window
    reaches its hard limit. An ended window is never reopened; work goes on in
    a new window.
 

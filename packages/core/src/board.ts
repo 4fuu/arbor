@@ -8,7 +8,7 @@
  * lines without asking a model.
  */
 
-import type { BoardLine, Expectation, Ref, Target, WindowRef } from "@arbor/interfaces";
+import type { BoardLine, Expectation, Ref, Target, WindowRef, WindowState } from "@arbor/interfaces";
 import type { TokenUsage } from "@arbor/interfaces";
 import type { Event } from "@arbor/interfaces";
 
@@ -18,7 +18,7 @@ export interface BoardEntry {
   doing: string;
   targets: readonly Target[];
   expects: readonly Expectation[];
-  state: string;
+  state: WindowState;
   usage: TokenUsage;
   task?: Ref;
   startedAt: number;
@@ -38,7 +38,7 @@ export class Board {
   }
 
   /** Update a live line, from the window's own state. */
-  update(window: WindowRef, change: { usage?: TokenUsage; state?: string; doing?: string }): void {
+  update(window: WindowRef, change: { usage?: TokenUsage; state?: WindowState; doing?: string }): void {
     const entry = this.entries.get(window);
     if (entry === undefined) return;
     this.entries.set(window, {
@@ -92,7 +92,7 @@ export class Board {
       doing: entry.doing,
       targets: entry.targets,
       expects: entry.expects,
-      state: entry.state as BoardLine["state"],
+      state: entry.state,
       usage: entry.usage,
     }));
   }

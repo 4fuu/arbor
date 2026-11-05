@@ -71,6 +71,8 @@ export interface AdmissionPlan {
   open: number;
   /** Whether the rest must wait in the queue. */
   wait: boolean;
+  /** When to ask again, in ms, while the backend is limited. */
+  retryAfterMs?: number;
   reason?: string;
 }
 
@@ -100,6 +102,8 @@ export interface ScheduledTask {
   skipDaily?: readonly SkipPeriod[];
   targets: readonly Target[];
   paused: boolean;
+  /** What a firing dispatches, so a restart rebuilds the schedule. */
+  task?: Omit<TaskInput, "kind">;
 }
 
 export interface Scheduler {
@@ -114,6 +118,12 @@ export interface Scheduler {
   cancel(ref: TaskRef): Promise<void>;
 
   list(): Promise<readonly ScheduledTask[]>;
+
+  /** Rebuild the scheduled tasks after a restart, from the journal's record. */
+  restore?(tasks: readonly ScheduledTask[]): Promise<void>;
+
+  /** Stop the loop, so a host that closes leaves no timer behind. */
+  close?(): void;
 
   /** The tasks whose time has come, in the order they should be dispatched. */
   due(now: number): Promise<readonly TaskInput[]>;

@@ -5,9 +5,34 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import type { Judge, JudgeAnswer, JudgeRequest } from "@arbor/interfaces";
 import type { DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@arbor/interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend } from "./testing.ts";
+
+/**
+ * A judge that answers nothing, so a test never reaches a service. Every
+ * decision falls back to its own rule default, which is what a test that is not
+ * about the judge wants.
+ */
+class QuietJudge implements Judge {
+  readonly name = "quiet";
+
+  async decide(request: JudgeRequest): Promise<JudgeAnswer> {
+    if (request.decision === "filter") return { decision: "filter", needsHandling: true };
+    if (request.decision === "model_tier") return { decision: "model_tier", tier: "" };
+    if (request.decision === "route") {
+      return { decision: "route", scores: [{ item: "new", score: 3 }], best: "new" };
+    }
+    if (request.decision === "notice" || request.decision === "broadcast") {
+      return {
+        decision: request.decision,
+        windows: request.state.candidates.map((candidate) => ({ window: candidate.window, needs: true })),
+      };
+    }
+    return { decision: "active_set", keep: [], drop: [] };
+  }
+}
 
 /** A tool group a test owns, so a call's result is exactly what it scripts. */
 class ProbeGroup implements ToolGroup {
@@ -52,6 +77,7 @@ async function host(options: { workspace?: boolean } = {}): Promise<{
     backend,
     timers,
     now: () => 1700000000000,
+    judge: new QuietJudge(),
     ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
     groups: [probe],
   });
@@ -226,7 +252,14 @@ describe("one window end to end", () => {
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();
-    const arbor = new Arbor({ journal, backend, timers, notes, now: () => 1700000000000 });
+    const arbor = new Arbor({
+      journal,
+      backend,
+      timers,
+      notes,
+      now: () => 1700000000000,
+      judge: new QuietJudge(),
+    });
     backend.attach({
       recordToolCall: arbor.recordToolCall,
       runToolCall: arbor.runToolCall,
@@ -288,12 +321,18 @@ describe("one window end to end", () => {
     const record = await arbor.open(task);
     await backend.finished();
     assert.equal(arbor.live()[0]?.state, "idle");
-    await arbor.deliver(record.window, {
-      kind: "inserted_task",
-      refs: ["t2"],
-      time: 1700000000000,
-      content: [{ kind: "data", fields: { content: "继续处理" } }],
-    });
+    // An input for the target the window started on enters even during its
+    // protection period (docs/dispatch.md#insertion-timing).
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "inserted_task",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续处理" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
     await backend.finished();
     const delivered = await arbor.journal.list({ kinds: ["delivery"] });
     assert.equal(delivered.items.length, 1);
@@ -371,7 +410,14 @@ describe("one window end to end", () => {
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();
-    const arbor = new Arbor({ journal, backend, timers, notes, now: () => 1700000000000 });
+    const arbor = new Arbor({
+      journal,
+      backend,
+      timers,
+      notes,
+      now: () => 1700000000000,
+      judge: new QuietJudge(),
+    });
     backend.attach(arbor.windowControl());
     backend.script([
       { tool: "note_write", args: { title: "部署", summary: "上线步骤", body: "先灰度，再全量" } },
@@ -391,7 +437,14 @@ describe("one window end to end", () => {
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();
-    const arbor = new Arbor({ journal, backend, timers, notes, now: () => 1700000000000 });
+    const arbor = new Arbor({
+      journal,
+      backend,
+      timers,
+      notes,
+      now: () => 1700000000000,
+      judge: new QuietJudge(),
+    });
     backend.attach(arbor.windowControl());
     backend.script([
       { tool: "note_write", args: { title: "部署", body: "第一版" } },

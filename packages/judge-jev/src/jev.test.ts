@@ -320,8 +320,8 @@ describe("notice", () => {
 
     assert.equal(answer.decision, "notice");
     assert.deepEqual(answer.windows, [
-      { window: "c1", needs: true },
-      { window: "c2", needs: false },
+      { window: "c1", needs: true, score: 0.82 },
+      { window: "c2", needs: false, score: 0.11 },
     ]);
     assert.deepEqual(Object.keys(sent[0]?.questions ?? {}), ["notice[0]", "notice[1]"]);
     const state = sent[0]?.state;
@@ -338,7 +338,7 @@ describe("notice", () => {
     const answer = (await jev.decide(noticeRequest([window("c1"), window("c2")]))) as NoticeAnswer;
 
     assert.deepEqual(answer.windows, [
-      { window: "c1", needs: true },
+      { window: "c1", needs: true, score: 0.9 },
       { window: "c2", needs: false },
     ]);
   });
@@ -365,8 +365,8 @@ describe("broadcast", () => {
     const answer = (await jev.decide(broadcastRequest([window("c1"), window("c2")]))) as BroadcastAnswer;
 
     assert.deepEqual(answer.windows, [
-      { window: "c1", needs: false },
-      { window: "c2", needs: true },
+      { window: "c1", needs: false, score: 0.3 },
+      { window: "c2", needs: true, score: 0.6 },
     ]);
   });
 
@@ -387,7 +387,7 @@ describe("broadcast", () => {
     const answer = (await jev.decide(broadcastRequest([window("c1"), window("c2")]))) as BroadcastAnswer;
 
     assert.deepEqual(answer.windows, [
-      { window: "c1", needs: false },
+      { window: "c1", needs: false, score: 0.1 },
       { window: "c2", needs: true },
     ]);
   });

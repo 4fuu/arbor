@@ -1,5 +1,5 @@
 /**
- * The window host: one window running end to end (docs/windows.md).
+ * The window host: one implementation of every operation (docs/architecture.md#layers).
  *
  * The host owns the lifecycle a model cannot own for itself. It opens a window
  * with a frozen prefix and a first input, inserts deliveries and reminders at
@@ -7,6 +7,11 @@
  * when work is unfinished, and rebuilds every running window from the journal
  * after a restart. Everything it did is in the journal, so a window that ends
  * loses nothing.
+ *
+ * It is also the dispatcher (docs/dispatch.md): for every task, the filter, the
+ * hard rule, the judge and the act - and the coordinator that keeps parallel
+ * windows current with each other (docs/coordination.md). The rules and the
+ * fallbacks live here, in the service layer, around a judge that is replaceable.
  *
  * The host is also the service layer the tools call: `send`, `end`, `search`,
  * the board, the live windows and the workspace all reach it here, once
@@ -20,28 +25,39 @@ import type {
   Block,
   CallContext,
   Delivery,
+  EnvDelta,
   EffectExecutor,
   Event,
   EventRef,
   Handoff,
   Journal,
+  Judge,
+  MessageRef,
   ModelInfo,
   Note,
   NoteStore,
   NoteWriteInput,
   OpenWindowRequest,
   Page,
+  QueuedInput,
   Ref,
+  Scheduler,
+  ScheduledTask,
+  ScheduledTaskInput,
   Settings,
+  Task,
   TaskInput,
   TaskRef,
+  Target,
   TextTable,
   ToolCall,
   ToolGroup,
   ToolResult,
   TokenUsage,
+  OutsideEvent,
   WindowEndReason,
   WindowRef,
+  WindowRuntimeState,
   SearchHit,
   SnapshotRef,
   WindowSession,
@@ -58,16 +74,22 @@ import {
   atHardLimit,
   firstInputBlocks,
   nextReminderTier,
+  outsideMessageBlock,
   reminderBlock,
   textOf,
   usedPercent,
   zhTextTable,
 } from "@arbor/prompt";
+import { Jev, scrubJson } from "@arbor/judge-jev";
+import type { JevDecisionLog } from "@arbor/judge-jev";
 import { callContext, type LiveWindow, type SearchOutcome, type ToolServices } from "@arbor/tools";
 import { ToolCatalog } from "@arbor/tools";
 import { Board, hostBody, type BoardEntry } from "./board.ts";
+import { Coordinator, type CoordinationHost } from "./coordination.ts";
+import { Dispatcher, type DecisionRecord, type DispatchHost, type DispatchResult } from "./dispatch.ts";
 import { EffectQueue, type EffectInput } from "./effects.ts";
 import { RefAllocator } from "./refs.ts";
+import { DEFAULT_RETRY_MS, RuleScheduler } from "./scheduler.ts";
 import type { PromptEpoch } from "./snapshot.ts";
 import { SnapshotBuilder } from "./snapshot.ts";
 
@@ -105,6 +127,12 @@ export interface WindowRecord {
   /** The model asked to end; the host ends the run at the next boundary. */
   ending: boolean;
   handoff?: Handoff;
+  /** Insertion is paused, without ending the window. */
+  paused: boolean;
+  /** The model tier this window runs at; a continuation keeps it. */
+  tier?: string;
+  /** The target it is working on now, for the protection period. */
+  currentTarget?: Target;
   /** The workspace mount, once the window touched files. */
   mount?: WorkspaceMount;
   workspaceRef?: WorkspaceRef;
@@ -113,10 +141,17 @@ export interface WindowRecord {
   /** The window's session, once it is running. */
   session?: WindowSession;
   /** What is queued for this window and not inserted yet. */
-  inbox: { ref: Ref; delivery: Delivery }[];
+  inbox: QueuedItem[];
   idleTimer?: Timer;
   protectionUntil: number | null;
   finalReminderSent: boolean;
+}
+
+/** One input waiting to enter a window, with what it would enter as. */
+export interface QueuedItem extends QueuedInput {
+  delivery: Delivery;
+  /** The task an inserted task came from, so it can be dispatched again. */
+  task?: TaskInput;
 }
 
 const systemTimers: Timers = {
@@ -132,6 +167,14 @@ export interface ArborOptions {
   /** The note store. Absent when notes are not configured. */
   notes?: NoteStore;
   settings?: Settings;
+  /**
+   * The judge. Defaults to Jev, the default `Judge`
+   * (docs/dispatch.md#the-default-judge); the rule bounds and the fallbacks
+   * stay here either way.
+   */
+  judge?: Judge;
+  /** Insertion timing, backpressure and scheduled tasks. */
+  scheduler?: Scheduler;
   /** Extra tool groups, from a plugin. */
   groups?: readonly ToolGroup[];
   /** Effect executors, from a plugin. */
@@ -154,6 +197,12 @@ export class Arbor {
   readonly catalog: ToolCatalog;
   readonly renderer: Renderer;
   readonly snapshots: SnapshotBuilder;
+  /** The dispatcher: filter, hard rule, judge, act (docs/dispatch.md). */
+  readonly dispatcher: Dispatcher;
+  /** The coordinator: staying current, notices, broadcasts, window messages. */
+  readonly coordinator: Coordinator;
+  /** Insertion timing, backpressure and scheduled tasks. */
+  readonly scheduler: Scheduler;
 
   private readonly options: ArborOptions;
   private readonly table: TextTable;
@@ -166,6 +215,17 @@ export class Arbor {
   private started = false;
   /** The model a window gets when settings map no tier. */
   private fallbackModel: string | undefined;
+  /** The judge. Jev by default; a deployment replaces it. */
+  private readonly judge: Judge | undefined;
+  /** New windows the backend's rate limits are holding back. */
+  private readonly held: { task: TaskInput; tier?: string }[] = [];
+  private retryTimer?: Timer;
+  /** Every judge decision, so a threshold is tuned from real decisions. */
+  private readonly decisions: DecisionRecord[] = [];
+  /** The scrub over every string that leaves the host. */
+  private readonly scrub: ((text: string) => string) | undefined;
+  /** The queue id of the next input that waits for a window. */
+  private nextQueueId = 0;
 
   constructor(options: ArborOptions) {
     this.options = options;
@@ -185,7 +245,21 @@ export class Arbor {
       tools: () => this.catalog.tools(),
       modules: () => this.catalog.modules(),
       now: this.clock,
+      activeSet: (candidates, budget, judgeShare) => this.dispatcher.activeSet(candidates, budget, judgeShare),
     });
+    this.scrub = scrubOf(options.settings);
+    this.judge = options.judge ?? defaultJudge(options.settings, this.scrub, this.judgeRequest);
+    this.scheduler =
+      options.scheduler ??
+      new RuleScheduler({
+        now: this.clock,
+        timers: this.timers,
+        nextTask: () => this.refs.nextTask(),
+        onDue: (tasks) => this.dispatchDue(tasks),
+        ...(options.settings === undefined ? {} : { settings: options.settings }),
+      });
+    this.dispatcher = new Dispatcher(this.dispatchHost());
+    this.coordinator = new Coordinator(this.coordinationHost());
     this.services = this.buildServices();
     this.catalog = new ToolCatalog({ services: this.services, groups: options.groups });
     // A backend that runs windows in process takes the host's control: record a
@@ -231,12 +305,27 @@ export class Arbor {
       if (event.window === null || finished.has(event.window)) continue;
       await this.continueWindow(event.window, { midTaskReset: true });
     }
+    // The scheduled tasks come back from the journal, so a restart does not
+    // lose a schedule that has not fired yet.
+    const schedules = await this.journal.list({ kinds: ["schedule"], limit: 200 });
+    const restored = schedules.items.flatMap((event) => {
+      if (event.body === null) return [];
+      try {
+        const parsed = JSON.parse(event.body) as ScheduledTask | null;
+        return parsed === null || typeof parsed.ref !== "string" ? [] : [parsed];
+      } catch {
+        return [];
+      }
+    });
+    await this.scheduler.restore?.(restored);
   }
 
-  /** Open a window for one task. Dispatch by a judge comes later. */
-  async open(task: TaskInput): Promise<WindowRecord> {
+  /** Open a window for one task, at a model tier. */
+  async open(task: TaskInput & { ref?: TaskRef }, tier?: string): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
-    const taskRef = this.refs.nextTask();
+    // A dispatched task already carries its ref, so the window names the task it
+    // was opened for rather than a second one.
+    const taskRef = task.ref ?? this.refs.nextTask();
     const reason = task.reason;
     await this.journal.append({
       kind: "window_start",
@@ -245,7 +334,7 @@ export class Arbor {
       targets: [...task.targets],
       refs: [taskRef],
     });
-    const record = this.record(window, taskRef, reason, [...task.targets]);
+    const record = this.record(window, taskRef, reason, [...task.targets], tier);
     const epoch = await this.snapshots.epoch();
     const firstInput = this.renderer.render(
       firstInputBlocks({
@@ -266,8 +355,160 @@ export class Arbor {
     return record;
   }
 
-  /** Insert a delivery into a live window, at a tool-call boundary. */
-  async deliver(window: WindowRef, delivery: Delivery): Promise<void> {
+  // ---- dispatch (docs/dispatch.md) ----------------------------------------
+
+  /**
+   * Route one task: whether a live window takes it or a new window opens. The
+   * filter, the hard rule, the judge and the act, with the fallbacks around a
+   * judge that may be unreachable.
+   */
+  async dispatch(task: TaskInput): Promise<DispatchResult> {
+    return this.dispatcher.dispatch(task);
+  }
+
+  /**
+   * Outside events in, tasks out. A chat source debounces per conversation, so
+   * the events of one conversation become one task; batching is the source's
+   * business, and this is the host's own grouping of what arrived together
+   * (docs/dispatch.md#tasks).
+   */
+  async ingest(events: readonly OutsideEvent[]): Promise<readonly DispatchResult[]> {
+    const groups = new Map<string, OutsideEvent[]>();
+    for (const event of events) {
+      const group = groups.get(event.target);
+      if (group === undefined) groups.set(event.target, [event]);
+      else group.push(event);
+    }
+    const results: DispatchResult[] = [];
+    for (const [target, group] of groups) {
+      results.push(
+        await this.dispatch({
+          kind: "batch",
+          reason: `a message arrived in ${target}`,
+          targets: [target],
+          time: group[group.length - 1]?.time ?? this.clock(),
+          content: group.map((event) => outsideMessageBlockOf(event)),
+          events: group,
+          source: group[0]?.source,
+        }),
+      );
+    }
+    return results;
+  }
+
+  /**
+   * Open a window for a task, at a tier. There is no cap on windows: while the
+   * backend reports rate limits the task waits in the queue, ordered by priority
+   * and age, and is dispatched again when the limit clears
+   * (docs/dispatch.md#backpressure).
+   */
+  private async openWindow(task: TaskInput, tier?: string): Promise<WindowRecord | null> {
+    const rateLimit = await this.backend.rateLimits?.();
+    const plan = await this.scheduler.admission({
+      running: this.live().length,
+      queued: [task],
+      ...(rateLimit === undefined ? {} : { rateLimit }),
+      now: this.clock(),
+    });
+    if (plan.wait || plan.open < 1) {
+      this.held.push({ task, ...(tier === undefined ? {} : { tier }) });
+      this.armRetry(plan.retryAfterMs);
+      return null;
+    }
+    return this.open(task, tier);
+  }
+
+  /** Ask the backend about its rate limits again, and open what it lets open. */
+  private armRetry(afterMs?: number): void {
+    if (this.retryTimer !== undefined) return;
+    this.retryTimer = this.timers.setTimeout(() => {
+      this.retryTimer = undefined;
+      void this.drainHeld();
+    }, afterMs ?? DEFAULT_RETRY_MS);
+  }
+
+  /** Open the held windows the backend will take now, in the order they came. */
+  private async drainHeld(): Promise<void> {
+    while (this.held.length > 0) {
+      const next = this.held[0] as { task: TaskInput; tier?: string };
+      const rateLimit = await this.backend.rateLimits?.();
+      const plan = await this.scheduler.admission({
+        running: this.live().length,
+        queued: [next.task],
+        ...(rateLimit === undefined ? {} : { rateLimit }),
+        now: this.clock(),
+      });
+      if (plan.wait || plan.open < 1) {
+        this.armRetry(plan.retryAfterMs);
+        return;
+      }
+      this.held.shift();
+      await this.open(next.task, next.tier);
+    }
+  }
+
+  /** The tasks whose scheduled time has come. */
+  private async dispatchDue(tasks: readonly TaskInput[]): Promise<void> {
+    for (const task of tasks) await this.dispatch(task);
+  }
+
+  /** One task's routing, for the host API and for a test. */
+  async judgeDecisions(): Promise<readonly DecisionRecord[]> {
+    return [...this.decisions];
+  }
+
+  /** Record one scheduled task, so it fires at its time. */
+  async schedule(input: ScheduledTaskInput): Promise<TaskRef> {
+    const ref = await this.scheduler.schedule(input);
+    const stored = (await this.scheduler.list()).find((task) => task.ref === ref);
+    await this.journal.append({
+      kind: "schedule",
+      // The whole schedule, so a restart restores what a firing dispatches.
+      body: JSON.stringify(stored ?? { ref }),
+      refs: [ref],
+    });
+    return ref;
+  }
+
+  /** Cancel one scheduled task. */
+  async cancelSchedule(ref: TaskRef): Promise<void> {
+    await this.scheduler.cancel(ref);
+  }
+
+  /** The scheduled tasks, soonest first. */
+  async schedules(): Promise<readonly ScheduledTask[]> {
+    return this.scheduler.list();
+  }
+
+  /** Pause insertion into a window without ending it. */
+  async pause(window: WindowRef): Promise<void> {
+    const record = this.windows.get(window);
+    if (record === undefined || record.session === undefined) return;
+    record.paused = true;
+    await record.session.pause();
+    this.board.update(window, { state: "paused" });
+  }
+
+  /** Resume a paused window, and let what waited for it in. */
+  async resume(window: WindowRef): Promise<void> {
+    const record = this.windows.get(window);
+    if (record === undefined || record.session === undefined) return;
+    record.paused = false;
+    await record.session.resume();
+    this.board.update(window, { state: record.state });
+    await this.flush(record);
+  }
+
+  /**
+   * Insert a delivery into a live window, at a tool-call boundary. The delivery
+   * waits in the window's inbox; the insertion rules decide when it goes in
+   * (docs/dispatch.md#insertion-timing).
+   */
+  async deliver(
+    window: WindowRef,
+    delivery: Delivery,
+    options: { priority?: number; targets?: readonly Target[]; task?: TaskInput } = {},
+  ): Promise<void> {
     const record = this.windows.get(window);
     if (record === undefined) {
       throw arborError({
@@ -285,12 +526,79 @@ export class Arbor {
         nextAction: "把内容发给一个还在运行的窗口，或为它开一个新窗口。",
       });
     }
-    if (record.state === "paused" || record.session === undefined) {
-      const ref = this.refs.nextMessage();
-      record.inbox.push({ ref, delivery });
-      return;
-    }
-    await record.session.steer(delivery);
+    this.nextQueueId += 1;
+    record.inbox.push({
+      id: `q${this.nextQueueId}`,
+      kind: delivery.kind,
+      targets: [...(options.targets ?? [])],
+      priority: options.priority ?? 0,
+      time: this.clock(),
+      // Environment deltas and conversation updates are never held back.
+      ...(delivery.kind === "environment_delta" || delivery.kind === "conversation_update"
+        ? { unfiltered: true }
+        : {}),
+      delivery,
+      ...(options.task === undefined ? {} : { task: options.task }),
+    });
+    await this.flush(record);
+  }
+
+  /**
+   * Let what may enter a window in, now. The scheduler says which waiting inputs
+   * may go in; the host steers those, queues the rest for after the run, holds
+   * what the rules hold back, and dispatches again what a window past its final
+   * usage reminder will never take.
+   */
+  private async flush(record: WindowRecord): Promise<void> {
+    if (record.state === "ended" || record.paused || record.session === undefined) return;
+    const plan = await this.scheduler.insertion({
+      state: this.runtimeState(record),
+      queued: record.inbox,
+      now: this.clock(),
+    });
+    // The scheduler hands back the items it was given; the inbox holds them.
+    const waiting = new Map(record.inbox.map((item) => [item.id, item]));
+    const apply = async (items: readonly QueuedInput[], how: "steer" | "followUp" | "redispatch") => {
+      for (const one of items) {
+        const item = waiting.get(one.id);
+        if (item === undefined) continue;
+        removeFrom(record.inbox, item);
+        if (how === "steer") await record.session?.steer(item.delivery);
+        else if (how === "followUp") await record.session?.followUp(item.delivery);
+        else await this.redispatch(item);
+      }
+    };
+    await apply(plan.insert, "steer");
+    await apply(plan.followUp, "followUp");
+    await apply(plan.redispatch, "redispatch");
+  }
+
+  /**
+   * Dispatch a waiting input again, because the window it waited for will never
+   * take it: it has had its final usage reminder
+   * (docs/dispatch.md#insertion-timing). An inserted task is routed again from
+   * the top; a delivery nobody will take any more is dropped.
+   */
+  private async redispatch(item: QueuedItem): Promise<void> {
+    if (item.task === undefined) return;
+    await this.dispatch(item.task);
+  }
+
+  /** The window's state as the insertion rules see it. */
+  private runtimeState(record: WindowRecord): WindowRuntimeState {
+    const entry = this.board.get(record.window);
+    return {
+      window: record.window,
+      state: record.paused ? "paused" : record.state,
+      startedAt: record.startedAt,
+      ...(record.task === undefined ? {} : { task: record.task }),
+      targets: entry?.targets ?? [],
+      ...(record.currentTarget === undefined ? {} : { currentTarget: record.currentTarget }),
+      paused: record.paused,
+      protectionUntil: record.protectionUntil,
+      finalReminderSent: record.finalReminderSent,
+      usage: record.usage,
+    };
   }
 
   /** End a window by hand, with a handoff when there is unfinished work. */
@@ -342,12 +650,90 @@ export class Arbor {
 
   /** Release the host: end every window and stop draining effects. */
   async close(): Promise<void> {
+    if (this.retryTimer !== undefined) {
+      this.timers.clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+    this.held.length = 0;
+    this.scheduler.close?.();
     for (const record of this.live()) {
       if (record.session === undefined) continue;
       await record.session.end(undefined, "host_restart");
     }
     this.windows.clear();
   }
+
+  // ---- the dispatch and coordination seams --------------------------------
+
+  /** What the dispatcher may do here: the live windows, and the two actions. */
+  private dispatchHost(): DispatchHost {
+    const host = this;
+    return {
+      journal: this.journal,
+      judge: this.judge,
+      settings: this.options.settings ?? {},
+      now: () => host.clock(),
+      nextTask: () => host.refs.nextTask(),
+      render: (blocks) => host.renderer.render(blocks),
+      live: () => host.live(),
+      boardLine: (window) => host.board.get(window),
+      circulate: async (event) => host.coordinator.circulate(event),
+      open: async (task, tier) => host.openWindow(task, tier),
+      insert: async (record, task) => host.insert(record, task),
+      logDecision: (record) => host.recordDecision(record),
+    };
+  }
+
+  /** What the coordinator may do here. */
+  private coordinationHost(): CoordinationHost {
+    const host = this;
+    return {
+      journal: this.journal,
+      dispatcher: this.dispatcher,
+      now: () => host.clock(),
+      nextMessage: () => host.refs.nextMessage(),
+      live: () => host.live(),
+      boardLine: (window) => host.board.get(window),
+      // The coordinator only asks about windows it took from the live set.
+      profile: async (window) => host.dispatcher.profile(host.windows.get(window) as WindowRecord),
+      deliver: async (window, delivery, options) =>
+        host.deliver(window, delivery, {
+          ...(options.priority === undefined ? {} : { priority: options.priority }),
+          ...(options.targets === undefined ? {} : { targets: options.targets }),
+        }),
+    };
+  }
+
+  /** Insert a task into a live window, as an inserted input. */
+  private async insert(record: WindowRecord, task: Task): Promise<void> {
+    for (const target of task.targets) this.board.touch(record.window, target);
+    await this.deliver(record.window, this.dispatcher.deliveryOf(task), {
+      priority: task.priority ?? 0,
+      targets: task.targets,
+      task,
+    });
+  }
+
+  /** One judge decision, recorded so a threshold is tuned from real ones. */
+  private recordDecision(record: DecisionRecord): void {
+    this.decisions.push(record);
+    void this.journal
+      .append({
+        kind: "judge_decision",
+        body: JSON.stringify(this.scrub === undefined ? record : scrubRecord(record, this.scrub)),
+      })
+      .catch(() => {});
+  }
+
+  /** One judge request, as the judge itself reports it. */
+  private judgeRequest = (log: JevDecisionLog): void => {
+    void this.journal
+      .append({
+        kind: "judge_request",
+        body: JSON.stringify(this.scrub === undefined ? log : (scrubJson(log, this.scrub) as JevDecisionLog)),
+      })
+      .catch(() => {});
+  };
 
   // ---- the run loop -------------------------------------------------------
 
@@ -368,7 +754,7 @@ export class Arbor {
         },
         tools: this.catalog.tools(),
         modules: this.catalog.modules(),
-        model: await this.modelFor(),
+        model: await this.modelFor(record.tier),
         firstInput: input.firstInput,
         limits: input.limits,
         ...(input.continuation === undefined ? {} : { continuation: input.continuation }),
@@ -378,6 +764,8 @@ export class Arbor {
       return;
     }
     record.session = session;
+    // What waited for the window while it was opening may go in now.
+    await this.flush(record);
     const watching = this.watch(record, session);
     const outcome = await session.outcome();
     await watching;
@@ -453,6 +841,9 @@ export class Arbor {
     if (session === undefined) return;
     if (record.state === "running") await session.steer(delivery);
     else await session.followUp(delivery);
+    // A reminder changes what may still enter: after the final one, what is
+    // waiting is dispatched again (docs/dispatch.md#insertion-timing).
+    await this.flush(record);
     // The host ends the window by itself at its hard limit.
     if (atHardLimit(record.usage)) await session.end(undefined, "hard_limit");
   }
@@ -485,6 +876,7 @@ export class Arbor {
       ...(handoff === undefined ? {} : { handoff }),
       midTaskReset: reason === "hard_limit",
       targets,
+      ...(record.tier === undefined ? {} : { tier: record.tier }),
     });
   }
 
@@ -496,7 +888,7 @@ export class Arbor {
    */
   private async continueWindow(
     previous: WindowRef,
-    options: { handoff?: Handoff; midTaskReset?: boolean; targets?: readonly string[] },
+    options: { handoff?: Handoff; midTaskReset?: boolean; targets?: readonly string[]; tier?: string },
   ): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
     const taskRef = this.refs.nextTask();
@@ -530,7 +922,7 @@ export class Arbor {
       targets: [...(options.targets ?? [])],
       refs: [taskRef, previous],
     });
-    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])]);
+    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier);
     void this.run(record, {
       firstInput,
       epoch,
@@ -697,7 +1089,19 @@ export class Arbor {
       });
     }
     const anchor: Anchor = { window, event: await this.lastEvent(window) };
-    return notes.write({ ...input, anchor, refs: [...(input.refs ?? []), ...(await this.citedRefs(window))] });
+    const note = await notes.write({ ...input, anchor, refs: [...(input.refs ?? []), ...(await this.citedRefs(window))] });
+    // A revision is news about the note, so the windows working on it hear about
+    // it (docs/coordination.md#notices).
+    await this.circulateNewest("note_revision", note.id);
+    return note;
+  }
+
+  /** The newest event of one kind on one target, so a write can circulate it. */
+  private async circulateNewest(kind: string, target: string): Promise<void> {
+    const page = await this.journal.list({ kinds: [kind], targets: [target], limit: 1 });
+    const event = page.items[0];
+    if (event === undefined) return;
+    await this.coordinator.circulate(event);
   }
 
   /** The newest event a window wrote, for its next write's anchor. */
@@ -745,6 +1149,10 @@ export class Arbor {
     };
     const outcome = await this.effects.submit(input);
     await this.see(window, outcome.event);
+    // A send is a new event on its target, so the windows in that conversation
+    // stay current (docs/coordination.md#staying-current).
+    const sent = await this.journal.get(outcome.event);
+    if (sent !== null) await this.coordinator.circulate(sent);
     return outcome;
   }
 
@@ -803,59 +1211,37 @@ export class Arbor {
   }
 
   /** A message to another live window. */
-  private async windowMessage(from: WindowRef, to: WindowRef, text: string, replyTo?: Ref): Promise<EventRef> {
-    const record = this.windows.get(to);
-    if (record === undefined) {
-      throw arborError({
-        code: "not_found",
-        rule: "window.not_found",
-        message: `window: 没有窗口 ${to}`,
-        nextAction: "用 windows.list 查看当前窗口。",
-      });
-    }
-    const ref = this.refs.nextMessage();
-    const event = await this.journal.append({
-      kind: "window_message",
-      window: from,
-      body: text,
-      targets: [`window:${to}`],
-      refs: [ref, ...(replyTo === undefined ? [] : [replyTo])],
-    });
-    await this.deliver(to, {
-      kind: "window_message",
-      from,
-      refs: [ref],
-      time: event.time,
-      content: [{ kind: "data", fields: { content: text } }],
-    });
-    return event.ref;
+  private async windowMessage(from: WindowRef, to: WindowRef, text: string, replyTo?: Ref): Promise<MessageRef> {
+    return this.coordinator.windowMessage(from, to, text, replyTo);
   }
 
   /** A message to every live window but this one. */
   private async broadcast(from: WindowRef, text: string): Promise<number> {
-    let delivered = 0;
-    for (const record of this.live()) {
-      if (record.window === from) continue;
-      await this.deliver(record.window, {
-        kind: "broadcast",
-        from,
-        refs: [],
-        time: this.clock(),
-        content: [{ kind: "data", fields: { content: text } }],
-      });
-      delivered += 1;
-    }
-    return delivered;
+    return this.coordinator.broadcast(from, text);
+  }
+
+  /**
+   * An environment delta to every live window, unfiltered and not held back by
+   * the protection period (docs/coordination.md#broadcasts).
+   */
+  async broadcastEnvironment(delta: EnvDelta): Promise<number> {
+    return this.coordinator.environmentDelta(delta);
   }
 
   private async inboxOf(window: WindowRef): Promise<{ ref: Ref; from: WindowRef; text: string }[]> {
     const record = this.windows.get(window);
     if (record === undefined) return [];
-    return record.inbox.map((item) => ({
-      ref: item.ref,
-      from: item.delivery.from ?? window,
-      text: item.delivery.content.map((block) => blockText(block)).join("\n"),
-    }));
+    const out: { ref: Ref; from: WindowRef; text: string }[] = [];
+    for (const item of record.inbox) {
+      const ref = item.delivery.refs[0];
+      if (ref === undefined) continue;
+      out.push({
+        ref,
+        from: item.delivery.from ?? window,
+        text: this.renderer.render([...item.delivery.content]),
+      });
+    }
+    return out;
   }
 
   private refusal(rule: string, key: string, args: Record<string, string | number> = {}): ToolResult {
@@ -947,15 +1333,17 @@ export class Arbor {
   }
 
   /**
-   * The model a new window gets. Settings map each tier to a model; without a
-   * mapping the host takes the first model the backend can run, so a window
-   * opens even before the judge and the settings exist.
+   * The model a new window gets. Settings map each tier to a model from the
+   * backend's catalog; a window that keeps its tier - a continuation - resolves
+   * the same one (docs/dispatch.md#model-tiers). Without a mapping the host takes
+   * the first model the backend can run, so a window opens even before the judge
+   * and the settings exist.
    */
-  private async modelFor(): Promise<string> {
+  private async modelFor(tier?: string): Promise<string> {
     const tiers = this.options.settings?.modelTiers ?? {};
-    const tier = this.options.settings?.defaultTier;
-    if (tier !== undefined) {
-      const mapped = tiers[tier];
+    for (const wanted of [tier, this.options.settings?.defaultTier]) {
+      if (wanted === undefined) continue;
+      const mapped = tiers[wanted];
       if (mapped !== undefined) return mapped;
     }
     const first = Object.values(tiers)[0];
@@ -974,7 +1362,13 @@ export class Arbor {
   }
 
   /** Open a window's record and its board line. */
-  private record(window: WindowRef, task: TaskRef, doing: string, targets: readonly string[]): WindowRecord {
+  private record(
+    window: WindowRef,
+    task: TaskRef,
+    doing: string,
+    targets: readonly string[],
+    tier?: string,
+  ): WindowRecord {
     const entry: BoardEntry = {
       window,
       doing,
@@ -993,6 +1387,9 @@ export class Arbor {
       usage: entry.usage,
       remindersSent: 0,
       ending: false,
+      paused: false,
+      ...(tier === undefined ? {} : { tier }),
+      ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
       callEvents: new Map(),
       inbox: [],
       protectionUntil: this.clock() + (this.options.settings?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,
@@ -1012,9 +1409,66 @@ function refusalText(result: ToolResult): string {
   return `${error.rule} ${error.message}${error.nextAction === undefined ? "" : ` ${error.nextAction}`}`;
 }
 
-function blockText(block: Block): string {
-  const content = block.fields.content;
-  return typeof content === "string" ? content : "";
+/** Take one item out of a window's inbox. */
+function removeFrom(inbox: QueuedItem[], item: QueuedItem): void {
+  const index = inbox.indexOf(item);
+  if (index >= 0) inbox.splice(index, 1);
+}
+
+/** One outside event, as the input block it arrives as. */
+function outsideMessageBlockOf(event: OutsideEvent): Block {
+  return outsideMessageBlock({
+    ...(event.external === undefined ? {} : { external: event.external }),
+    source: event.source,
+    time: event.time,
+    ...(event.replyTo === undefined ? {} : { replyTo: event.replyTo }),
+    content: [...event.content],
+  });
+}
+
+/**
+ * The default judge: Jev (docs/dispatch.md#the-default-judge). The key is read
+ * per request, so one that appears later applies to the next decision, and a
+ * host without one falls back on every decision's own rule.
+ */
+function defaultJudge(
+  settings: Settings | undefined,
+  scrub: ((text: string) => string) | undefined,
+  onDecision: (log: JevDecisionLog) => void,
+): Judge {
+  return new Jev({
+    ...(scrub === undefined ? {} : { scrub }),
+    ...(settings?.judge?.maxCandidates === undefined ? {} : { maxItems: settings.judge.maxCandidates }),
+    onDecision,
+  });
+}
+
+/**
+ * A scrub over every string that leaves the host, built from the secrets a
+ * configuration names - never their values
+ * (docs/architecture.md#data-placement). Every judge request goes through it on
+ * the way out, and every decision log records the scrubbed form.
+ */
+function scrubOf(settings: Settings | undefined): ((text: string) => string) | undefined {
+  const named = (settings?.secrets ?? []).flatMap((name) => {
+    const value = process.env[name];
+    return value === undefined || value === "" ? [] : [{ name, value }];
+  });
+  if (named.length === 0) return undefined;
+  return (text: string) => {
+    let out = text;
+    for (const secret of named) out = out.split(secret.value).join(`[hidden:${secret.name}]`);
+    return out;
+  };
+}
+
+/** The same scrub over one decision record, on the way to the journal. */
+function scrubRecord(record: DecisionRecord, scrub: (text: string) => string): DecisionRecord {
+  return {
+    ...record,
+    state: scrubJson(record.state, scrub),
+    ...(record.answer === undefined ? {} : { answer: scrubJson(record.answer, scrub) as DecisionRecord["answer"] }),
+  };
 }
 
 export { Board, type BoardEntry, EffectQueue, RefAllocator, SnapshotBuilder };

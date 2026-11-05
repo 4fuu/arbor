@@ -20,7 +20,15 @@ The host makes no tasks of its own for maintenance; work that needs judgment
 is the agent's ([overview.md](overview.md#principles)).
 
 A task carries its targets, a reason, a time and its content, rendered as an
-input block.
+input block. A batch that names the agent directly is `explicit`, and the
+source is the one that knows.
+
+The host records a task and the outside events it batches before anything
+decides about them, so a ref names both from the start: the events as `input`
+events and the task as a `task` event, linked to them. `Arbor.dispatch(task)`
+routes one; `Arbor.ingest(events)` groups outside events by their target and
+routes one task per target, which is the host's own debouncing for a source
+that hands events over as they arrive.
 
 ## Routing
 
@@ -63,6 +71,23 @@ default judge is Jev; every decision is on by default, and each can be set to
   model call: its tasks, the targets it touched, its board line with its
   expectations, its last inputs.
 
+### Where the thresholds live
+
+A judge answers with its own reading, and the threshold that turns a reading
+into an action is the service layer's, in code that never moves
+(`packages/core/src/dispatch.ts`): a batch passes at probability 0.5, a
+candidate takes a task at "good fit" on the route scale's own 0 to 3 levels, a
+notice and a broadcast at 0.5, and a note is still needed at the top level of
+the active set's 0 to 2. The same answer therefore produces the same action
+whatever judge is wired in, and a threshold is tuned from the decisions the
+journal recorded rather than by swapping a module.
+
+The answer types carry the reading alongside the boolean: `score` on
+`FilterAnswer` and on each `WindowDecision`, and `scores` on `ActiveSetAnswer`.
+Both are optional and additive, so a judge that answers with a bare boolean is
+read as it stands; the service layer uses the reading when the answer carries
+one.
+
 ### The default judge
 
 Jev is TypeSafe AI's System One classifier, served by `@arbor/judge-jev`. It is
@@ -89,9 +114,13 @@ questions and their state follow [prompting.md](prompting.md#judge-questions).
 - **Logging.** Every decision is logged with the state the judge saw (after
   scrubbing), the questions, every answer with its score or probability, the
   token usage and how long it took, so a threshold is tuned from real
-  decisions.
-- **Not wired in yet.** The judge is its own package and answers only. The
-  service layer holds the rule bounds and the fallbacks around it.
+  decisions. The service layer records its own reading of the same decision -
+  the decision, its mode, the state, the answer, and whether it was answered -
+  as a `judge_decision` event, and the judge records its request as a
+  `judge_request` event.
+- **Wired in.** The judge is its own package and answers only; the service layer
+  holds the rule bounds and the fallbacks around it, and the default judge is
+  Jev (`ArborOptions.judge` replaces it).
 
 ## Insertion timing
 
@@ -107,18 +136,24 @@ for after the run goes in as a follow-up (`agent.followUp`).
   period. Inputs for the same target do not restart it. Environment deltas
   and conversation updates are not held back.
 - **After the period:** an input for the current target that is still being
-  batched goes in first; then the others, by priority and age.
+  batched goes in first; then the others, by priority and age. Currency and
+  what a window can call - a conversation update, an environment delta - and a
+  direct answer to it, a window message, outrank anything that only informs it;
+  a broadcast, which needs no reply, goes last.
 - **No insertion after the final usage reminder.** Waiting inputs are
-  dispatched again.
-- **Paused:** nothing is inserted.
+  dispatched again: an inserted task is routed from the top, and a delivery
+  nobody will take any more is dropped.
+- **Paused:** nothing is inserted, and nothing is dispatched again either - the
+  window is held, not finished with.
 
 The model sees only input blocks; it never manages timing.
 
 ## Backpressure
 
 There is no cap on windows. How many run at once is bounded by the backend:
-when it reports rate limits, new windows wait in a queue ordered by priority
-and age.
+when it reports rate limits (`AgentBackend.rateLimits`), new windows wait in a
+queue ordered by priority and age, and the host asks again after the retry the
+limit names. A backend that reports nothing is never limited.
 
 ## Model tiers
 

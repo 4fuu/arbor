@@ -41,6 +41,9 @@ importers:
       '@arbor/interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@arbor/judge-jev':
+        specifier: workspace:*
+        version: link:../judge-jev
       '@arbor/prompt':
         specifier: workspace:*
         version: link:../prompt

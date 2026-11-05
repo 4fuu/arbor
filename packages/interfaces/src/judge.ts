@@ -143,6 +143,13 @@ export type JudgeRequest =
 export interface FilterAnswer {
   decision: "filter";
   needsHandling: boolean;
+  /**
+   * The judge's own reading, on the question's own scale: a bool question's
+   * probability. The service layer owns the threshold and reads this when the
+   * answer carries one, so a judge that answers with a probability and one that
+   * answers with a bare boolean are read the same way.
+   */
+  score?: number;
   reason?: string;
 }
 
@@ -167,6 +174,8 @@ export interface ModelTierAnswer {
 export interface WindowDecision {
   window: WindowRef;
   needs: boolean;
+  /** The judge's own reading, for the service layer's threshold. */
+  score?: number;
   reason?: string;
 }
 
@@ -184,6 +193,12 @@ export interface ActiveSetAnswer {
   decision: "active_set";
   keep: readonly NoteRef[];
   drop: readonly NoteRef[];
+  /**
+   * Each candidate's level on the score question's own scale, for the service
+   * layer's own threshold. Absent from a judge that answers with the two lists
+   * alone.
+   */
+  scores?: readonly { ref: NoteRef; score: number }[];
 }
 
 export type JudgeAnswer =

@@ -9,13 +9,19 @@
  * input instead.
  */
 
-import type { EnvRef, NoteSummary, Settings, TextTable } from "@arbor/interfaces";
+import type { ActiveSetBudget, EnvRef, NoteRef, NoteSummary, Settings, TextTable } from "@arbor/interfaces";
 import type { NoteStore } from "@arbor/interfaces";
 import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@arbor/prompt";
 import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@arbor/interfaces";
 
 /** The default: the prefix is rebuilt at most every ten minutes. */
 export const DEFAULT_MIN_INTERVAL_MS = 600000;
+
+/** How many notes the active set may hold, and the tokens it may cost. */
+export const DEFAULT_ACTIVE_BUDGET: ActiveSetBudget = { count: 40, tokens: 8000 };
+
+/** The bounded share of the active-set score the judge may add. */
+export const DEFAULT_ACTIVE_SET_SHARE = 0.15;
 
 /** One frozen prefix. */
 export interface PromptEpoch {
@@ -44,6 +50,16 @@ export interface SnapshotBuilderOptions {
   minIntervalMs?: number;
   now?: () => number;
   kinds?: readonly import("@arbor/interfaces").BlockKindSpec[];
+  /**
+   * The judge's bounded share of the active set: which notes are still needed,
+   * within a share of the budget the rule score did not pick
+   * (docs/memory.md#the-active-set). The judge never outweighs the rule score.
+   */
+  activeSet?: (
+    candidates: readonly { ref: NoteRef; summary: string; score: number }[],
+    budget: ActiveSetBudget,
+    judgeShare: number,
+  ) => Promise<readonly NoteRef[]>;
 }
 
 /**
@@ -96,8 +112,36 @@ export class SnapshotBuilder {
   private async activeNotes(): Promise<readonly NoteSummary[]> {
     const notes = this.options.notes;
     if (notes === undefined) return [];
-    const snapshot = await notes.snapshot();
+    const budget = this.activeBudget();
+    const judgeShare = this.activeSetShare();
+    const candidates = (await notes.score()).items.map((note) => ({
+      ref: note.ref,
+      summary: note.summary,
+      score: note.score,
+    }));
+    // The judge adds a bounded share and never drops a note the rule score
+    // picked, so its answer is passed to the snapshot rather than applied here.
+    const judgeKeep = await this.options.activeSet?.(candidates, budget, judgeShare);
+    const snapshot = await notes.snapshot({
+      budget,
+      judgeShare,
+      ...(judgeKeep === undefined || judgeKeep.length === 0 ? {} : { judgeKeep }),
+    });
     return snapshot.items;
+  }
+
+  /** The active set's budget: how many notes, and how many tokens. */
+  private activeBudget(): ActiveSetBudget {
+    const configured = this.options.settings?.notes;
+    return {
+      count: configured?.activeCount ?? DEFAULT_ACTIVE_BUDGET.count,
+      tokens: configured?.activeTokenBudget ?? DEFAULT_ACTIVE_BUDGET.tokens,
+    };
+  }
+
+  /** The bounded share of the active set the judge may add. */
+  private activeSetShare(): number {
+    return this.options.settings?.judge?.activeSetJudgeShare ?? DEFAULT_ACTIVE_SET_SHARE;
   }
 
   /** Force the next `epoch()` to rebuild, after an environment change. */

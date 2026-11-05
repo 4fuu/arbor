@@ -41,7 +41,7 @@ export class RefAllocator {
   /** Seed the allocator from the journal, so a restart continues the order. */
   static async from(journal: Journal): Promise<RefAllocator> {
     const started = await journal.list({ kinds: ["window_start"], limit: 200 });
-    const tasks = await journal.list({ kinds: ["input", "task"], limit: 200 });
+    const tasks = await journal.list({ kinds: ["input", "task", "schedule"], limit: 200 });
     const messages = await journal.list({ kinds: ["window_message"], limit: 200 });
     return new RefAllocator({
       window: highestOf(

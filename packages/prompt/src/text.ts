@@ -69,6 +69,7 @@ export const zhTextTable: TextTable = {
   "delivery.broadcast": "广播：无需回复；确实需要回复时，作为窗口消息发给发送者 {from}。",
   "delivery.window_message": "窗口消息：来自 {from}。",
   "delivery.window_message.reply": "回复 {reply_to}。",
+  "delivery.window_message.ref": "消息 {ref}：回复它时在 reply_to 中带上这个引用。",
   "delivery.conversation_update": "会话 {conversation} 有新事件。",
   "delivery.environment_delta": "环境变更 {revision}：",
   "delivery.delta.item": "{change} {kind} {name}：{description}",
@@ -93,6 +94,7 @@ export const zhTextTable: TextTable = {
   // ---- results and refusals the tools report -----------------------------
   "result.written": "已写入 {ref}",
   "result.sent": "已记录 {ref}，效果已入队。",
+  "result.window_message": "消息 {ref} 已发送给 {window}。",
   "result.send.behind": "本窗口落后 {count} 条事件，将随下一轮到达。",
   "result.ended": "窗口 {window} 已结束。",
   "result.note_written": "已写入 {ref}",
