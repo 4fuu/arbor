@@ -16,11 +16,17 @@ rust = "1.85.1"
 # holds a secret: it names one. LAYERFS_IMAGE is a placeholder until the
 # Sandbox image is built and pulled by digest - see the Dockerfile in
 # packages/workspace-layerfs.
+#
+# The Engine is rootless Docker: its socket is in XDG_RUNTIME_DIR and its
+# volumes live under the rootless data root (~/.local/share/docker), which on
+# this machine is the btrfs home - inside the Store's ext4/xfs/btrfs allowlist
+# - and owned by sifu, so nothing needs a chown. The system docker.service
+# stays stopped.
 [env]
 LAYERFS_HOME = "{{config_root}}/.layerfs/home"
-LAYERFS_STORE_PATH = "/var/lib/docker/volumes/arbor-store/_data/global/store.sqlite"
+LAYERFS_STORE_PATH = "{{env.HOME}}/.local/share/docker/volumes/arbor-store/_data/global/store.sqlite"
 LAYERFS_IMAGE = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 LAYERFS_DAEMON = "{{config_root}}/.layerfs/target/release/layerfs-daemon"
-LAYERFS_DOCKER = "/var/run/docker.sock"
+LAYERFS_DOCKER = "{{env.XDG_RUNTIME_DIR}}/docker.sock"
 LAYERFS_VOLUME = "arbor-store"
 LAYERFS_CONTAINER_PREFIX = "arbor-"
