@@ -39,8 +39,8 @@ interface and registering it; nothing else changes.
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
-| `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory on `Workspace` |
-| `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor |
+| `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory ([@arbor/environment-dir](../packages/environment-dir)) |
+| `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor ([@arbor/supervisor-process](../packages/supervisor-process)) |
 | `Scheduler` | insertion timing, backpressure, scheduled tasks | simple rules ([dispatch.md](dispatch.md)) |
 
 Besides the interfaces, hooks let a deployment add policy without replacing
@@ -147,6 +147,13 @@ error shape:
 | before and after `reload` | around every environment change |
 | service state change | when a service starts, fails or stops |
 
+The hooks run in the order their plugins registered, each seeing what the one
+before it changed, and the first refusal stops the rest. What a refusal does is
+the point's own: around an append, a note write, a reload or a tool call it
+throws, so the caller answers with the rule; before a delivery it drops the
+delivery; before an effect it holds it for an approval; before a window start or
+a model request the window never opens.
+
 The host API lets an operator list, pause and end windows, steer an input
 into one, and read the board. Permissions, privacy review, budgets and
 approvals are built from these.
@@ -158,10 +165,10 @@ approvals are built from these.
 | events, watermarks, links | `Journal` |
 | notes | `NoteStore` |
 | files | `Workspace`: one directory per window, with its snapshots |
-| skills, MCP and service configurations, settings | `Environment`: the `/env` directory, with revisions |
+| skills, MCP and service configurations, the settings | `Environment`: the `/env` directory, with revisions |
 | service directories and logs | `Supervisor`, on `Workspace` |
 | an event that changed files | the journal, with the snapshot id |
-| effect queue, schedules, settings | host database |
+| effect queue, schedules | host database |
 
 There is no project boundary: a host has one journal, one set of notes and
 one `/env`, and every window can read all of it.

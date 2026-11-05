@@ -22,8 +22,12 @@ a request is built, by fixed rules:
 
 The core defines the built-in kinds below. A plugin registers kinds of its
 own - its prompt section, its message shapes - as a kind with fields and a
-mapping, and hands the host blocks, never finished text. Changing how
-something reads is a change to one mapping or one table entry, in one place.
+mapping, and hands the host blocks, never finished text. A plugin's kind may
+also extend a built-in one: the built-in kind's tag, field order and fixed lines
+are kept, and the plugin's are added, so it can put its own fields on a note or
+an outside message and the one renderer still writes them. Its own fixed strings
+are merged into the host's table. Changing how something reads is a change to
+one mapping or one table entry, in one place.
 
 ## No built-in pi prompt
 

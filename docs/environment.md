@@ -25,9 +25,15 @@ every window at `/env`:
 ```text
 /env/skills/<name>/SKILL.md     a skill, with any scripts and files beside it
 /env/mcp/<name>.json            one MCP server's configuration
+/env/mcp/<name>/<name>.json     one that brought its own code, beside it
 /env/services/<name>/svc.json   one service's configuration, beside its files
 /env/settings.json              identity, general rules, judge, model tiers
 ```
+
+The implementation owns the directory on the host; a window reads it at `/env`,
+and `read` and `bash` resolve that prefix onto it. A deployment whose workspace
+can mount it for real does, and a window without a workspace still reads `/env`
+through `read`; changing it needs a workspace.
 
 Each item - one skill, one server, one service, the settings - has its own
 revision, so changes to different items never conflict. A window without a
@@ -43,11 +49,12 @@ workspace still reads `/env` through `read`; changing it needs a workspace.
   ([tools.md](tools.md#rules)). How to change the environment is in the
   built-in skills, which `tool_search` returns for `reload`; none of it is in
   the prompt.
+- **Every read records the revision it read**, `sk:deploy@4`, so a trace shows
+  which version of a skill a piece of work used, and `reload` knows which
+  revision a draft in that window is based on.
 - A skill is used by reading it: `read /env/skills/deploy/SKILL.md`. Its
   scripts run with `bash` from `/env/skills/deploy/`, with the window's own
   rights.
-- Every read records the revision it read, `sk:deploy@4`, so a trace shows
-  which version of a skill a piece of work used.
 
 ## Changing the environment
 
@@ -58,14 +65,15 @@ Every change is the same three steps: copy, edit, `reload`.
    it with `write`, `edit` and `bash`.
 2. **`reload(install?, remove?)`.** `install` names drafts in the workspace,
    `reload({ install: ["./deploy"] })`; `remove` names items,
-   `reload({ remove: ["skill:deploy"] })`. `reload` is a direct tool. The
-   host:
+   `reload({ remove: ["skill:deploy"] })`. `reload` is a direct tool. One call
+   is one environment revision, so a call that installs and removes lands as a
+   single delta. The host:
    - validates each item: a skill parses, an MCP server starts and lists its
      functions, a service starts and passes its health check;
-   - checks each item's revision against the one the draft was copied from;
-     when another window installed a newer one, the call is refused with the
-     differences, and the model merges them and calls again
-     ([memory.md](memory.md#conflicts) works the same way);
+   - checks each item's revision against the one the window read, which the
+     host recorded from its reads; when another window installed a newer one,
+     the call is refused with what changed since, and the model merges them and
+     calls again ([memory.md](memory.md#conflicts) works the same way);
    - on success replaces each item as a whole, records an environment
      revision `e7`, and broadcasts the delta
      ([coordination.md](coordination.md#broadcasts)).
@@ -89,8 +97,10 @@ service.
 | logs, and state changes recorded in the journal | read the logs, debug, upgrade, roll back |
 | secrets injected by name, egress rules applied as for windows | decide when to stop or remove it |
 
-- **Install.** `reload` forks the draft directory into one the service owns,
-  starts it and waits for its health check; only then is the item installed.
+- **Install.** `reload` copies the draft directory into one the service owns,
+  starts it under the `Supervisor` and waits for its health check; only then is
+  the item installed. A service that never becomes healthy is rolled back to the
+  revision it had, so the call is refused and nothing changed.
   An upgrade is another `reload`; the host swaps to the new revision.
   Reverting installs an older one.
 - **Failures are inputs.** A crash, a restart loop or a failing health check
@@ -109,14 +119,16 @@ service.
   deployment that needs it builds it on top.
 
 `services.list`, `services.status(name)` and `services.logs(name)` read them.
+A host restart starts every installed service again from the directory it owns.
 
 ## Built-in skills
 
-The framework ships a few skills under `/env/skills/arbor-*`: how to write,
-test, install, change and revert each kind of environment item. They are
-listed like any skill, one line each, and read on demand. They are released
-with the framework and read-only; the model writes skills of its own beside
-them.
+The framework ships four skills under `/env/skills/arbor-*`:
+`arbor-skill`, `arbor-mcp`, `arbor-service` and `arbor-settings`, one per kind
+of item, each holding how to write, test, install, change and revert that kind.
+They are listed like any skill, one line each, and read on demand. They are
+released with the framework and read-only; the model writes skills of its own
+beside them.
 
 They close the loop for the environment: the prompt names `reload` in one
 line, `tool_search` for `reload` returns the built-in skills' paths, the

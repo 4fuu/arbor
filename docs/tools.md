@@ -38,10 +38,14 @@ often the logs show it used.
 | `schedule` | `list`, `create`, `update`, `cancel` |
 | `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
-A module whose backing feature is not configured is absent. Every MCP
-server - a plugin's or one the model installed - is a module of its own,
-and arrives through an environment delta
-([environment.md](environment.md#deltas-in-a-window)).
+A module whose backing feature is not configured is absent: `env` and
+`services` appear only when the host has an environment and a supervisor.
+Every MCP server - a plugin's or one the model installed - is a module of its
+own, declared with the functions it listed when it was validated, and arrives
+through an environment delta
+([environment.md](environment.md#deltas-in-a-window)). A call into a function a
+delta removed is refused with the rule and the ref of the change that removed
+it.
 
 ## Rules
 
@@ -58,8 +62,8 @@ and arrives through an environment delta
   keywords, an exact `module.function` name, or nothing for every module;
   `tool_describe("module.function")` (script global) returns one signature.
   Both read the catalog frozen with the window plus the environment deltas
-  since. `tool_search` also answers skills and MCP servers by name or
-  keyword, with how to use them.
+  since. `tool_search` also answers skills by name or keyword with their path
+  and how to read them, and an MCP server's name with the functions it lists.
 - **The prompt names modules, not functions.** The system prompt lists the
   direct tools one per line and the modules one per line; a module's line
   describes what it can do and never names a function.

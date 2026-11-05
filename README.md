@@ -35,11 +35,15 @@ and every window can find everything that was ever done.
 - **Every module is replaceable.** The agent backend (pi by default), the
   journal, notes, workspaces, the judge, channels and the rest are interfaces.
 
-Status: stage 2. Many windows run at once: dispatch decides for every task
+Status: stage 5. Many windows run at once: dispatch decides for every task
 whether a live window takes it or a new one opens, the judge (Jev by default)
 answers what the rules leave open, and parallel windows stay current with each
-other through the board, notices, broadcasts and window messages. Notes, the
-environment and the host API come next.
+other through the board, notices, broadcasts and window messages. The host also
+runs the environment the model changes itself: `/env` with skills, MCP servers,
+services and the settings, `reload` as one revision broadcast to every live
+window, the services under a supervisor, and plugins as the one unit of
+extension - hooks, prompt blocks, skills and MCP servers. The host API comes
+next.
 
 > The design grows out of the context, window and notes mechanisms built for
 > [qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver). This link is
@@ -76,6 +80,8 @@ check` typechecks and tests every package.
 | `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
 | `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files |
+| `packages/environment-dir` | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
+| `packages/supervisor-process` | the default `Supervisor`: one host process per service, restart with backoff, logs |
 | `packages/prompt` | typed blocks, the one deterministic renderer and the replaceable text table |
 | `packages/agent-pi` | the default `AgentBackend`: pi-agent-core in process |
 | `packages/tools` | the entry points: direct tools, code mode modules, the host API |
