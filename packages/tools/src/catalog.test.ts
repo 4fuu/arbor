@@ -141,6 +141,13 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
     },
     broadcast: async () => 0,
     inbox: async () => inbox,
+
+    envPaths: () => undefined,
+    envCatalog: () => ({ items: [], modules: [], removed: [] }),
+    envItemAt: async () => undefined,
+    envRead: () => {},
+    reload: async () => ({ revision: "e1", changes: [], delivered: 0 }),
+    callMcp: async () => "",
   };
 
   const catalog = new ToolCatalog({ services });

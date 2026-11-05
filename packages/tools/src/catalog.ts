@@ -11,6 +11,7 @@
 import type {
   CallContext,
   DirectToolSpec,
+  EnvItem,
   FunctionSpec,
   ModuleSpec,
   TextTable,
@@ -22,10 +23,12 @@ import { textOf } from "@arbor/prompt";
 import { directToolIn, runScript, type CodeExecContext, type ScriptCatalog } from "./code-exec.ts";
 import type { ToolServices } from "./host.ts";
 import { CoreToolGroup } from "./groups/core.ts";
+import { EnvToolGroup } from "./groups/env.ts";
 import { FileToolGroup } from "./groups/files.ts";
 import { NoteToolGroup } from "./groups/notes.ts";
 import {
   BoardModuleGroup,
+  EnvModuleGroup,
   JournalModuleGroup,
   NotesModuleGroup,
   WindowsModuleGroup,
@@ -55,6 +58,8 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new BoardModuleGroup(options.services),
       new NotesModuleGroup(options.services),
       new WorkspaceModuleGroup(options.services),
+      new EnvToolGroup(options.services),
+      new EnvModuleGroup(options.services),
       ...(options.groups ?? []),
     ];
   }
@@ -77,9 +82,19 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
     return [...entryPoints, ...this.groups.flatMap((group) => group.tools())];
   }
 
-  /** Every module, one line each in the prompt. */
+  /**
+   * Every module, one line each in the prompt. A name is declared once: an MCP
+   * server named after a built-in module does not add a second line for it.
+   */
   modules(): readonly ModuleSpec[] {
-    return this.groups.flatMap((group) => group.modules());
+    const seen = new Set<string>();
+    const modules: ModuleSpec[] = [];
+    for (const module of this.groups.flatMap((group) => group.modules())) {
+      if (seen.has(module.name)) continue;
+      seen.add(module.name);
+      modules.push(module);
+    }
+    return modules;
   }
 
   /** Every function the modules declare. */
@@ -94,6 +109,24 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
 
   /** One call, through the group that owns it. */
   async call(request: ToolCall, context: CallContext): Promise<ToolResult> {
+    // A removal never changes a prompt, but a call into what it removed is
+    // refused with the ref of the change that removed it
+    // (docs/environment.md#deltas-in-a-window).
+    const removed = this.services.environment === undefined
+      ? undefined
+      : this.services.envCatalog().removed.find((one) => one.name === request.name);
+    if (removed !== undefined) {
+      return {
+        callId: request.callId,
+        ok: false,
+        content: "",
+        error: {
+          rule: "env.removed",
+          message: textOf(this.services.table, "refused.env.removed", { name: request.name, ref: removed.ref }),
+          nextAction: textOf(this.services.table, "next.env.removed"),
+        },
+      };
+    }
     if (request.name === "code_exec") {
       return this.codeExec(stringArg(request.args, "script"), {
         window: context.window,
@@ -128,23 +161,39 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
     return this.call({ name, args, callId: context.call ?? "script" }, { window: context.window });
   }
 
-  /** `tool_search`: keywords, an exact `module.function`, or nothing. */
-  search(keywords?: string): { modules: readonly string[]; functions: readonly string[] } {
+  /**
+   * `tool_search`: keywords, an exact `module.function`, or nothing. An exact
+   * module name answers with that module's functions, and a skill's name or
+   * keywords answer with its path and how to read it
+   * (docs/environment.md#using-a-skill-or-a-server).
+   */
+  search(keywords?: string): { modules: readonly string[]; functions: readonly string[]; skills: readonly EnvItem[] } {
     const modules = this.modules();
     const functions = this.functions();
+    const skills = this.services.environment === undefined ? [] : this.services.envCatalog().items.filter((item) => item.kind === "skill");
     if (keywords === undefined || keywords.trim() === "") {
-      return { modules: modules.map((module) => module.name), functions: [] };
+      return { modules: modules.map((module) => module.name), functions: [], skills };
     }
     const wanted = keywords.trim();
+    const named = modules.filter((module) => module.name === wanted);
     if (wanted.includes(".")) {
       const found = functions.filter((fn) => fn.name === wanted);
-      return { modules: [], functions: found.map((fn) => fn.name) };
+      return { modules: named.map((module) => module.name), functions: found.map((fn) => fn.name), skills: [] };
     }
     return {
-      modules: modules.filter((module) => module.name.includes(wanted) || module.description.includes(wanted)).map((m) => m.name),
+      modules: modules
+        .filter((module) => module.name.includes(wanted) || module.description.includes(wanted))
+        .map((module) => module.name),
+      // A server's name answers with its functions, not only the module's line.
       functions: functions
-        .filter((fn) => fn.name.includes(wanted) || fn.description.includes(wanted))
+        .filter(
+          (fn) =>
+            fn.name.includes(wanted) ||
+            fn.description.includes(wanted) ||
+            named.some((module) => module.functions.includes(fn)),
+        )
         .map((fn) => fn.name),
+      skills: skills.filter((skill) => skill.name.includes(wanted) || skill.description.includes(wanted)),
     };
   }
 
@@ -170,6 +219,11 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
     }
     for (const name of found.functions) {
       lines.push(this.describe(name) ?? name);
+    }
+    // A skill is used by reading it, so the answer names its path.
+    for (const skill of found.skills) {
+      if (skill.path === undefined) continue;
+      lines.push(textOf(table, "result.tool_search.skill", { name: skill.name, description: skill.description, path: skill.path }));
     }
     return {
       callId: request.callId,

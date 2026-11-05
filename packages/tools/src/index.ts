@@ -22,12 +22,15 @@ export {
   moduleSpec,
   refused,
   toolSpec,
+  type EnvCatalog,
   type LiveWindow,
+  type ReloadOutcome,
   type SearchOutcome,
   type SendOutcome,
   type ToolServices,
 } from "./host.ts";
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
+export { EnvToolGroup } from "./groups/env.ts";
 export { NoteToolGroup } from "./groups/notes.ts";
 export { FileToolGroup } from "./groups/files.ts";
 export {

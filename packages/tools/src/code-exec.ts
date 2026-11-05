@@ -37,7 +37,11 @@ export interface ScriptCatalog {
   /** Run one `module.function` call, the same path a direct call takes. */
   callModule(name: string, args: Record<string, unknown>, context: CodeExecContext): Promise<ToolResult>;
   /** `tool_search`: keywords, an exact name, or nothing for every module. */
-  search(keywords?: string): { modules: readonly string[]; functions: readonly string[] };
+  search(keywords?: string): {
+    modules: readonly string[];
+    functions: readonly string[];
+    skills: readonly { name: string; description: string; path?: string }[];
+  };
   /** `tool_describe`: one function's signature. */
   describe(name: string): string | undefined;
   /** The direct tool names a script may not call. */

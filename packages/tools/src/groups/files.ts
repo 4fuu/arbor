@@ -17,7 +17,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import type {
   CallContext,
   DirectToolSpec,
@@ -111,12 +111,40 @@ export class FileToolGroup implements ToolGroup {
     return this.services.ensureWorkspace(window);
   }
 
+  /**
+   * The environment, at the path a window reads it at. It is mounted read-only,
+   * so a window without a workspace still reads `/env/skills/<name>/SKILL.md`
+   * (docs/environment.md#layout), and a write to it is refused.
+   */
+  private envPath(path: string): string | undefined {
+    const env = this.services.envPaths();
+    if (env === undefined) return undefined;
+    if (path !== env.prefix && !path.startsWith(`${env.prefix}/`)) return undefined;
+    const inside = path === env.prefix ? "" : path.slice(env.prefix.length + 1);
+    return inside === "" ? env.directory : join(env.directory, inside);
+  }
+
+  /** A command a window runs sees `/env` where it reads it, not where it lives. */
+  private envCommand(command: string): string {
+    const env = this.services.envPaths();
+    if (env === undefined || !command.includes(env.prefix)) return command;
+    return command.split(env.prefix).join(env.directory);
+  }
+
+  /** Record which revision of an item a window read, for `reload`'s check. */
+  private async noteEnvRead(window: WindowRef, path: string): Promise<void> {
+    const prefix = this.services.envPaths()?.prefix;
+    if (prefix === undefined || (path !== prefix && !path.startsWith(`${prefix}/`))) return;
+    const item = await this.services.envItemAt(path);
+    if (item !== undefined) this.services.envRead(window, item);
+  }
+
 
   private async bash(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
-    const command = stringArg(request.args, "command");
+    const command = this.envCommand(stringArg(request.args, "command"));
     if (workspace.exec !== undefined) {
       // The implementation owns the execution environment, so the command runs
       // there and `path` is not a host path. The command runs to completion in
@@ -165,16 +193,22 @@ export class FileToolGroup implements ToolGroup {
 
   private async read(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
-    const workspace = await this.mount(window);
-    if (workspace === undefined) return this.absent(request);
     const path = stringArg(request.args, "path");
-    const text = await this.readText(workspace, path);
+    // The environment is read where a window sees it, without a workspace.
+    const env = this.envPath(path);
+    const workspace = env === undefined ? await this.mount(window) : undefined;
+    if (env === undefined && workspace === undefined) return this.absent(request);
+    const text =
+      env === undefined
+        ? await this.readText(workspace as WorkspaceMount, path)
+        : await readFile(env, "utf8").catch(() => null);
     if (text === null) return this.missing(request, "read.missing", path);
+    if (env !== undefined) await this.noteEnvRead(window, path);
     const lines = text.split("\n");
     const offset = Math.max(0, numberArg(request.args, "offset", 0));
     const limit = Math.min(500, Math.max(1, numberArg(request.args, "limit", 400)));
     const body = await boundResult(lines.slice(offset, offset + limit).join("\n"), {
-      workspace: workspace.path,
+      workspace: workspace?.path ?? path,
       callId: request.callId,
       table,
     });
@@ -187,9 +221,10 @@ export class FileToolGroup implements ToolGroup {
 
   private async write(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
+    const path = stringArg(request.args, "path");
+    if (this.envPath(path) !== undefined) return this.readonly(request, path);
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
-    const path = stringArg(request.args, "path");
     const text = stringArg(request.args, "text");
     const written = await this.writeText(workspace, path, text);
     if (written === false) return this.outside(request, path);
@@ -202,9 +237,10 @@ export class FileToolGroup implements ToolGroup {
 
   private async edit(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
+    const path = stringArg(request.args, "path");
+    if (this.envPath(path) !== undefined) return this.readonly(request, path);
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
-    const path = stringArg(request.args, "path");
     const old = stringArg(request.args, "old");
     const next = stringArg(request.args, "new");
     const text = await this.readText(workspace, path);
@@ -301,6 +337,11 @@ export class FileToolGroup implements ToolGroup {
 
   private outside(request: ToolCall, path: string): ToolResult {
     return this.refusal(request, "file.outside_workspace", "read.outside", { path });
+  }
+
+  /** The environment is mounted read-only, so nothing there is written. */
+  private readonly(request: ToolCall, path: string): ToolResult {
+    return this.refusal(request, "env.readonly_path", "env.readonly_path", { path });
   }
 
   private refusal(

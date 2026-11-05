@@ -5,6 +5,7 @@
  * A module whose backing feature is not configured is absent. The prompt names
  * a module, never a function; how to call one comes from `tool_search` and
  * `tool_describe`, which read the same catalog the window was opened with.
+ * `env`, `services` and the MCP servers' own modules are in `./env.ts`.
  */
 
 import { readdir, readFile } from "node:fs/promises";
@@ -711,4 +712,5 @@ function refusedOf(request: ToolCall, error: unknown): ToolResult {
   };
 }
 
+export { EnvModuleGroup } from "./env.ts";
 export type { LiveWindow };
