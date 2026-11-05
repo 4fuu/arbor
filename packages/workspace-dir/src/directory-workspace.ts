@@ -22,7 +22,7 @@
  */
 
 import { chmod, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { arborError } from "@arbor/errors";
 import type {
   DiffFile,
@@ -121,6 +121,24 @@ export class DirectoryWorkspace implements Workspace {
       ref,
       path: resolved.path,
       readOnly,
+      readFile: async (path: string) => {
+        const target = this.inside(resolved.path, path);
+        if (target === undefined) return null;
+        return readFile(target, "utf8").catch(() => null);
+      },
+      writeFile: async (path: string, text: string) => {
+        const target = this.inside(resolved.path, path);
+        if (target === undefined) {
+          throw arborError({
+            code: "refused",
+            rule: "file.outside_workspace",
+            message: `workspace: ${path} 在目录之外`,
+            nextAction: "改用目录内的相对路径。",
+          });
+        }
+        await mkdir(dirname(target), { recursive: true });
+        await writeFile(target, text, "utf8");
+      },
       release: async () => {
         if (readOnly) await thaw(resolved.path);
       },
@@ -164,6 +182,13 @@ export class DirectoryWorkspace implements Workspace {
   /** The directory a window works in, for the file tools. */
   pathOf(ref: WorkspaceRef): string {
     return this.workspacePath(ref);
+  }
+
+  /** A path inside a directory, or `undefined` when it escapes it. */
+  private inside(root: string, path: string): string | undefined {
+    if (path === "") return undefined;
+    const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
+    return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
   }
 
   private workspacePath(ref: WorkspaceRef): string {

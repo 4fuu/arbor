@@ -62,6 +62,19 @@ export interface WorkspaceMount {
    * `path`.
    */
   exec?(command: string): Promise<ExecResult>;
+  /**
+   * Read one file in the workspace as UTF-8 text, or `null` when it does not
+   * exist. Present when the implementation can hand a file to the host; an
+   * implementation whose `path` is not a host path implements it over its own
+   * transport. A caller falls back to reading `path` on the host when it is
+   * absent.
+   */
+  readFile?(path: string): Promise<string | null>;
+  /**
+   * Write one file in the workspace as UTF-8 text, creating its directory.
+   * The same fallback rule as `readFile` applies.
+   */
+  writeFile?(path: string, text: string): Promise<void>;
   release(): Promise<void>;
 }
 
