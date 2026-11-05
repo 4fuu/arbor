@@ -324,6 +324,55 @@ describe("one window end to end", () => {
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
   });
 
+  it("stops the windows on close without opening a continuation, and the next start continues the work", async () => {
+    const { arbor, journal, backend, root } = await host();
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "第一轮" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    // `close` only releases resources: the window is stopped, and nothing opens
+    // a continuation, so no second turn starts.
+    await arbor.close();
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 1);
+    assert.equal(backend.opened.length, 1);
+    const ended = await journal.list({ kinds: ["window_end"] });
+    assert.equal(ended.items.length, 1);
+    assert.equal(ended.items[0]?.window, record.window);
+    assert.equal(JSON.parse(ended.items[0]?.body ?? "{}").reason, "host_restart");
+    assert.equal(arbor.live().length, 0);
+
+    // The next start on the same journal continues the stopped window, the way
+    // the restart section describes: a fork of the directory it worked in.
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers: new ManualTimers(),
+      now: () => 1700000000000,
+      workspace: new DirectoryWorkspace({ root }),
+    });
+    backend.attach(reopened.windowControl());
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
+    await reopened.start();
+    await backend.finished();
+    const continued = await journal.list({ kinds: ["window_start"] });
+    assert.equal(continued.items.length, 2);
+    assert.equal(continued.items[1]?.window, "c2");
+    const opened = backend.opened[1];
+    assert.ok(opened?.continuation?.previous === "c1");
+    assert.ok(opened?.continuation?.midTaskReset === true);
+    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
+  });
+
   it("runs a module call from a script through the same service call", async () => {
     const { arbor, journal, backend } = await host();
     await journal.append({ kind: "input", window: "c1", body: "部署上线流程已确认", targets: ["qq:group:1"] });

@@ -20,7 +20,8 @@ in the journal ([journal.md](journal.md)).
    ([dispatch.md](dispatch.md#insertion-timing)).
 5. **End.** The idle time runs out, the model ends the window, or the window
    reaches its hard limit. An ended window is never reopened; work goes on in
-   a new window.
+   a new window. A `close()` is not an end of that kind: it stops the window and
+   the next `start()` continues it ([restart](#restart)).
 
 ## Prompt layout
 
@@ -84,9 +85,16 @@ sent again.
 ## Restart
 
 The default backend keeps a run in memory and the journal is the only
-persistent record. A host restart therefore ends every running window the way
-the hard limit does and opens their continuations from the journal; effects
-already made are not made again. A continued window forks the directory the
-stopped one worked in, which the snapshots its calls recorded name
-([workspaces.md](workspaces.md#what-the-framework-guarantees)); a window that
-never touched files has none, and its continuation starts a fresh one.
+persistent record. `close()` therefore only releases resources: it stops every
+running window, lets the channels' push sources go and stops the services this
+host started. It opens no continuation and starts no new turn, so a host that
+closes changes nothing the journal does not already hold; each window it stopped
+is recorded with the reason `host_restart`.
+
+A host restart is a new host over the same journal. Its `start()` continues
+every window that was still running and every window a `close` stopped, the way
+the hard limit does; effects already made are not made again. A continued window
+forks the directory the stopped one worked in, which the snapshots its calls
+recorded name ([workspaces.md](workspaces.md#what-the-framework-guarantees)); a
+window that never touched files has none, and its continuation starts a fresh
+one.

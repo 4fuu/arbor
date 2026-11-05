@@ -116,7 +116,7 @@ import {
   type TaskSummary,
 } from "@arbor/tools";
 import { ToolCatalog } from "@arbor/tools";
-import { Board, hostBody, type BoardEntry } from "./board.ts";
+import { Board, hostBody, readString, type BoardEntry } from "./board.ts";
 import { Coordinator, type CoordinationHost } from "./coordination.ts";
 import { Dispatcher, type DecisionRecord, type DispatchHost, type DispatchResult } from "./dispatch.ts";
 import { EffectQueue, type EffectInput, type EffectQueueOptions } from "./effects.ts";
@@ -188,6 +188,8 @@ export interface WindowRecord {
   callEvents: Map<string, EventRef>;
   /** The window's session, once it is running. */
   session?: WindowSession;
+  /** The window's run, from opening to its end, so `close` can wait for it. */
+  running?: Promise<void>;
   /** What is queued for this window and not inserted yet. */
   inbox: QueuedItem[];
   idleTimer?: Timer;
@@ -269,6 +271,8 @@ export class Arbor {
   /** The service layer the tools call. One implementation of every operation. */
   readonly services: ToolServices;
   private started = false;
+  /** True once `close` released this host, so nothing new opens a session. */
+  private closed = false;
   /** The model a window gets when settings map no tier. */
   private fallbackModel: string | undefined;
   /** The judge. Jev by default; a deployment replaces it. */
@@ -577,8 +581,9 @@ export class Arbor {
 
   /**
    * Rebuild the host from the journal: continue every window that was running
-   * when the host stopped, the way the hard limit does
-   * (docs/windows.md#restart). Effects already made are not made again.
+   * when the host stopped, and every window a `close` stopped, the way the hard
+   * limit does (docs/windows.md#restart). Effects already made are not made
+   * again.
    */
   async start(): Promise<void> {
     if (this.started) return;
@@ -592,8 +597,14 @@ export class Arbor {
     this.board.rebuild(board.items);
     const started = await this.journal.list({ kinds: ["window_start"], limit: 200 });
     const ended = await this.journal.list({ kinds: ["window_end"], limit: 200 });
+    // A window `close` stopped comes back here: its own end is the record of the
+    // stop, and the reason it carries is what tells the two apart. Every other
+    // end is final, and the continuation it opened - when it opened one - is
+    // already in the journal as its own `window_start`.
     const finished = new Set(
-      ended.items.map((event) => event.window).filter((one): one is WindowRef => one !== null),
+      ended.items
+        .filter((event) => event.window !== null && readString(event, "reason") !== "host_restart")
+        .map((event) => event.window as WindowRef),
     );
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window)) continue;
@@ -693,7 +704,7 @@ export class Arbor {
       }),
     );
     // Opening a window starts its first turn; the host keeps watching it.
-    void this.run(record, { firstInput, epoch, limits: this.limits() });
+    this.launch(record, { firstInput, epoch, limits: this.limits() });
     return record;
   }
 
@@ -1069,18 +1080,35 @@ export class Arbor {
     };
   }
 
-  /** Release the host: end every window and stop draining effects. */
+  /**
+   * Release the host: stop every window, stop draining effects, let the
+   * channels' push sources and the services go.
+   *
+   * Stopping a window is all this does. No continuation is opened and no new
+   * turn starts, so closing a host changes nothing the journal does not already
+   * hold: each stopped window is recorded with `host_restart`, and the next
+   * `start` continues it from there (docs/windows.md#restart).
+   */
   async close(): Promise<void> {
     if (this.retryTimer !== undefined) {
       this.timers.clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
     }
     this.held.length = 0;
+    this.closed = true;
     this.scheduler.close?.();
     await this.unsubscribeChannels();
-    for (const record of this.live()) {
+    const stopping = this.live();
+    for (const record of stopping) {
       if (record.session === undefined) continue;
       await record.session.end(undefined, "host_restart");
+    }
+    // Each window's end is recorded by its own run, so the host waits for it: a
+    // `close` leaves every window it stopped in the journal, and the next
+    // `start` reads them from there.
+    for (const record of stopping) {
+      if (record.running === undefined) continue;
+      await record.running;
     }
     // A service is resident, but it belongs to this host: the next one starts it
     // again from the item it installed (docs/environment.md#services).
@@ -1173,11 +1201,31 @@ export class Arbor {
 
   // ---- the run loop -------------------------------------------------------
 
+  /**
+   * Start one window's run and keep it on the record, so `close` waits for the
+   * end each window records before the host is released.
+   */
+  private launch(
+    record: WindowRecord,
+    input: { firstInput: string; epoch: PromptEpoch; limits: OpenWindowRequest["limits"]; continuation?: OpenWindowRequest["continuation"] },
+  ): void {
+    const running = this.run(record, input);
+    record.running = running;
+    void running.catch(() => {});
+  }
+
   /** Open one window's session and watch it until the window ends. */
   private async run(
     record: WindowRecord,
     input: { firstInput: string; epoch: PromptEpoch; limits: OpenWindowRequest["limits"]; continuation?: OpenWindowRequest["continuation"] },
   ): Promise<void> {
+    // A window still opening when the host closed never reaches a model: the
+    // host was released, so the window is stopped where it stands and its stop
+    // is recorded like any other (docs/windows.md#restart).
+    if (this.closed) {
+      await this.stop(record);
+      return;
+    }
     let session: WindowSession;
     // The prompt a window opens with goes through `beforeModelRequest`, so a
     // plugin sees what the model will read before it reaches the backend. With
@@ -1347,11 +1395,10 @@ export class Arbor {
       ...(wanted === undefined ? {} : { refs: [...wanted.refs] }),
     });
     this.board.close(record.window);
-    this.windows.delete(record.window);
-    this.reads.delete(record.window);
-    if (record.mount !== undefined) await record.mount.release().catch(() => {});
-    const continues =
-      wanted !== undefined || reason === "hard_limit" || reason === "host_restart";
+    await this.release(record);
+    // A window a `close` stopped goes on at the next `start`, not here: closing
+    // a host starts no new turn (docs/windows.md#restart).
+    const continues = wanted !== undefined || reason === "hard_limit";
     if (!continues) return;
     await this.continueWindow(record.window, {
       ...(wanted === undefined ? {} : { handoff: wanted }),
@@ -1422,7 +1469,7 @@ export class Arbor {
       refs: [taskRef, previous],
     });
     const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier, options.forkedFrom);
-    void this.run(record, {
+    this.launch(record, {
       firstInput,
       epoch,
       limits: this.limits(),
@@ -1433,6 +1480,35 @@ export class Arbor {
       },
     });
     return record;
+  }
+
+  /**
+   * Stop one window without a continuation: the end a `close` records. It is
+   * what the next `start` reads to know the window was stopped rather than
+   * finished (docs/windows.md#restart).
+   */
+  private async stop(record: WindowRecord): Promise<void> {
+    this.disarm(record);
+    record.state = "ended";
+    await this.journal.append({
+      kind: "window_end",
+      window: record.window,
+      body: hostBody({ reason: "host_restart", used: record.usage.used }),
+      targets: this.board.get(record.window)?.targets ?? [],
+    });
+    this.board.close(record.window);
+    await this.release(record);
+  }
+
+  /**
+   * Drop one ended window's own state: its record, what it read of the
+   * environment and the mount it held. The board line is closed by the caller,
+   * which knows the targets the end is recorded with.
+   */
+  private async release(record: WindowRecord): Promise<void> {
+    this.windows.delete(record.window);
+    this.reads.delete(record.window);
+    if (record.mount !== undefined) await record.mount.release().catch(() => {});
   }
 
   /** A window that never reached a model still ends, and its work goes on. */
