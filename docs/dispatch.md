@@ -63,6 +63,36 @@ default judge is Jev; every decision is on by default, and each can be set to
   model call: its tasks, the targets it touched, its board line with its
   expectations, its last inputs.
 
+### The default judge
+
+Jev is TypeSafe AI's System One classifier, served by `@arbor/judge-jev`. It is
+not a chat model and not a pi provider: one request posts one JSON state and
+several typed questions about it to `POST /v1/systemone`, and every answer comes
+back with its score or probability. A bool question is `yes`/`no`, a score
+question is a level on the question's own scale, and a choice question names one
+option - which is how `model tier` picks among the configured tiers. The
+questions and their state follow [prompting.md](prompting.md#judge-questions).
+
+- **Configuration.** `JEV_API_KEY` names the secret; the key is read per
+  request, so one that appears later applies to the next decision. The model id
+  is `jev-latest` and the service is `https://api.typesafe.ai/v1`; a deployment
+  overrides either.
+- **Modes.** The judge answers what it is asked in `shadow` exactly as in `on`,
+  and the mode rides on the decision's log record. A decision that is `off` asks
+  nothing at all and is answered with that decision's own default from the table
+  above, so a decision that acts on nothing costs no request.
+- **Unreachable.** A missing key, a transport failure or an answer of the wrong
+  shape is refused in the core's error shape - code `unavailable`, rule
+  `judge.jev.unreachable`, and the next action naming the rule fallback. The
+  judge never fabricates an answer, so the fallback is the only thing that
+  changes.
+- **Logging.** Every decision is logged with the state the judge saw (after
+  scrubbing), the questions, every answer with its score or probability, the
+  token usage and how long it took, so a threshold is tuned from real
+  decisions.
+- **Not wired in yet.** The judge is its own package and answers only. The
+  service layer holds the rule bounds and the fallbacks around it.
+
 ## Insertion timing
 
 A running window receives inserted tasks and deliveries

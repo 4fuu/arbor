@@ -71,5 +71,6 @@ check` typechecks and tests every package.
 | `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts |
+| `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
 | `packages/core` (later) | the service layer: one implementation of every operation |
 | `packages/tools` (later) | the entry points: direct tools, code mode modules, the host API |
