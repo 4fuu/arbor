@@ -1,0 +1,27 @@
+{
+  "name": "@arbor/environment-dir",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default Environment: skills, MCP servers, services and settings in one shared /env directory, with a revision per item, validation and deltas.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@arbor/tools": "workspace:*",
+    "@arbor/workspace-dir": "workspace:*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

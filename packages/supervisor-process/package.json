@@ -1,0 +1,25 @@
+{
+  "name": "@arbor/supervisor-process",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default Supervisor: one host process per service, restarted with backoff after a crash, with logs and state changes reported to the host.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

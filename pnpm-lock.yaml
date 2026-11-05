@@ -54,12 +54,40 @@ importers:
       '@arbor/agent-pi':
         specifier: workspace:*
         version: link:../agent-pi
+      '@arbor/environment-dir':
+        specifier: workspace:*
+        version: link:../environment-dir
       '@arbor/journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
       '@arbor/notes-sqlite':
         specifier: workspace:*
         version: link:../notes-sqlite
+      '@arbor/supervisor-process':
+        specifier: workspace:*
+        version: link:../supervisor-process
+      '@arbor/workspace-dir':
+        specifier: workspace:*
+        version: link:../workspace-dir
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/environment-dir:
+    dependencies:
+      '@arbor/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@arbor/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@arbor/tools':
+        specifier: workspace:*
+        version: link:../tools
       '@arbor/workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
@@ -164,6 +192,22 @@ importers:
       '@node-rs/jieba':
         specifier: ^2.0.4
         version: 2.0.4
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/supervisor-process:
+    dependencies:
+      '@arbor/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@arbor/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
     devDependencies:
       '@types/node':
         specifier: ^26.0.0
