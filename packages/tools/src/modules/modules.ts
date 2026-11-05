@@ -1,6 +1,6 @@
 /**
- * The code mode modules: `journal`, `windows`, `board`, `notes` and
- * `workspace` (docs/tools.md#modules).
+ * The code mode modules: `journal`, `windows`, `board`, `notes`, `channels`
+ * and `workspace` (docs/tools.md#modules).
  *
  * A module whose backing feature is not configured is absent. The prompt names
  * a module, never a function; how to call one comes from `tool_search` and
@@ -13,6 +13,8 @@ import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 import type {
   Block,
   CallContext,
+  Channel,
+  ExternalRef,
   WorkspaceMount,
   Event,
   EventRef,
@@ -449,6 +451,137 @@ export class NotesModuleGroup implements ToolGroup {
   }
 }
 
+/** `channels`: list, get. Absent when no plugin registered a channel. */
+export class ChannelsModuleGroup implements ToolGroup {
+  readonly id = "modules.channels";
+
+  private readonly services: ToolServices;
+
+  constructor(services: ToolServices) {
+    this.services = services;
+  }
+
+  tools(): readonly [] {
+    return [];
+  }
+
+  modules(): readonly ModuleSpec[] {
+    // A channel is a plugin's adapter, so a host no plugin plugged one into has
+    // nothing to list and nothing to look up.
+    if (this.services.channels().length === 0) return [];
+    return [
+      moduleSpec(this.services.table, "channels", [
+        { name: "channels.list", signature: "channels.list()" },
+        { name: "channels.get", signature: "channels.get(ref)" },
+      ]),
+    ];
+  }
+
+  async call(request: ToolCall, _context: CallContext): Promise<ToolResult> {
+    switch (request.name) {
+      case "channels.list":
+        return this.list(request);
+      case "channels.get":
+        return this.get(request);
+      default:
+        return this.notOwned(request);
+    }
+  }
+
+  /** `channels.list`: every channel, and what is connected on it. */
+  private async list(request: ToolCall): Promise<ToolResult> {
+    const table = this.services.table;
+    const lines: string[] = [];
+    for (const channel of this.services.channels()) {
+      const connections = await channel.connections();
+      if (connections.length === 0) {
+        lines.push(textOf(table, "result.channels.none", { channel: channel.id }));
+        continue;
+      }
+      for (const connection of connections) {
+        lines.push(
+          textOf(table, "result.channels.line", {
+            channel: channel.id,
+            id: connection.id,
+            state: connection.online ? textOf(table, "result.channels.online") : textOf(table, "result.channels.offline"),
+            detail: connection.detail === undefined ? "" : ` ${connection.detail}`,
+          }),
+        );
+      }
+    }
+    return { callId: request.callId, ok: true, content: lines.join("\n") };
+  }
+
+  /** `channels.get(ref)`: one outside message, by its native id. */
+  private async get(request: ToolCall): Promise<ToolResult> {
+    const table = this.services.table;
+    const ref = stringArg(request.args, "ref");
+    const channel = this.channelOf(ref);
+    if (channel === undefined) {
+      return {
+        callId: request.callId,
+        ok: false,
+        content: "",
+        error: {
+          rule: "channels.unknown",
+          message: textOf(table, "refused.channels.unknown", { ref }),
+          nextAction: textOf(table, "next.channels.unknown"),
+        },
+      };
+    }
+    const message = await channel.get(ref as ExternalRef);
+    if (message === null) {
+      return {
+        callId: request.callId,
+        ok: false,
+        content: "",
+        error: {
+          rule: "channels.not_found",
+          message: textOf(table, "refused.channels.notfound", { ref }),
+          nextAction: textOf(table, "next.channels.notfound"),
+        },
+      };
+    }
+    return {
+      callId: request.callId,
+      ok: true,
+      content: [
+        textOf(table, "result.channels.message", {
+          external: message.external,
+          source: message.source,
+          target: message.target,
+          time: formatTime(message.time),
+          reply:
+            message.replyTo === undefined
+              ? ""
+              : textOf(table, "result.channels.reply", { reply: message.replyTo }),
+          stored: message.stored ? textOf(table, "result.channels.stored") : "",
+        }),
+        textOfBlocks(message.content),
+      ].join("\n"),
+    };
+  }
+
+  /** The channel a native id names, by its prefix: `http:42` is `http`'s. */
+  private channelOf(ref: string): Channel | undefined {
+    const prefix = ref.split(":")[0] ?? "";
+    return this.services.channels().find((channel) => channel.id === prefix);
+  }
+
+  private notOwned(request: ToolCall): ToolResult {
+    return {
+      callId: request.callId,
+      ok: false,
+      content: "",
+      error: {
+        rule: "module.function.unknown",
+        message: textOf(this.services.table, "refused.unknown_function", { module: "channels", name: request.name }),
+        nextAction: textOf(this.services.table, "next.unknown_function"),
+      },
+    };
+  }
+}
+
 /** `tasks`: list, show. The tasks the host dispatched (docs/dispatch.md#tasks). */
 export class TasksModuleGroup implements ToolGroup {
   readonly id = "modules.tasks";
@@ -853,6 +986,16 @@ export class WorkspaceModuleGroup implements ToolGroup {
 
 function bodyOf(event: Event): string {
   return event.body === null ? "" : event.body.replace(/\s+/g, " ").slice(0, 120);
+}
+
+/** The text of an outside message's blocks: what its sender wrote. */
+function textOfBlocks(blocks: readonly Block[]): string {
+  const lines: string[] = [];
+  for (const block of blocks) {
+    const content = block.fields.content;
+    if (typeof content === "string") lines.push(content);
+  }
+  return lines.join("\n");
 }
 
 function traceText(node: { ref: Ref; summary: string; from: readonly unknown[] }, depth: number): string {

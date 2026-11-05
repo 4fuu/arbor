@@ -135,6 +135,13 @@ export const zhTextTable: TextTable = {
   "result.services.item": "{name} {state} 第 {revision} 版（重启 {restarts} 次）",
   "result.services.status": "{name} {state} 第 {revision} 版，端口 {ports}，重启 {restarts} 次，自 {since}。",
   "result.services.logs": "{name} 的日志（{lines} 行）：",
+  "result.channels.line": "{channel} {id} {state}{detail}",
+  "result.channels.none": "{channel} 没有连接。",
+  "result.channels.online": "在线",
+  "result.channels.offline": "离线",
+  "result.channels.stored": "（存储副本）",
+  "result.channels.reply": "，回复 {reply}",
+  "result.channels.message": "{external} {source} {target} {time}{reply}{stored}",
 
   "refused.unknown_tool": "没有工具 {name}。",
   "refused.unknown_function": "模块 {module} 中没有函数 {name}。",
@@ -171,6 +178,8 @@ export const zhTextTable: TextTable = {
   "refused.env.removed": "函数 {name} 已随环境变更 {ref} 移除。",
   "refused.env.readonly_path": "{path} 是只读的环境目录。",
   "refused.service.notfound": "没有服务 {name}。",
+  "refused.channels.unknown": "没有频道 {ref}。",
+  "refused.channels.notfound": "频道里没有消息 {ref}。",
 
   // ---- next actions the refusals name ------------------------------------
   "next.unknown_tool": "用 tool_search 查询可用的工具和模块。",
@@ -209,6 +218,8 @@ export const zhTextTable: TextTable = {
   "next.env.removed": "用 env.list 查看当前可用的模块，或重新安装该服务器。",
   "next.env.readonly_path": "环境目录只读；要修改就改本窗口工作区里的草稿，再用 reload 安装。",
   "next.service.notfound": "用 services.list 查看当前的服务。",
+  "next.channels.unknown": "用 channels.list 查看已接入的频道，ref 写成 频道:原生ID。",
+  "next.channels.notfound": "核对原生 ID：它是发送方自己的 ID，带频道前缀，例如 http:42。",
 
   // ---- direct tools (docs/tools.md#direct-tools) --------------------------
   "tool.send": "向一个目标发送内容，经过效果队列，只记录不保证送达。",
@@ -258,6 +269,7 @@ export const zhTextTable: TextTable = {
   "module.windows": "查看窗口、重放窗口记录、向窗口发送消息、广播。",
   "module.board": "查看现场板、设置本窗口在做的事、声明和取消预期。",
   "module.notes": "查询、读取笔记，恢复一处修订的上下文，查看当前启用集。",
+  "module.channels": "查看已接入的外部频道：连接列表，以及按原生 ID 读取一条消息。",
   "module.tasks": "查看派发过的任务：最近的列表，以及一个任务批次里的外部事件。",
   "module.schedule": "查看、创建、修改和取消定时任务。",
   "module.workspace": "查看快照、挂载只读视图、比较差异、在目录中查找和匹配。",
@@ -282,6 +294,8 @@ export const zhTextTable: TextTable = {
   "function.notes.read": "读取一个笔记的正文，按字符分页。",
   "function.notes.context": "恢复一处修订发生时的环境。",
   "function.notes.active": "列出当前启用的笔记。",
+  "function.channels.list": "列出已接入的频道，以及每个频道上在线的连接。",
+  "function.channels.get": "按原生 ID 读取一条外部消息，例如 http:42。",
   "function.tasks.list": "列出最近派发过的任务，最新在前。",
   "function.tasks.show": "按引用读取一个或多个任务，以及它们批次中的外部事件。",
   "function.schedule.list": "列出当前的定时任务，下次触发时间近的在前。",

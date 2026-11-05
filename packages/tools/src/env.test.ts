@@ -179,6 +179,7 @@ async function harness(): Promise<Harness> {
     setBoardLine: async () => {},
     expect: async () => ({ kind: "described", ref: "m1" }),
     unexpect: async () => {},
+    channels: () => [],
     windows: async () => [],
     windowTranscript: async () => [],
     windowMessage: async () => "r1" as never,

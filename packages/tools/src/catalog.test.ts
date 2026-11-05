@@ -8,6 +8,7 @@ import { DirectoryWorkspace } from "@arbor/workspace-dir";
 import type {
   BackgroundJob,
   CallContext,
+  Channel,
   Event,
   NoteStore,
   NoteWriteInput,
@@ -18,7 +19,7 @@ import type {
   ToolResult,
   WorkspaceMount,
 } from "@arbor/interfaces";
-import { Renderer, zhTextTable } from "@arbor/prompt";
+import { Renderer, dataBlock, zhTextTable } from "@arbor/prompt";
 import { ToolCatalog } from "./catalog.ts";
 import type { LiveWindow, TaskSummary, ToolServices } from "./host.ts";
 import { handoffOf } from "./groups/core.ts";
@@ -43,7 +44,7 @@ interface Harness {
   refOf(window: string): string;
 }
 
-async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
+async function harness(options: { notes?: boolean; channels?: boolean } = {}): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-tools-"));
   const workspace = new DirectoryWorkspace({ root });
@@ -97,6 +98,9 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
   const created: ScheduledTaskInput[] = [];
   const changed: { ref: TaskRef; changes: ScheduledTaskUpdate }[] = [];
   const cancelled: TaskRef[] = [];
+  // A channel is a plugin's adapter, so the harness has one only when the test
+  // says so: a host no plugin plugged one into lists no channel.
+  const channel = options.channels === true ? fakeChannel() : undefined;
 
   const services: ToolServices = {
     table: zhTextTable,
@@ -178,6 +182,7 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
       ref: "m1",
     }),
     unexpect: async () => {},
+    channels: () => (channel === undefined ? [] : [channel]),
     windows: async () => live,
     windowTranscript: async (window) => (await journal.list({ window })).items,
     windowMessage: async (_from, to) => {
@@ -272,6 +277,65 @@ describe("tool catalog", () => {
     assert.ok(!withoutNotes.catalog.modules().some((module) => module.name === "notes"));
     const notes = await harness();
     assert.ok(notes.catalog.modules().some((module) => module.name === "notes"));
+  });
+
+  it("omits the channels module when no channel is registered", async () => {
+    const { catalog } = await harness();
+    assert.ok(!catalog.modules().some((module) => module.name === "channels"));
+    const result = await run(catalog, "channels.list", {});
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.rule, "tool.unknown");
+  });
+
+  it("lists the registered channels and reads one message by its native id", async () => {
+    const { catalog } = await harness({ channels: true });
+    assert.deepEqual(catalog.modules().map((module) => module.name), [
+      "journal",
+      "windows",
+      "board",
+      "notes",
+      "channels",
+      "tasks",
+      "schedule",
+      "workspace",
+    ]);
+    assert.deepEqual(
+      catalog.modules().find((module) => module.name === "channels")?.functions.map((fn) => fn.name),
+      ["channels.list", "channels.get"],
+    );
+
+    const list = await run(catalog, "channels.list", {});
+    assert.equal(list.ok, true);
+    assert.ok(list.content.includes("http http 在线 http://127.0.0.1:8787"));
+    assert.ok(list.content.includes("http http:demo 离线"));
+
+    const found = await run(catalog, "channels.get", { ref: "http:42" });
+    assert.equal(found.ok, true);
+    assert.ok(found.content.includes("http:42 http http:demo"));
+    assert.ok(found.content.includes("回复 http:41"));
+    assert.ok(found.content.includes("（存储副本）"));
+    assert.ok(found.content.includes("部署流程是什么"));
+  });
+
+  it("refuses a channel lookup the prefix or the id does not name", async () => {
+    const { catalog } = await harness({ channels: true });
+    const unknown = await run(catalog, "channels.get", { ref: "qq:42" });
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.error?.rule, "channels.unknown");
+    assert.ok((unknown.error?.nextAction ?? "").includes("channels.list"));
+    const missing = await run(catalog, "channels.get", { ref: "http:99" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error?.rule, "channels.not_found");
+    assert.ok((missing.error?.message ?? "").includes("http:99"));
+  });
+
+  it("answers channels.list from a script, the way a direct call is answered", async () => {
+    const { catalog } = await harness({ channels: true });
+    const scripted = await run(catalog, "code_exec", {
+      script: "return await channels.list()",
+    });
+    assert.equal(scripted.ok, true);
+    assert.ok(scripted.content.includes("http http 在线"));
   });
 
   it("routes a direct tool and a module function through the same service call", async () => {
@@ -903,6 +967,32 @@ describe("tool catalog", () => {
     assert.ok(text.includes("下一步"));
   });
 });
+
+/**
+ * One channel with two connections and one message, for the channels module.
+ * It keeps its own copy, so `stored` says the channel is not live.
+ */
+function fakeChannel(): Channel {
+  return {
+    id: "http",
+    connections: async () => [
+      { id: "http", online: true, detail: "http://127.0.0.1:8787" },
+      { id: "http:demo", online: false },
+    ],
+    get: async (nativeId) => {
+      if (nativeId !== "http:42") return null;
+      return {
+        external: "http:42",
+        source: "http",
+        target: "http:demo",
+        time: 1700000000000,
+        content: [dataBlock("部署流程是什么")],
+        replyTo: "http:41",
+        stored: true,
+      };
+    },
+  };
+}
 
 /** A note store with one note, for the notes module. */
 function notesStore(): NoteStore {

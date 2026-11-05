@@ -28,6 +28,7 @@ import { FileToolGroup } from "./groups/files.ts";
 import { NoteToolGroup } from "./groups/notes.ts";
 import {
   BoardModuleGroup,
+  ChannelsModuleGroup,
   EnvModuleGroup,
   JournalModuleGroup,
   NotesModuleGroup,
@@ -59,6 +60,7 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new WindowsModuleGroup(options.services),
       new BoardModuleGroup(options.services),
       new NotesModuleGroup(options.services),
+      new ChannelsModuleGroup(options.services),
       new TasksModuleGroup(options.services),
       new ScheduleModuleGroup(options.services),
       new WorkspaceModuleGroup(options.services),

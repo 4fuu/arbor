@@ -37,6 +37,7 @@ export { NoteToolGroup } from "./groups/notes.ts";
 export { FileToolGroup } from "./groups/files.ts";
 export {
   BoardModuleGroup,
+  ChannelsModuleGroup,
   JournalModuleGroup,
   NotesModuleGroup,
   ScheduleModuleGroup,

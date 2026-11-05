@@ -39,7 +39,8 @@ often the logs show it used.
 | `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
 A module whose backing feature is not configured is absent: `env` and
-`services` appear only when the host has an environment and a supervisor.
+`services` appear only when the host has an environment and a supervisor, and
+`channels` only when a plugin registered a channel.
 Every MCP server - a plugin's or one the model installed - is a module of its
 own, declared with the functions it listed when it was validated, and arrives
 through an environment delta

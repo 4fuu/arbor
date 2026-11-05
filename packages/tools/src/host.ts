@@ -11,6 +11,7 @@
 import type {
   BoardLine,
   CallContext,
+  Channel,
   DirectToolSpec,
   Environment,
   EnvDraft,
@@ -134,6 +135,13 @@ export interface ToolServices {
   setBoardLine(window: WindowRef, doing: string): Promise<void>;
   expect(window: WindowRef, item?: string, description?: string): Promise<Expectation>;
   unexpect(window: WindowRef, ref: Ref): Promise<void>;
+
+  /**
+   * The channels the plugins registered, in the order they registered. A host
+   * no plugin plugged a channel into has none, and the `channels` module is
+   * absent (docs/tools.md#modules).
+   */
+  channels(): readonly Channel[];
 
   /** The live windows. */
   windows(): Promise<readonly LiveWindow[]>;

@@ -140,7 +140,10 @@ and one judge criterion, and adds no direct tool or code mode module of its own.
 The host takes a channel's push source at `start` and ingests what arrives as
 outside traffic, exactly as a task source's events are
 ([dispatch.md](dispatch.md#tasks)); a channel a deployment only uses as a sink
-is never subscribed to.
+is never subscribed to. What a registered channel holds is read through the
+core's own `channels` module - its connections, and a message by its native id
+([tools.md](tools.md#modules)) - so a plugin adds no module and the model still
+sees the outside world.
 
 ## Hooks
 

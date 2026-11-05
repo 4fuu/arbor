@@ -1574,6 +1574,8 @@ export class Arbor {
       expect: async (window, item, description) => host.expect(window, item, description),
       unexpect: async (window, ref) => host.unexpect(window, ref),
 
+      channels: () => host.channels(),
+
       windows: async () => host.liveWindows(),
       windowTranscript: async (window) => host.transcript(window),
       windowMessage: async (from, to, text, replyTo) => host.windowMessage(from, to, text, replyTo),
