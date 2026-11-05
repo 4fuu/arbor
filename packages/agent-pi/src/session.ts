@@ -31,6 +31,8 @@ export interface PiSessionOptions {
   window: WindowRef;
   renderer: Renderer;
   limits: { limit: number; reserve: number };
+  /** The full results, keyed by call id, so the host reads the core's shape. */
+  results?: Map<string, ToolResult>;
   /** The first turn, already started by the backend. */
   run: Promise<void>;
 }
@@ -82,11 +84,13 @@ export class PiWindowSession implements WindowSession {
   private ended = false;
   private paused = false;
   private current: TokenUsage;
+  private readonly results: Map<string, ToolResult>;
 
   constructor(options: PiSessionOptions) {
     this.window = options.window;
     this.agent = options.agent;
     this.renderer = options.renderer;
+    this.results = options.results ?? new Map();
     this.current = { used: 0, limit: options.limits.limit, reserve: options.limits.reserve };
     this.outcomePromise = new Promise<WindowOutcome>((resolve) => {
       this.resolveOutcome = resolve;
@@ -177,7 +181,7 @@ export class PiWindowSession implements WindowSession {
         this.stream.push({
           kind: "tool_result",
           call: callOf(event.toolName, {}, event.toolCallId),
-          result: resultOf(event),
+          result: this.resultOf(event),
         });
         break;
       case "message_end":
@@ -199,6 +203,22 @@ export class PiWindowSession implements WindowSession {
     if (used <= this.current.used) return;
     this.current = { ...this.current, used };
     this.stream.push({ kind: "usage", usage: this.current });
+  }
+
+  /** The core's result, kept by the backend when the call was made. */
+  private resultOf(event: Extract<AgentEvent, { type: "tool_execution_end" }>): ToolResult {
+    const kept = this.results.get(event.toolCallId);
+    if (kept !== undefined) return kept;
+    const content = ((event.result?.content ?? []) as readonly { type: string; text?: string }[])
+      .map((block) => (block.type === "text" ? (block.text ?? "") : `[${block.type}]`))
+      .join("\n");
+    const isError = event.isError === true;
+    return {
+      callId: event.toolCallId,
+      ok: isError === false,
+      content,
+      ...(isError ? { error: { rule: "tool.execution", message: content.slice(0, 500) } } : {}),
+    };
   }
 
   private settle(reason: WindowEndReason, error?: unknown, handoff?: Handoff): void {
@@ -223,16 +243,4 @@ function callOf(name: string, args: unknown, callId: string): ToolCall {
   return { name, args: (args ?? {}) as Record<string, unknown>, callId };
 }
 
-/** pi's tool result as the core's, so the model reads the same text either way. */
-function resultOf(event: Extract<AgentEvent, { type: "tool_execution_end" }>): ToolResult {
-  const content = ((event.result?.content ?? []) as readonly { type: string; text?: string }[])
-    .map((block) => (block.type === "text" ? (block.text ?? "") : `[${block.type}]`))
-    .join("\n");
-  const isError = event.isError === true;
-  return {
-    callId: event.toolCallId,
-    ok: isError === false,
-    content,
-    ...(isError ? { error: { rule: "tool.execution", message: content.slice(0, 500) } } : {}),
-  };
-}
+

@@ -118,6 +118,7 @@ export class PiAgentBackend implements AgentBackend {
         nextAction: "使用 backend.models() 列出的模型 id，或在设置中把该档位映射到另一个模型。",
       });
     }
+    const results = new Map<string, ToolResult>();
     const agent = new Agent({
       streamFn: (piModel, context, options) => this.runtime.streamSimple(piModel, context, options),
       getApiKey: async (provider: string) => {
@@ -128,7 +129,7 @@ export class PiAgentBackend implements AgentBackend {
         systemPrompt: systemPromptOf(request),
         model,
         tools: request.tools.map((tool) =>
-          piTool(tool, (args, callId) => this.callTool(request.window, tool.name, args, callId)),
+          piTool(tool, (args, callId) => this.callTool(request.window, tool.name, args, callId, results), this.renderer),
         ),
       },
       steeringMode: "all",
@@ -149,6 +150,7 @@ export class PiAgentBackend implements AgentBackend {
       window: request.window,
       renderer: this.renderer,
       limits: { limit: request.limits.contextTokens, reserve: request.limits.reserveTokens },
+      results,
       run,
     });
   }
@@ -164,10 +166,20 @@ export class PiAgentBackend implements AgentBackend {
     name: string,
     args: Record<string, unknown>,
     callId: string,
-  ): Promise<{ ok: boolean; content: string }> {
+    results: Map<string, ToolResult>,
+  ): Promise<ToolResult> {
     const call: ToolCall = { name, args, callId };
     if (this.control === undefined) {
-      return { ok: false, content: `工具 ${name}：host 没有提供调用路径。` };
+      return {
+        callId,
+        ok: false,
+        content: "",
+        error: {
+          rule: "backend.call_path.missing",
+          message: `backend: 没有提供 ${name} 的调用路径`,
+          nextAction: "在 host 中注册工具组。",
+        },
+      };
     }
     let at: string | undefined;
     try {
@@ -176,7 +188,8 @@ export class PiAgentBackend implements AgentBackend {
       at = undefined;
     }
     const result = await this.control.runToolCall(window, call, at);
-    return { ok: result.ok, content: result.content };
+    results.set(callId, result);
+    return result;
   }
 
   /** The model a request names, from the catalog. */
