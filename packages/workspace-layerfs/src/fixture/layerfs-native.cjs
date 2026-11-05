@@ -23,6 +23,7 @@ const state = {
   mounts: new Map(),
   diffs: new Map(),
   refusals: new Map(),
+  processes: new Map(),
   initialized: false,
   calls: [],
   serial: 0,
@@ -49,6 +50,7 @@ function reset() {
   state.mounts.clear();
   state.diffs.clear();
   state.refusals.clear();
+  state.processes.clear();
   state.initialized = false;
   state.calls.length = 0;
   state.serial = 0;
@@ -295,6 +297,14 @@ function answer(op, args) {
       const mount = state.mounts.get(args.path);
       if (mount === undefined) return refused("NoSuchWorkspace", `no Workspace at ${args.path}`);
       const command = args.command ?? "";
+      // The log a background process writes, read back the way this package
+      // reads it: the last bytes of `/tmp/layerfs-<id>.log`.
+      const log = /^tail -c (\d+) \/tmp\/layerfs-([^ ]+)\.log$/.exec(command);
+      if (log !== null) {
+        const text = state.processes.get(log[2])?.log ?? "";
+        const kept = text.slice(-Number(log[1]));
+        return value({ kind: "exit:0", exitCode: 0, stdout: kept, stderr: "", truncated: false });
+      }
       const exit = /^exit (\d+)$/.exec(command);
       if (exit !== null) {
         return value({ kind: `exit:${exit[1]}`, exitCode: Number(exit[1]), stdout: "", stderr: "err", truncated: false });
@@ -335,10 +345,51 @@ function answer(op, args) {
     case "workspace.unmount": {
       const mount = state.mounts.get(args.path);
       if (mount === undefined) return refused("NoSuchWorkspace", `no Workspace at ${args.path}`);
+      // The daemon refuses to unmount a Workspace a background process this
+      // binding started still runs in.
+      const running = [...state.processes.values()].filter(
+        (process) => process.path === args.path && !process.stopped && !process.exited,
+      );
+      if (running.length > 0) {
+        return refused("Busy", `${args.sandbox}:${args.path} is busy: ${running.map((p) => p.id).join(", ")} still running`);
+      }
       state.mounts.delete(args.path);
       const sandbox = state.sandboxes.find((item) => item.sandbox === mount.sandbox);
       if (sandbox !== undefined) sandbox.workspaces = Math.max(0, sandbox.workspaces - 1);
       return value(args.force ? { kind: "ForceUnmounted", abort: "Written", detach: "Detached", cleanup: "Queued" } : { kind: "Unmounted" });
+    }
+    case "backend.daemon.process.start": {
+      const mount = state.mounts.get(args.path);
+      if (mount === undefined) return refused("NoSuchWorkspace", `no Workspace at ${args.path}`);
+      const id = `proc_${args.sandbox}_${nextSerial().toString(16).padStart(2, "0")}${hex(8)}`;
+      state.processes.set(id, {
+        id,
+        sandbox: args.sandbox,
+        path: args.path,
+        command: args.command ?? "",
+        stopped: false,
+        exited: false,
+        log: "",
+      });
+      return value({ kind: "running", process: id, command: args.command ?? "" });
+    }
+    case "backend.daemon.process.list": {
+      const items = [...state.processes.values()].map((process) => ({
+        id: process.id,
+        sandbox: process.sandbox,
+        path: process.path,
+        command: process.command,
+        status: process.stopped ? "stopped" : process.exited ? "exited" : "running",
+      }));
+      const size = args.pageSize ?? 50;
+      const pos = args.pagePos ?? 0;
+      return value({ kind: "ok", items: items.slice(pos, pos + size), hasMore: pos + size < items.length, nextPagePos: null });
+    }
+    case "backend.daemon.process.cancel": {
+      const process = state.processes.get(args.process);
+      if (process === undefined) return refused("NoSuchProcess", `${args.process} is not a process id`);
+      process.stopped = true;
+      return value({ kind: "Stopped", process: process.id, status: "stopped" });
     }
     default:
       return refused("UnknownMethod", `no such method ${op}`);
@@ -369,6 +420,30 @@ exports.refuse = refuse;
 exports.mounts = () => [...state.mounts.values()];
 exports.sandboxes = () => state.sandboxes.map((sandbox) => ({ ...sandbox }));
 exports.commitId = commitId;
+
+/** The background processes the stand-in daemon holds, as `process.list` sees them. */
+exports.processes = () =>
+  [...state.processes.values()].map((process) => ({
+    id: process.id,
+    sandbox: process.sandbox,
+    path: process.path,
+    command: process.command,
+    status: process.stopped ? "stopped" : process.exited ? "exited" : "running",
+  }));
+
+/** One background process's log, which a test writes what a command would. */
+exports.jobLog = (id, text) => {
+  const process = state.processes.get(id);
+  if (process === undefined) throw new Error(`no process ${id}`);
+  process.log += text;
+};
+
+/** Mark one background process ended on its own, the way a finished command does. */
+exports.jobExit = (id) => {
+  const process = state.processes.get(id);
+  if (process === undefined) throw new Error(`no process ${id}`);
+  process.exited = true;
+};
 
 /** Marks a mounted Workspace's overlay dirty, as a command that wrote a file would. */
 exports.touch = (path) => {

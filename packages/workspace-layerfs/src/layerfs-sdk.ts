@@ -198,6 +198,38 @@ export interface LayerfsFactory {
   open(project: string): Promise<LayerfsClient>;
 }
 
+/** `backend.daemon.process.list`'s one item. */
+export interface LayerfsProcess {
+  id: string;
+  sandbox: string;
+  path: string;
+  command: string;
+  /** `running`, `stopped` (this client cancelled it) or `exited`. */
+  status: "running" | "stopped" | "exited";
+}
+
+/** `backend.daemon.process.start`'s answer. */
+export interface LayerfsStartedProcess {
+  kind: string;
+  process: string;
+  command: string;
+}
+
+/**
+ * The part of `@layerfs/backend` this package calls: the background processes
+ * of one opened project. The backend wraps a client and opens nothing, so one
+ * is made per client and kept beside it.
+ */
+export interface LayerfsBackendClient {
+  daemon: {
+    process: {
+      start(ws: LayerfsWorkspaceHandle, command: string): Promise<LayerfsStartedProcess>;
+      list(pageSize?: number, pagePos?: number): Promise<{ kind: string; items: LayerfsProcess[] }>;
+      cancel(process: string): Promise<{ kind: string; process: string; status: string }>;
+    };
+  };
+}
+
 export interface LayerfsSdk {
   LayerFS: LayerfsFactory;
   LayerFSError: new (code: string, message: string, detail: unknown) => LayerfsError;
@@ -210,6 +242,7 @@ export interface LayerfsSdkLocation {
 }
 
 const AGENT_ENTRY = ["agent", "src", "index.js"];
+const BACKEND_ENTRY = ["backend", "src", "index.js"];
 
 /** The directories a LayerFS checkout is looked for in, in order. */
 function candidateRoots(location: LayerfsSdkLocation): string[] {
@@ -242,6 +275,40 @@ export async function loadLayerfsSdk(location: LayerfsSdkLocation = {}): Promise
     const LayerFSError = loaded.LayerFSError as LayerfsSdk["LayerFSError"] | undefined;
     if (LayerFS === undefined || LayerFSError === undefined) continue;
     return { LayerFS, LayerFSError };
+  }
+  return null;
+}
+
+/**
+ * The backend client of an open SDK client, or `null` when the checkout does
+ * not carry `@layerfs/backend`.
+ *
+ * The backend answers the daemon calls the agent's own client refuses -
+ * `backend.daemon.process.*`, which starts and stops a background command in
+ * a mounted Workspace. It imports `@layerfs/agent`, so a checkout whose
+ * packages are not linked (`.agents/setup` runs `npm install` in the
+ * checkout's `api`) does not load it: a workspace then simply has no
+ * background jobs, and `bash` runs its commands to completion instead.
+ */
+export async function loadLayerfsBackend(
+  client: LayerfsClient,
+  location: LayerfsSdkLocation = {},
+): Promise<LayerfsBackendClient | null> {
+  for (const root of candidateRoots(location)) {
+    const entry = join(root, ...BACKEND_ENTRY);
+    if (!existsSync(entry)) continue;
+    try {
+      const loaded = (await import(pathToFileURL(entry).href)) as Record<string, unknown>;
+      const LayerFSBackend = loaded.LayerFSBackend as
+        | { of: (client: LayerfsClient) => LayerfsBackendClient }
+        | undefined;
+      if (LayerFSBackend === undefined || typeof LayerFSBackend.of !== "function") continue;
+      return LayerFSBackend.of(client);
+    } catch {
+      // A checkout whose packages are not linked is the same as no backend:
+      // the workspace works, it just has no background jobs.
+      continue;
+    }
   }
   return null;
 }

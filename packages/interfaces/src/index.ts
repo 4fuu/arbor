@@ -131,6 +131,8 @@ export type {
   Snapshot,
   MountOptions,
   ExecResult,
+  BackgroundJob,
+  WorkspaceJobs,
   WorkspaceMount,
   WorkspaceDiff,
   DiffFile,

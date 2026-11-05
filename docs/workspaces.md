@@ -27,12 +27,14 @@ used only for cheap forks, snapshots and mounts
 ([architecture.md](architecture.md#stack) lists what it requires). In that
 implementation a workspace is a LayerFS Branch and a snapshot is one of its
 Commits, and `bash` runs inside the Sandbox LayerFS mounts the Branch in, so a
-mount's path is that Sandbox's own directory. Two consequences come from
-LayerFS itself: its Store has no per-Branch delete, so reclaiming a workspace
-drops the refs that resolved it and leaves its history in the Store until the
-project is removed; and its storage is deduplicated across the whole Store, so
-a disk quota is a limit the deployment sets against a workspace's logical size,
-not one LayerFS enforces.
+mount's path is that Sandbox's own directory. A background job runs there too,
+through LayerFS's own daemon process API, so a command that outlives `bash`'s
+wait window keeps running after the call that started it. Two consequences come
+from LayerFS itself: its Store has no per-Branch delete, so reclaiming a
+workspace drops the refs that resolved it and leaves its history in the Store
+until the project is removed; and its storage is deduplicated across the whole
+Store, so a disk quota is a limit the deployment sets against a workspace's
+logical size, not one LayerFS enforces.
 
 ## What the agent does
 

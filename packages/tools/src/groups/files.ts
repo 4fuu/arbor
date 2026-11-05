@@ -8,17 +8,20 @@
  *
  * Everything reaches the workspace through the `Workspace` interface, never the
  * host filesystem directly: a capability the implementation owns - `exec`,
- * `readFile`, `writeFile` - is used when it is present, and the host path in
- * `mount.path` when it is not. LayerFS mounts a workspace inside its own
- * sandbox, so its `path` is not a host path and its `exec` is the only way to
- * run a command there; a plain-directory workspace owns no execution
- * environment, so the caller runs the command itself.
+ * `jobs`, `readFile`, `writeFile` - is used when it is present, and the host
+ * path in `mount.path` when it is not. LayerFS mounts a workspace inside its
+ * own sandbox, so its `path` is not a host path and its `exec` is the only way
+ * to run a command there; a plain-directory workspace owns no execution
+ * environment, so the caller runs the command itself. Where an implementation
+ * can also run a command that outlives the call, `bash` hands it to
+ * `bash_output` and `bash_stop` after its wait window.
  */
 
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import type {
+  BackgroundJob,
   CallContext,
   DirectToolSpec,
   TextTable,
@@ -26,6 +29,7 @@ import type {
   ToolGroup,
   ToolResult,
   WindowRef,
+  WorkspaceJobs,
   WorkspaceMount,
 } from "@arbor/interfaces";
 import { textOf } from "@arbor/prompt";
@@ -37,6 +41,11 @@ const BASH_WAIT_MS = 20000;
 
 /** How much one background job keeps in memory. */
 const JOB_BUFFER = 200000;
+
+/** The first pause between two reads of a background job, and the longest one. */
+const POLL_MS = 100;
+
+const POLL_MAX_MS = 1000;
 
 interface Job {
   id: string;
@@ -51,6 +60,8 @@ export class FileToolGroup implements ToolGroup {
 
   private readonly services: import("../host.ts").ToolServices;
   private readonly jobs = new Map<string, Job>();
+  /** The mount each background job an implementation owns runs in. */
+  private readonly mounts = new Map<string, WorkspaceMount>();
   private nextJob = 1;
 
   constructor(services: import("../host.ts").ToolServices) {
@@ -145,10 +156,29 @@ export class FileToolGroup implements ToolGroup {
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
     const command = this.envCommand(stringArg(request.args, "command"));
-    if (workspace.exec !== undefined) {
+    const jobs = workspace.jobs;
+    if (jobs !== undefined) {
       // The implementation owns the execution environment, so the command runs
-      // there and `path` is not a host path. The command runs to completion in
-      // this call; a host-directory workspace is what backgrounds a job.
+      // there and `path` is not a host path. A command that outlives the wait
+      // window is followed with `bash_output` and stopped with `bash_stop`
+      // (docs/tools.md#rules), the same way a host directory's is.
+      let started: BackgroundJob;
+      try {
+        started = await jobs.start(command);
+      } catch (error) {
+        return this.failed(request, error);
+      }
+      this.mounts.set(started.id, workspace);
+      const followed = await this.follow(jobs, started.id, numberArg(request.args, "timeout", BASH_WAIT_MS));
+      return {
+        callId: request.callId,
+        ok: true,
+        content: `${tailOf(followed.output)}\n${textOf(table, "result.bash.started", { job: followed.id })}`,
+      };
+    }
+    if (workspace.exec !== undefined) {
+      // The implementation owns the execution environment and starts no
+      // background command, so this one runs to completion in the call.
       const outcome = await workspace.exec(command).catch((error: unknown) => ({
         exitCode: 1,
         stdout: "",
@@ -167,27 +197,75 @@ export class FileToolGroup implements ToolGroup {
     };
   }
 
+  /**
+   * One background job until the wait window ends: what it wrote, and whether
+   * it is still running. The reads back off, so a command that runs for the
+   * whole window is not polled hard.
+   */
+  private async follow(jobs: WorkspaceJobs, id: string, waitMs: number): Promise<BackgroundJob> {
+    let job = await jobs.output(id);
+    let pause = POLL_MS;
+    let waited = 0;
+    while (job.running && waited < waitMs) {
+      const step = Math.min(pause, waitMs - waited);
+      await sleep(step);
+      waited += step;
+      pause = Math.min(pause * 2, POLL_MAX_MS);
+      job = await jobs.output(id);
+    }
+    return job;
+  }
+
   private async bashOutput(request: ToolCall): Promise<ToolResult> {
     const table = this.services.table;
     const id = stringArg(request.args, "job");
     const job = this.jobs.get(id);
-    if (job === undefined) return this.jobMissing(request, id);
-    const content = job.done
-      ? `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`
-      : `${job.output}\n${textOf(table, "result.bash.running", { job: id })}`;
-    return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
+    if (job !== undefined) {
+      const content = job.done
+        ? `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`
+        : `${job.output}\n${textOf(table, "result.bash.running", { job: id })}`;
+      return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
+    }
+    const jobs = this.mounts.get(id)?.jobs;
+    if (jobs === undefined) return this.jobMissing(request, id);
+    let followed: BackgroundJob;
+    try {
+      followed = await jobs.output(id);
+    } catch (error) {
+      return this.failed(request, error);
+    }
+    return {
+      callId: request.callId,
+      ok: true,
+      content: `${tailOf(followed.output)}\n${textOf(table, followed.running ? "result.bash.running" : "result.bash.stopped", { job: id })}`,
+    };
   }
 
   private async bashStop(request: ToolCall): Promise<ToolResult> {
     const table = this.services.table;
     const id = stringArg(request.args, "job");
     const job = this.jobs.get(id);
-    if (job === undefined) return this.jobMissing(request, id);
-    job.stop();
+    if (job !== undefined) {
+      job.stop();
+      return {
+        callId: request.callId,
+        ok: true,
+        content: `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`,
+      };
+    }
+    const jobs = this.mounts.get(id)?.jobs;
+    if (jobs === undefined) return this.jobMissing(request, id);
+    let stopped: BackgroundJob;
+    try {
+      await jobs.stop(id);
+      stopped = await jobs.output(id);
+    } catch (error) {
+      return this.failed(request, error);
+    }
     return {
       callId: request.callId,
       ok: true,
-      content: `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`,
+      content: `${tailOf(stopped.output)}\n${textOf(table, "result.bash.stopped", { job: id })}`,
     };
   }
 
@@ -323,6 +401,21 @@ export class FileToolGroup implements ToolGroup {
     return this.refusal(request, "workspace.absent", "result.no_workspace", {});
   }
 
+  /** One refusal the implementation gave, in the core's error shape it already carries. */
+  private failed(request: ToolCall, error: unknown): ToolResult {
+    const refusal = error as { rule?: string; message?: string; nextAction?: string };
+    return {
+      callId: request.callId,
+      ok: false,
+      content: "",
+      error: {
+        rule: refusal.rule ?? "bash.job.failed",
+        message: refusal.message ?? (error instanceof Error ? error.message : String(error)),
+        ...(refusal.nextAction === undefined ? {} : { nextAction: refusal.nextAction }),
+      },
+    };
+  }
+
   private jobMissing(request: ToolCall, id: string): ToolResult {
     return this.refusal(request, "bash.job.not_found", "bash.notfound", { job: id });
   }
@@ -373,6 +466,11 @@ function insidePath(root: string, path: string): string | undefined {
   if (path === "") return undefined;
   const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
   return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
+}
+
+/** The last of a background job's output, the part a caller reads. */
+function tailOf(output: string): string {
+  return output.slice(-JOB_BUFFER);
 }
 
 function stringArg(args: Record<string, unknown>, name: string): string {

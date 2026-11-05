@@ -18,6 +18,10 @@
  *   a Commit, and forking at a Commit copies nothing.
  * - `bash` runs inside the Sandbox LayerFS mounts the Workspace in, through
  *   the mount's `exec`. The mounted path is the Sandbox's own, not the host's.
+ * - A command that outlives the call that started it runs as a background job
+ *   through LayerFS's daemon process API, exposed as the mount's `jobs`
+ *   capability, and is stopped when the mount is released - an unmount with
+ *   one still running is refused.
  *
  * Two limits come from LayerFS itself and are worth stating: its Store has no
  * per-Branch delete, so `reclaim` drops this package's refs and leaves the
@@ -30,6 +34,7 @@ import { arborError, wrapError } from "@arbor/errors";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
+  type BackgroundJob,
   type DiffFile,
   type EventRef,
   type MountOptions,
@@ -39,6 +44,7 @@ import {
   type SnapshotRef,
   type Workspace,
   type WorkspaceDiff,
+  type WorkspaceJobs,
   type WorkspaceMount,
   type WorkspaceQuota,
   type WorkspaceRef,
@@ -49,8 +55,13 @@ import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { layerfsCapabilities, type LayerfsCapabilities } from "./capabilities.ts";
-import type { LayerfsClient, LayerfsError, LayerfsWorkspaceHandle } from "./layerfs-sdk.ts";
-import { loadLayerfsSdk } from "./layerfs-sdk.ts";
+import type {
+  LayerfsBackendClient,
+  LayerfsClient,
+  LayerfsError,
+  LayerfsWorkspaceHandle,
+} from "./layerfs-sdk.ts";
+import { loadLayerfsBackend, loadLayerfsSdk } from "./layerfs-sdk.ts";
 import {
   PAGE_SIZE,
   registryPathOf,
@@ -93,6 +104,8 @@ interface ActiveMount {
   path: string;
   /** One command at a time in this mount. */
   exec: Mutex;
+  /** The background jobs this mount started, so releasing it stops them. */
+  jobs: Set<string>;
 }
 
 interface MountedIn {
@@ -102,6 +115,24 @@ interface MountedIn {
 
 /** How many Workspaces one LayerFS Sandbox holds. */
 const WORKSPACES_PER_SANDBOX = 16;
+
+/**
+ * How much of a background job's output this package hands back: the last
+ * 256 KiB, read in one command. A command that writes more than that keeps
+ * its own log in the Sandbox; the bound is what one read costs.
+ */
+const JOB_OUTPUT_BYTES = 262144;
+
+/**
+ * The log a background process writes inside its Sandbox. LayerFS's daemon
+ * starts one with its streams redirected there, and the Sandbox's own command
+ * identity can read it, so the output comes back through one command in the
+ * same mount - a Workspace's uncommitted files are not readable any other
+ * way.
+ */
+function logPathOf(job: string): string {
+  return `/tmp/layerfs-${job}.log`;
+}
 
 type ArborError = ReturnType<typeof arborError>;
 
@@ -156,6 +187,7 @@ export class LayerfsWorkspace implements Workspace {
   private readonly control = new Mutex();
   private sdk: Awaited<ReturnType<typeof loadLayerfsSdk>> = null;
   private client: LayerfsClient | null = null;
+  private backend: LayerfsBackendClient | null = null;
   private readonly mounts = new Map<number, ActiveMount>();
   private nextMountId = 1;
   private closed = false;
@@ -523,7 +555,7 @@ export class LayerfsWorkspace implements Workspace {
     const exec = new Mutex();
     const ref: WorkspaceRef | SnapshotRef =
       parsed.at === null ? parsed.workspace : snapshotRefOf(parsed.workspace, parsed.at);
-    this.mounts.set(id, {
+    const active: ActiveMount = {
       id,
       ref,
       workspace: parsed.workspace,
@@ -532,7 +564,9 @@ export class LayerfsWorkspace implements Workspace {
       handle,
       path: mounted.path,
       exec,
-    });
+      jobs: new Set<string>(),
+    };
+    this.mounts.set(id, active);
     return {
       ref,
       path: mounted.path,
@@ -634,13 +668,147 @@ export class LayerfsWorkspace implements Workspace {
       release: async () => {
         await this.release(id);
       },
+      // A read-only view starts nothing: it must never publish anything, and a
+      // command that ran in it would write in the workspace it views.
+      ...(readOnly ? {} : { jobs: this.jobsOf(active) }),
     };
+  }
+
+  /**
+   * Background commands in one mount, over LayerFS's daemon process API.
+   *
+   * `backend.daemon.process.*` is the part of the SDK the agent's own client
+   * refuses: it starts a command in its own session inside the Sandbox, keeps
+   * it after the call returns, and lists or cancels it. Its output is the log
+   * the daemon redirects it to, read back with one command in this mount.
+   */
+  private jobsOf(active: ActiveMount): WorkspaceJobs {
+    return {
+      start: async (command: string): Promise<BackgroundJob> => {
+        const backend = await this.backendOf();
+        if (backend === null) throw this.noBackend(active.ref);
+        try {
+          const started = await backend.daemon.process.start(active.handle, command);
+          active.jobs.add(started.process);
+          return { id: started.process, command: started.command, running: true, output: "" };
+        } catch (error) {
+          throw refusal(
+            error,
+            "workspace.job.start",
+            `a background command could not be started in workspace ${active.workspace}`,
+            "check that the Sandbox still runs, then start the command again",
+          );
+        }
+      },
+      output: async (job: string): Promise<BackgroundJob> => {
+        const backend = await this.backendOf();
+        if (backend === null) throw this.noBackend(active.ref);
+        let found: { command: string; running: boolean } | undefined;
+        try {
+          const page = await backend.daemon.process.list(PAGE_SIZE, 0);
+          const listed = page.items.find((item) => item.id === job);
+          if (listed !== undefined) found = { command: listed.command, running: listed.status === "running" };
+        } catch (error) {
+          throw refusal(
+            error,
+            "workspace.job.list",
+            `the background commands of workspace ${active.workspace} could not be listed`,
+            "check that the Sandbox still runs, then read the command's output again",
+          );
+        }
+        // A job this mount never started is not followed: its id names another
+        // Sandbox, or one that is gone.
+        if (found === undefined && !active.jobs.has(job)) {
+          throw arborError({
+            code: "not_found",
+            rule: "workspace.job.unknown",
+            message: `workspace ${active.workspace} has no background job ${job}`,
+            nextAction: "start the command again with bash, then follow the job it names",
+            refs: [active.ref],
+          });
+        }
+        const output = await this.jobOutput(active.handle, job);
+        return {
+          id: job,
+          command: found?.command ?? "",
+          running: found?.running ?? false,
+          output,
+        };
+      },
+      stop: async (job: string): Promise<void> => {
+        await this.cancelJob(job);
+        active.jobs.delete(job);
+      },
+    };
+  }
+
+  /** Stop one background command through the daemon's process API. */
+  private async cancelJob(job: string): Promise<void> {
+    const backend = await this.backendOf();
+    if (backend === null) throw this.noBackend();
+    try {
+      await backend.daemon.process.cancel(job);
+    } catch (error) {
+      throw refusal(
+        error,
+        "workspace.job.stop",
+        `the background command ${job} could not be stopped`,
+        "check that the Sandbox still runs, then stop the command again",
+      );
+    }
+  }
+
+  /** Why no background command can run: the checkout carries no backend package. */
+  private noBackend(ref?: WorkspaceRef | SnapshotRef): ReturnType<typeof arborError> {
+    return arborError({
+      code: "unavailable",
+      rule: "workspace.job.backend",
+      message:
+        `the LayerFS checkout has no @layerfs/backend, so no background command can run` +
+        (ref === undefined ? "" : ` in ${ref}`),
+      nextAction: "run npm install in the LayerFS checkout's api directory, then mount the workspace again",
+      ...(ref === undefined ? {} : { refs: [ref] }),
+    });
+  }
+
+  /** The last bytes of a background job's log, read with one command in its mount. */
+  private async jobOutput(handle: LayerfsWorkspaceHandle, job: string): Promise<string> {
+    const client = this.client;
+    if (client === null) return "";
+    try {
+      const read = await client.workspace.exec(handle, `tail -c ${JOB_OUTPUT_BYTES} ${logPathOf(job)}`);
+      return read.stdout;
+    } catch {
+      // A log that is not there yet is a command that has written nothing.
+      return "";
+    }
+  }
+
+  /** The backend client of the open SDK client, or null when the checkout has none. */
+  private async backendOf(): Promise<LayerfsBackendClient | null> {
+    const client = this.client;
+    if (client === null) {
+      throw arborError({
+        code: "unavailable",
+        rule: "workspace.layerfs.sdk",
+        message: "the LayerFS JavaScript packages are not installed on this host",
+        nextAction: "run .agents/setup, or set ARBOR_LAYERFS_SDK to the LayerFS checkout's api directory",
+      });
+    }
+    this.backend ??= await loadLayerfsBackend(client, { sdk: this.options.sdk });
+    return this.backend;
   }
 
   /**
    * End one mount. A read-write mount commits first, so nothing the agent did
    * is lost by releasing it; a read-only view is discarded instead, because a
    * view must never publish anything.
+   *
+   * A background command still running there is stopped first: LayerFS refuses
+   * to unmount a Workspace whose daemon still holds a process it started, and
+   * a command the host never stopped would keep the Workspace - and its
+   * Sandbox - alive. A cancel that fails is left to the unmount that follows,
+   * which reports what is still holding the Workspace.
    */
   private async release(id: number): Promise<void> {
     const active = this.mounts.get(id);
@@ -648,6 +816,10 @@ export class LayerfsWorkspace implements Workspace {
     this.mounts.delete(id);
     const client = this.client;
     if (client === null) return;
+    for (const job of [...active.jobs]) {
+      await this.cancelJob(job).catch(() => {});
+      active.jobs.delete(job);
+    }
     if (active.readOnly) {
       try {
         await client.workspace.unmount(active.handle, true);

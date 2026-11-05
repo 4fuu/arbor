@@ -40,6 +40,12 @@ interface Standin {
   sandboxes(): { sandbox: string; workspaces: number }[];
   touch(path: string): void;
   commitId(): string;
+  /** The background processes the stand-in daemon holds, as `process.list` sees them. */
+  processes(): { id: string; sandbox: string; path: string; command: string; status: string }[];
+  /** Write what a background command wrote into the log the daemon keeps for it. */
+  jobLog(id: string, text: string): void;
+  /** Mark a background process ended on its own, the way a finished command does. */
+  jobExit(id: string): void;
 }
 
 const standin = require(FIXTURE) as Standin;
@@ -485,6 +491,115 @@ describe("reading and writing a mounted file", () => {
       return true;
     });
     assert.equal(opsCalled("fs.write").length, 0);
+    await view.release();
+    await ws.close();
+  });
+});
+
+describe("background jobs", () => {
+  it("starts one through the daemon's process API and follows its output", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    const started = await mount.jobs?.start("echo hello; sleep 30");
+    assert.match(started?.id ?? "", /^proc_1_/);
+    assert.equal(started?.command, "echo hello; sleep 30");
+    assert.equal(started?.running, true);
+    assert.deepEqual(pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["command", "background"]), {
+      command: "echo hello; sleep 30",
+      background: true,
+    });
+    // The Sandbox and the path the job runs in are the mount's own.
+    assert.deepEqual(
+      pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["sandbox", "path"]),
+      { sandbox: "1", path: mount.path },
+    );
+
+    // What the command wrote is read from the log the daemon keeps for it.
+    standin.jobLog(started?.id ?? "", "hello\n");
+    const followed = await mount.jobs?.output(started?.id ?? "");
+    assert.equal(followed?.output, "hello\n");
+    assert.equal(followed?.running, true);
+    assert.deepEqual(pick(opsCalled("workspace.exec").at(-1) ?? {}, ["command"]), {
+      command: `tail -c 262144 /tmp/layerfs-${started?.id}.log`,
+    });
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("reports a job that ended on its own, and stops one that still runs", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const finished = await mount.jobs?.start("echo done");
+    const running = await mount.jobs?.start("sleep 30");
+
+    standin.jobExit(finished?.id ?? "");
+    const ended = await mount.jobs?.output(finished?.id ?? "");
+    assert.equal(ended?.running, false);
+
+    await mount.jobs?.stop(running?.id ?? "");
+    const stopped = await mount.jobs?.output(running?.id ?? "");
+    assert.equal(stopped?.running, false);
+    assert.deepEqual(pick(opsCalled("backend.daemon.process.cancel")[0] ?? {}, ["process"]), {
+      process: running?.id,
+    });
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("refuses a job no mounted workspace started", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    await assert.rejects(() => mount.jobs?.output("proc_1_nosuchjob") as Promise<unknown>, (error: unknown) => {
+      assert.equal((error as { rule: string }).rule, "workspace.job.unknown");
+      return true;
+    });
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("stops the jobs it started before it releases the mount, so the unmount is not refused", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const job = await mount.jobs?.start("sleep 30");
+
+    await mount.release();
+
+    // LayerFS refuses to unmount a Workspace a background process still runs
+    // in, so the release stops the job first: the cancel lands before the
+    // unmount, and the unmount is answered.
+    assert.deepEqual(pick(opsCalled("backend.daemon.process.cancel")[0] ?? {}, ["process"]), {
+      process: job?.id,
+    });
+    const cancelAt = standin.calls.findIndex((call) => call.op === "backend.daemon.process.cancel");
+    const unmountAt = standin.calls.findIndex((call) => call.op === "workspace.unmount");
+    assert.ok(cancelAt >= 0 && unmountAt > cancelAt);
+    assert.equal(standin.mounts().length, 0);
+    await ws.close();
+  });
+
+  it("gives a read-only view no jobs: it must never publish anything", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    standin.write("ws1", "/a.txt", "hello\n");
+    await ws.snapshot("ws1", "r902");
+
+    const view = await ws.mount("ws1@r902");
+
+    assert.equal(view.jobs, undefined);
     await view.release();
     await ws.close();
   });

@@ -12,10 +12,22 @@
 export { LayerfsWorkspace } from "./layerfs-workspace.ts";
 export type { LayerfsWorkspaceOptions, LayerfsDeployment, ResolvedOptions } from "./options.ts";
 export { DEFAULT_RETENTION_MS, DEFAULT_QUOTA_BYTES } from "./options.ts";
-export { layerfsCapabilities, storeFilesystemSupported, fuseAvailable, dockerAvailable } from "./capabilities.ts";
+export {
+  layerfsCapabilities,
+  storeFilesystemSupported,
+  fuseAvailable,
+  dockerAvailable,
+  unavailableReason,
+} from "./capabilities.ts";
 export type { LayerfsCapabilities } from "./capabilities.ts";
-export { layerfsCheckout } from "./layerfs-sdk.ts";
-export type { LayerfsClient, LayerfsSdk } from "./layerfs-sdk.ts";
+export { layerfsCheckout, loadLayerfsBackend, loadLayerfsSdk } from "./layerfs-sdk.ts";
+export type {
+  LayerfsBackendClient,
+  LayerfsClient,
+  LayerfsProcess,
+  LayerfsSdk,
+  LayerfsStartedProcess,
+} from "./layerfs-sdk.ts";
 export { Registry } from "./registry.ts";
 export type { WorkspaceRecord, SnapshotRecord } from "./registry.ts";
 export { parseRef, viewBranchNameOf, workspaceRefOf, workspaceNumberOf } from "./refs.ts";

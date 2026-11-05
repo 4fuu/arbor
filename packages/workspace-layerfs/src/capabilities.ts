@@ -47,6 +47,12 @@ export interface LayerfsCapabilities {
    * on. Null exactly when `docker` is true.
    */
   dockerReason: string | null;
+  /**
+   * Why this machine cannot run LayerFS, or null when it can: the first rule
+   * that refuses it, in words a host can act on. A host logs this when it
+   * falls back to another `Workspace`.
+   */
+  reason: string | null;
   /** The checkout the SDK was found in, when there is one. */
   checkout: string | null;
 }
@@ -243,15 +249,29 @@ export async function layerfsCapabilities(
   const checkout = layerfsCheckout(options);
   const addon = addonPathOf(options);
   const dockerReason = await dockerAvailable(options.deployment);
-  return {
+  const found = {
     sdk: checkout !== null,
     addon: addon !== null && existsSync(addon),
     store: storeFilesystemSupported(storePathOf(options.deployment)),
     fuse: fuseAvailable(),
     docker: dockerReason === null,
     dockerReason,
-    checkout,
   };
+  return { ...found, reason: unavailableReason(found), checkout };
+}
+
+/**
+ * Why this machine cannot run LayerFS, or null when it can: the first rule
+ * that refuses it, in the order a host would fix them. The words are the ones
+ * a host logs when it falls back to another `Workspace`, so an operator reads
+ * what to install or configure.
+ */
+export function unavailableReason(capabilities: Omit<LayerfsCapabilities, "reason" | "checkout">): string | null {
+  if (!capabilities.sdk) return "the LayerFS JavaScript packages are not installed";
+  if (!capabilities.addon) return "the native addon is not built";
+  if (!capabilities.store) return "no LayerFS Store on ext4, xfs or btrfs is configured";
+  if (!capabilities.fuse) return "no /dev/fuse on this machine";
+  return capabilities.dockerReason;
 }
 
 /** Whether the options name an absolute path a host can use. */

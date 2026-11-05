@@ -614,6 +614,66 @@ describe("tool catalog", () => {
     assert.ok(grep.content.includes("notes/a.txt:1:deploy is done"));
   });
 
+  it("runs a command that outlives the wait window through the mount's own jobs", async () => {
+    const { catalog } = await harness();
+    const commands: string[] = [];
+    const running = new Map<string, { command: string; output: string; running: boolean }>();
+    const owned: WorkspaceMount = {
+      ref: "ws1",
+      path: "/sandbox/ws1",
+      readOnly: false,
+      exec: async (command: string) => {
+        commands.push(command);
+        return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+      },
+      jobs: {
+        start: async (command: string) => {
+          const id = `proc_1_${running.size + 1}`;
+          running.set(id, { command, output: "", running: true });
+          return { id, command, running: true, output: "" };
+        },
+        output: async (id: string) => {
+          const job = running.get(id);
+          if (job === undefined) throw Object.assign(new Error(`no job ${id}`), { rule: "workspace.job.unknown" });
+          return { id, command: job.command, running: job.running, output: job.output };
+        },
+        stop: async (id: string) => {
+          const job = running.get(id);
+          if (job !== undefined) job.running = false;
+        },
+      },
+      release: async () => {},
+    };
+    const services = (catalog as unknown as { services: ToolServices }).services;
+    services.ensureWorkspace = async () => owned;
+
+    // The command outlives the wait window, so it runs as a background job the
+    // implementation owns - never as a command in this call.
+    const started = await run(catalog, "bash", { command: "sleep 30", timeout: 50 });
+    assert.ok(started.content.includes("proc_1_1"));
+    assert.ok(started.content.includes("已启动"));
+    assert.deepEqual(commands, []);
+
+    const followed = await run(catalog, "bash_output", { job: "proc_1_1" });
+    assert.ok(followed.content.includes("仍在运行"));
+
+    // The command writes on its own; `bash_output` reads what it wrote.
+    const job = running.get("proc_1_1");
+    assert.ok(job !== undefined);
+    job.output = "working\n";
+    const written = await run(catalog, "bash_output", { job: "proc_1_1" });
+    assert.ok(written.content.includes("working"));
+
+    const stopped = await run(catalog, "bash_stop", { job: "proc_1_1" });
+    assert.ok(stopped.content.includes("已停止"));
+    const after = await run(catalog, "bash_output", { job: "proc_1_1" });
+    assert.ok(after.content.includes("已停止"));
+
+    const missing = await run(catalog, "bash_output", { job: "proc_1_9" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error?.rule, "bash.job.not_found");
+  });
+
   it("writes memory through the note tools, with the host filling the anchor", async () => {
     const { catalog, written } = await harness();
     const tools = catalog.tools().map((tool) => tool.name);

@@ -42,6 +42,37 @@ export interface ExecResult {
   truncated: boolean;
 }
 
+/** One background command running in a workspace. */
+export interface BackgroundJob {
+  /** The implementation's own id, which a caller passes back to follow or stop it. */
+  id: string;
+  /** The command it runs. */
+  command: string;
+  /** True while it runs; false once it has ended or was stopped. */
+  running: boolean;
+  /** What it has written so far, as text. */
+  output: string;
+}
+
+/**
+ * Background commands in a mounted workspace, for an implementation that owns
+ * its execution environment (docs/tools.md#rules: a command that outlives
+ * `bash`'s wait window is followed with `bash_output` and stopped with
+ * `bash_stop`).
+ *
+ * Present when the implementation can start a command that outlives the call
+ * and read what it wrote. A host-directory implementation leaves it out: the
+ * caller starts the command itself in `path` and follows it there.
+ */
+export interface WorkspaceJobs {
+  /** Start one command in the workspace. It keeps running after this returns. */
+  start(command: string): Promise<BackgroundJob>;
+  /** The job's output so far, and whether it still runs. */
+  output(job: string): Promise<BackgroundJob>;
+  /** Stop a running job. Stopping one that already ended changes nothing. */
+  stop(job: string): Promise<void>;
+}
+
 /**
  * A mounted workspace: a path in the host's filesystem, released when done.
  *
@@ -75,6 +106,13 @@ export interface WorkspaceMount {
    * The same fallback rule as `readFile` applies.
    */
   writeFile?(path: string, text: string): Promise<void>;
+  /**
+   * Background commands in this workspace. Present when the implementation
+   * owns the execution environment and can start a command that outlives the
+   * call; a host-directory implementation leaves it out and the caller runs
+   * the command itself in `path`.
+   */
+  jobs?: WorkspaceJobs;
   release(): Promise<void>;
 }
 

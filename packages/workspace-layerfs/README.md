@@ -65,6 +65,39 @@ by ending a mount - a LayerFS unmount of a dirty Workspace is refused, and
 discarding one throws the work away. A read-only view is discarded instead: a
 view must never publish anything.
 
+## Background commands
+
+A command that outlives `bash`'s wait window is followed with `bash_output` and
+stopped with `bash_stop` (docs/tools.md#rules). A host-directory workspace
+leaves that to the caller; a mount that owns its execution environment carries
+`jobs` ([`WorkspaceJobs`](../../packages/interfaces/src/workspace.ts)), and this
+package implements it over LayerFS's daemon process API,
+`backend.daemon.process.*` from `@layerfs/backend` - the part of the SDK the
+agent's own client refuses:
+
+```ts
+const mount = await workspace.mount("ws3");
+const job = await mount.jobs?.start("npm run dev");   // keeps running
+await mount.jobs?.output(job.id);                     // what it wrote, and whether it still runs
+await mount.jobs?.stop(job.id);
+```
+
+The daemon starts a background process in its own session with its streams in a
+log inside the Sandbox, so the output is read back with one command in the same
+mount - a Workspace's uncommitted files are readable no other way. A read-only
+view carries no `jobs`: a view must never publish anything.
+
+Two things come from LayerFS itself. A background command holds its Workspace
+mounted, so releasing a mount stops the commands it started first - an unmount
+with one still running is refused `Busy`. And the daemon reports whether a
+process still runs, never its exit code, so a finished background command is
+reported as stopped rather than as succeeded or failed.
+
+`@layerfs/backend` imports `@layerfs/agent` by name, so it loads only where the
+checkout's packages are linked - `.agents/setup` runs `npm install` in the
+checkout's `api`. Where they are not, a mount's `jobs` refuses with that as the
+next action instead of failing silently.
+
 ## Settings
 
 | Setting | Meaning |
@@ -94,14 +127,18 @@ skeleton - points it there. With none, the project starts empty.
 - **A snapshot needs a Commit.** LayerFS publishes a Commit from a mounted
   Workspace, so a workspace nothing was ever written to has none, and
   `snapshot` refuses it rather than inventing an id.
+- **A background command's exit code.** The daemon reports whether a process
+  still runs, never how it ended, so `bash_output` answers with what the
+  command wrote and whether it is still running.
 
 ## Installing LayerFS
 
 LayerFS is not a dependency of this repository: its core is Rust and its
 JavaScript packages are built beside a pinned checkout. `.agents/setup` clones
-that checkout into `.layerfs`, builds `engine/crates/layerfs-node/layerfs.node`
-and `layerfs-daemon`, and leaves them where this package finds them.
-`ARBOR_LAYERFS_SDK` (or the `sdk` option) names another checkout.
+that checkout into `.layerfs`, links its JavaScript packages, builds
+`engine/crates/layerfs-node/layerfs.node` and `layerfs-daemon`, and leaves them
+where this package finds them. `ARBOR_LAYERFS_SDK` (or the `sdk` option) names
+another checkout.
 
 The toolchain has two paths. On a machine with mise, the repository's
 `mise.toml` provides Node, pnpm and Rust 1.85.1 under `~/.local/share/mise` -
@@ -176,6 +213,11 @@ Two rules come from LayerFS itself, not from this package:
   the stand-in native binding in `fixture/`, so it needs no Docker, no FUSE and
   no Store, and runs wherever the packages are installed. It checks this
   package's side of the contract: which Branch a ref names, which Commit an
-  event's snapshot holds, what a mount does and what it never publishes.
+  event's snapshot holds, what a mount does and what it never publishes, and
+  what a background command does. It loads `@layerfs/backend` too, so the
+  checkout's packages must be linked (`npm install` in `.layerfs/api`) for it
+  to run; without them its background-job tests fail with that as the reason.
 - `layerfs-workspace.real.test.ts` runs against a real Store, and a real mount
-  where the machine has one, and skips with its reason otherwise.
+  where the machine has one, and skips with its reason otherwise. Its
+  `a background job` case starts a command that outlives the call, reads what
+  it wrote while it runs, watches one end on its own and stops another.

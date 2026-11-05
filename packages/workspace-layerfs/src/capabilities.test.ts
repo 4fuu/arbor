@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { dockerAvailable, layerfsCapabilities } from "./capabilities.ts";
+import { dockerAvailable, layerfsCapabilities, unavailableReason } from "./capabilities.ts";
+import type { LayerfsCapabilities } from "./capabilities.ts";
 import type { LayerfsDeployment } from "./options.ts";
 
 /**
@@ -161,6 +162,43 @@ describe("the Docker Engine check", () => {
     const uid = process.getuid?.() ?? 0;
     const reason = await dockerAvailable(deploymentOf(engine.socket, IMAGE).deployment, { uid });
     assert.equal(reason, null);
+  });
+});
+
+describe("why this machine cannot run LayerFS", () => {
+  /** One capability read, with only the fields the reason is about. */
+  function found(fields: {
+    sdk?: boolean;
+    addon?: boolean;
+    store?: boolean;
+    fuse?: boolean;
+    dockerReason?: string | null;
+  }): Omit<LayerfsCapabilities, "checkout" | "reason"> {
+    return {
+      sdk: fields.sdk ?? true,
+      addon: fields.addon ?? true,
+      store: fields.store ?? true,
+      fuse: fields.fuse ?? true,
+      docker: (fields.dockerReason ?? null) === null,
+      dockerReason: fields.dockerReason ?? null,
+    };
+  }
+
+  it("names the first rule that refuses it, in the order a host would fix them", () => {
+    assert.equal(unavailableReason(found({ sdk: false })), "the LayerFS JavaScript packages are not installed");
+    assert.equal(unavailableReason(found({ addon: false })), "the native addon is not built");
+    assert.equal(unavailableReason(found({ store: false })), "no LayerFS Store on ext4, xfs or btrfs is configured");
+    assert.equal(unavailableReason(found({ fuse: false })), "no /dev/fuse on this machine");
+    // The SDK comes first: a host that has no packages fixes that before it
+    // wonders about the device.
+    assert.equal(
+      unavailableReason(found({ sdk: false, addon: false, store: false, fuse: false })),
+      "the LayerFS JavaScript packages are not installed",
+    );
+  });
+
+  it("reports no reason where the machine can run LayerFS", () => {
+    assert.equal(unavailableReason(found({})), null);
   });
 });
 

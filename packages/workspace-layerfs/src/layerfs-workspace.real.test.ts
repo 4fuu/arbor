@@ -187,6 +187,43 @@ describe("a real mount", () => {
   });
 });
 
+describe("a background job", () => {
+  it("runs a command past the call that started it, follows its output and stops it", async (t) => {
+    const made = run(true);
+    if (typeof made === "string") return t.skip(made);
+    const ws = made;
+    const mount = await ws.mount("ws1");
+
+    const started = await mount.jobs?.start("printf 'first\\n'; sleep 30");
+    assert.match(started?.id ?? "", /^proc_\d+_/);
+    assert.equal(started?.running, true);
+    assert.equal(started?.output, "");
+
+    // The command outlives the call that started it, and what it wrote is
+    // readable while it still runs.
+    const followed = await mount.jobs?.output(started?.id ?? "");
+    assert.equal(followed?.running, true);
+    assert.match(followed?.output ?? "", /first/);
+
+    // A command that ends on its own stops being reported as running.
+    const quick = await mount.jobs?.start("printf 'quick\\n'");
+    let ended = false;
+    for (let attempt = 0; attempt < 50 && !ended; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      ended = (await mount.jobs?.output(quick?.id ?? ""))?.running === false;
+    }
+    assert.equal(ended, true);
+
+    await mount.jobs?.stop(started?.id ?? "");
+    const stopped = await mount.jobs?.output(started?.id ?? "");
+    assert.equal(stopped?.running, false);
+
+    // Releasing the mount stops what it started, so the unmount is answered:
+    // LayerFS refuses to unmount a Workspace a background process still runs in.
+    await mount.release();
+  });
+});
+
 describe("a mounted file", () => {
   it("reads and writes one over LayerFS's own fs calls, not through a command", async (t) => {
     const made = run(true);

@@ -88,6 +88,15 @@ if [ ! -d "$LAYERFS_DIR/.git" ]; then
   git -C "$LAYERFS_DIR" checkout --quiet "$LAYERFS_COMMIT"
 fi
 
+# The SDK's JavaScript packages. @layerfs/agent resolves its own imports, but
+# @layerfs/backend - which the workspace package calls to run a background
+# command in a mounted Workspace - imports @layerfs/agent by name, so the
+# checkout's packages must be linked. `npm install` there links them and
+# downloads nothing, which is why it runs offline: a pinned checkout needs no
+# registry. The checkout's own .gitignore keeps node_modules out of its tree.
+echo "layerfs: linking the SDK's JavaScript packages"
+npm install --prefix "$LAYERFS_DIR/api" --offline
+
 echo "layerfs: building the native addon and the daemon (this takes a few minutes)"
 CARGO_TARGET_DIR="$LAYERFS_DIR/target" cargo build \
   --manifest-path "$LAYERFS_DIR/Cargo.toml" \
