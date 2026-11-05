@@ -52,6 +52,12 @@ export interface BackgroundJob {
   running: boolean;
   /** What it has written so far, as text. */
   output: string;
+  /**
+   * How the command ended, once it has. Absent while it runs, and for an
+   * implementation that never learns it: a command stopped by its caller has
+   * no exit code, and one an implementation cannot observe has none either.
+   */
+  exitCode?: number;
 }
 
 /**
@@ -65,9 +71,9 @@ export interface BackgroundJob {
  * caller starts the command itself in `path` and follows it there.
  */
 export interface WorkspaceJobs {
-  /** Start one command in the workspace. It keeps running after this returns. */
+  /** Start one command in the workspace. It outlives the call unless it ends on its own. */
   start(command: string): Promise<BackgroundJob>;
-  /** The job's output so far, and whether it still runs. */
+  /** The job's output so far, whether it still runs, and its exit code once it has ended. */
   output(job: string): Promise<BackgroundJob>;
   /** Stop a running job. Stopping one that already ended changes nothing. */
   stop(job: string): Promise<void>;

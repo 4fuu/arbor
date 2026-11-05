@@ -21,7 +21,12 @@
  * - A command that outlives the call that started it runs as a background job
  *   through LayerFS's daemon process API, exposed as the mount's `jobs`
  *   capability, and is stopped when the mount is released - an unmount with
- *   one still running is refused.
+ *   one still running is refused. Every command that capability starts is
+ *   wrapped: the engine observes the process it started with a second command
+ *   and refuses one that has already been reaped, so a bare quick command would
+ *   never start, and the daemon reports whether a process runs and never how a
+ *   command ended, so the wrapper leaves the exit code in the log it is already
+ *   writing to.
  *
  * Two limits come from LayerFS itself and are worth stating: its Store has no
  * per-Branch delete, so `reclaim` drops this package's refs and leaves the
@@ -135,6 +140,34 @@ const STAGE_ROOT = "/tmp/arbor-env";
 const JOB_OUTPUT_BYTES = 262144;
 
 /**
+ * How long a wrapped command holds its process open after the command has
+ * ended.
+ *
+ * LayerFS starts a background command and then observes the process it started
+ * with a second command inside the Sandbox, which reads `/proc/<pid>/stat`. A
+ * command that has already ended by then is refused, because the Sandbox's
+ * first process - docker-init on a Docker host - has reaped it and its `/proc`
+ * entry is gone: "background process exited before its identity was observed".
+ * Ordinary quick commands - `ls`, `cat` - end long before that second command
+ * lands, so every one of them would be refused.
+ *
+ * The observation happens inside the same call that starts the command, so a
+ * pause of a couple of seconds is far longer than the one command the engine
+ * needs; the process is gone before anything else could want it, and a mount
+ * that is released stops whatever it started anyway. A command that outlives
+ * the pause keeps running: the pause only follows the command's end.
+ */
+const JOB_TAIL_SECONDS = 2;
+
+/**
+ * The line a wrapped command ends with: its exit code, after a record
+ * separator, so no ordinary output is mistaken for it. It is the last thing a
+ * command writes, so the bounded read of the log always carries it, and the
+ * caller takes the code off it and hands back the output without it.
+ */
+const EXIT_MARK = "\u001e";
+
+/**
  * The log a background process writes inside its Sandbox. LayerFS's daemon
  * starts one with its streams redirected there, and the Sandbox's own command
  * identity can read it, so the output comes back through one command in the
@@ -143,6 +176,39 @@ const JOB_OUTPUT_BYTES = 262144;
  */
 function logPathOf(job: string): string {
   return `/tmp/layerfs-${job}.log`;
+}
+
+/**
+ * One command as a background job runs it: the command itself, its exit code
+ * recorded in the log the daemon keeps for it, and a pause that keeps the
+ * process observable long enough for the engine to see it (`JOB_TAIL_SECONDS`).
+ *
+ * The command is passed as base64 and decoded inside, so no byte of it is read
+ * as the wrapper's own syntax - a command may hold quotes, `$`, backticks and
+ * newlines. What it writes goes to the log the daemon redirected, which is
+ * where its exit code lands too, one line at the end.
+ */
+function jobScript(command: string): string {
+  const encoded = Buffer.from(command, "utf8").toString("base64");
+  return [
+    `bash -c "$(printf '%s' ${encoded} | base64 -d)"`,
+    // The command's own exit, not the wrapper's: what follows must not change it.
+    `code=$?`,
+    `printf '\\n\\036%s\\n' "$code"`,
+    `sleep ${JOB_TAIL_SECONDS}`,
+    `exit "$code"`,
+  ].join("\n");
+}
+
+/** A log's exit code, and the log without the line that carried it. */
+function exitOf(log: string): { exitCode: number | undefined; output: string } {
+  const at = log.lastIndexOf(EXIT_MARK);
+  const code = at < 0 ? "" : log.slice(at + 1);
+  if (!/^\d+\n?$/.test(code)) return { exitCode: undefined, output: log };
+  // The line the wrapper wrote is dropped with the newline that opened it, so
+  // what is left is exactly what the command wrote.
+  const output = log.slice(0, at).replace(/\n$/, "");
+  return { exitCode: Number(code.trim()), output };
 }
 
 /**
@@ -781,6 +847,14 @@ export class LayerfsWorkspace implements Workspace {
    * refuses: it starts a command in its own session inside the Sandbox, keeps
    * it after the call returns, and lists or cancels it. Its output is the log
    * the daemon redirects it to, read back with one command in this mount.
+   *
+   * Every command is wrapped (`jobScript`): a bare quick command would be
+   * refused, because the engine observes the process it started with a second
+   * command and a Sandbox's first process reaps one that has already ended.
+   * The wrapper's exit-code line is what makes a finished command answerable:
+   * the daemon reports whether a process still runs and never how it ended, so
+   * the code comes back in the log and a job that carries it is answered as
+   * ended even while its pause keeps the process observable.
    */
   private jobsOf(active: ActiveMount): WorkspaceJobs {
     return {
@@ -788,9 +862,11 @@ export class LayerfsWorkspace implements Workspace {
         const backend = await this.backendOf();
         if (backend === null) throw this.noBackend(active.ref);
         try {
-          const started = await backend.daemon.process.start(active.handle, command);
+          const started = await backend.daemon.process.start(active.handle, jobScript(command));
           active.jobs.add(started.process);
-          return { id: started.process, command: started.command, running: true, output: "" };
+          // The daemon answers with the script it ran; the command a caller
+          // passed is the one it asked for.
+          return { id: started.process, command, running: true, output: "" };
         } catch (error) {
           throw refusal(
             error,
@@ -827,12 +903,16 @@ export class LayerfsWorkspace implements Workspace {
             refs: [active.ref],
           });
         }
-        const output = await this.jobOutput(active.handle, job);
+        const log = await this.jobOutput(active.handle, job);
+        const ended = exitOf(log);
         return {
           id: job,
           command: found?.command ?? "",
-          running: found?.running ?? false,
-          output,
+          // A command that recorded its exit has ended, whatever the daemon
+          // still says about the process that is holding itself open for it.
+          running: (found?.running ?? false) && ended.exitCode === undefined,
+          output: ended.output,
+          ...(ended.exitCode === undefined ? {} : { exitCode: ended.exitCode }),
         };
       },
       stop: async (job: string): Promise<void> => {

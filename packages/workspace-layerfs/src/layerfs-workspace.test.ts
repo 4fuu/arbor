@@ -42,10 +42,14 @@ interface Standin {
   commitId(): string;
   /** The background processes the stand-in daemon holds, as `process.list` sees them. */
   processes(): { id: string; sandbox: string; path: string; command: string; status: string }[];
+  /** One call straight to the binding, answered as the binding answers it. */
+  backendCall(op: string, args: Record<string, unknown>): Promise<{ refused?: { code: string; message: string } }>;
   /** Write what a background command wrote into the log the daemon keeps for it. */
   jobLog(id: string, text: string): void;
   /** Mark a background process ended on its own, the way a finished command does. */
   jobExit(id: string): void;
+  /** The exit-code line a wrapped command leaves in its log when it ends. */
+  jobFinish(id: string, exitCode: number): void;
   /** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */
   containerFiles(sandbox: string): { path: string; text: string; readOnly: boolean }[];
 }
@@ -509,14 +513,21 @@ describe("background jobs", () => {
     assert.match(started?.id ?? "", /^proc_1_/);
     assert.equal(started?.command, "echo hello; sleep 30");
     assert.equal(started?.running, true);
-    assert.deepEqual(pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["command", "background"]), {
-      command: "echo hello; sleep 30",
-      background: true,
-    });
-    // The Sandbox and the path the job runs in are the mount's own.
-    assert.deepEqual(
-      pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["sandbox", "path"]),
-      { sandbox: "1", path: mount.path },
+    assert.equal(
+      pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["sandbox", "path", "background"]).sandbox,
+      "1",
+    );
+    assert.equal(pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["path"]).path, mount.path);
+    assert.equal(pick(opsCalled("backend.daemon.process.start")[0] ?? {}, ["background"]).background, true);
+    // The command reaches the engine wrapped, because a bare quick command is
+    // refused there: the payload is the command itself, and the wrapper ends
+    // with its exit code and a pause that keeps the process observable.
+    const script = String(opsCalled("backend.daemon.process.start")[0]?.command ?? "");
+    assert.match(script, /\| base64 -d\)"\ncode=\$\?/);
+    assert.match(script, /printf '\\n\\036%s\\n' "\$code"\nsleep \d+\nexit "\$code"$/);
+    assert.equal(
+      Buffer.from(/printf '%s' (\S+) \|/.exec(script)?.[1] ?? "", "base64").toString("utf8"),
+      "echo hello; sleep 30",
     );
 
     // What the command wrote is read from the log the daemon keeps for it.
@@ -532,6 +543,71 @@ describe("background jobs", () => {
     await ws.close();
   });
 
+  it("refuses a command that ends before the engine observes it", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const mounted = standin.mounts()[0];
+
+    // The engine starts a command, then observes the process it started with a
+    // second command inside the Sandbox, which reads /proc/<pid>/stat. A
+    // process the Sandbox's first process - docker-init on a Docker host - has
+    // already reaped is refused, so a bare quick command never starts: `ls` and
+    // `cat` end long before that second command lands. This is the refusal the
+    // wrapper exists to avoid, and the one a mount's `bash` must never surface.
+    const refusedStart = await standin.backendCall("backend.daemon.process.start", {
+      sandbox: mounted?.sandbox,
+      path: mounted?.path,
+      command: "printf 'quick\\n'",
+      background: true,
+    });
+    assert.equal(refusedStart.refused?.code, "Unknown");
+    assert.match(refusedStart.refused?.message ?? "", /exited before its identity was observed/);
+    assert.equal(standin.processes().length, 0);
+
+    // The same command through the mount's own jobs is wrapped, so it starts:
+    // the wrapper's pause is what keeps the process there to be observed.
+    const started = await mount.jobs?.start("printf 'quick\\n'");
+    assert.match(started?.id ?? "", /^proc_1_/);
+    assert.equal(started?.command, "printf 'quick\\n'");
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("answers a command that ended with its output and its exit code", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    // A quick command: the wrapper has written its exit code and is holding its
+    // process open, so the daemon still reports it running. What ended is the
+    // command, and that is what a caller is told - the daemon reports whether a
+    // process runs and never how a command ended.
+    const quick = await mount.jobs?.start("printf 'quick\\n'");
+    standin.jobLog(quick?.id ?? "", "quick\n");
+    standin.jobFinish(quick?.id ?? "", 0);
+    const answered = await mount.jobs?.output(quick?.id ?? "");
+    assert.equal(answered?.running, false);
+    assert.equal(answered?.exitCode, 0);
+    assert.equal(answered?.output, "quick\n");
+    assert.equal(standin.processes().find((item) => item.id === quick?.id)?.status, "running");
+
+    // A command that failed answers with its code, and is not a success.
+    const failed = await mount.jobs?.start("printf 'bad\\n'; exit 3");
+    standin.jobLog(failed?.id ?? "", "bad\n");
+    standin.jobFinish(failed?.id ?? "", 3);
+    const answered2 = await mount.jobs?.output(failed?.id ?? "");
+    assert.equal(answered2?.running, false);
+    assert.equal(answered2?.exitCode, 3);
+    assert.equal(answered2?.output, "bad\n");
+
+    await mount.release();
+    await ws.close();
+  });
+
   it("reports a job that ended on its own, and stops one that still runs", async (t) => {
     if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
     const ws = workspace();
@@ -540,13 +616,19 @@ describe("background jobs", () => {
     const finished = await mount.jobs?.start("echo done");
     const running = await mount.jobs?.start("sleep 30");
 
+    standin.jobLog(finished?.id ?? "", "done\n");
+    standin.jobFinish(finished?.id ?? "", 0);
     standin.jobExit(finished?.id ?? "");
     const ended = await mount.jobs?.output(finished?.id ?? "");
     assert.equal(ended?.running, false);
+    assert.equal(ended?.exitCode, 0);
+    assert.equal(ended?.output, "done\n");
 
     await mount.jobs?.stop(running?.id ?? "");
     const stopped = await mount.jobs?.output(running?.id ?? "");
     assert.equal(stopped?.running, false);
+    // A command its caller stopped never wrote an exit code, so it has none.
+    assert.equal(stopped?.exitCode, undefined);
     assert.deepEqual(pick(opsCalled("backend.daemon.process.cancel")[0] ?? {}, ["process"]), {
       process: running?.id,
     });

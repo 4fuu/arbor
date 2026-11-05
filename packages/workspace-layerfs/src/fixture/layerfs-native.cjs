@@ -46,6 +46,23 @@ const value = (body) => ({ value: body });
 /** The exit a command answers with. */
 const exit = (code, stdout = "", stderr = "") => value({ kind: `exit:${code}`, exitCode: code, stdout, stderr, truncated: false });
 
+/**
+ * How long the engine takes to observe a background process, in the seconds a
+ * command must outlast to be seen. The engine starts a command, then reads
+ * `/proc/<pid>/stat` in a second command inside the Sandbox; a process the
+ * Sandbox's first process - docker-init on a Docker host - has already reaped
+ * is refused, because its `/proc` entry is gone. A command that sleeps past the
+ * observation survives it, and one that does not - `ls`, `cat`, a bare
+ * `printf` - is refused with exactly that.
+ */
+const OBSERVE_SECONDS = 1;
+
+/** The longest a command sleeps, which is how long its process stays observable. */
+function observable(command) {
+  const sleeps = [...command.matchAll(/\bsleep (\d+(?:\.\d+)?)/g)].map((match) => Number(match[1]));
+  return Math.max(0, ...sleeps) >= OBSERVE_SECONDS;
+}
+
 /** One Sandbox's own filesystem, outside every Workspace it holds. */
 const containerOf = (sandbox) => {
   let files = state.container.get(sandbox);
@@ -442,6 +459,14 @@ function answer(op, args) {
     case "backend.daemon.process.start": {
       const mount = state.mounts.get(args.path);
       if (mount === undefined) return refused("NoSuchWorkspace", `no Workspace at ${args.path}`);
+      // The engine starts the command, then observes the process it started
+      // with a second command. One the Sandbox's first process has already
+      // reaped is refused: this is the refusal a bare quick command gets on a
+      // machine whose first process reaps, which is why arbor wraps every
+      // command it starts here (`OBSERVE_SECONDS`).
+      if (!observable(args.command ?? "")) {
+        return refused("Unknown", "background process exited before its identity was observed");
+      }
       const id = `proc_${args.sandbox}_${nextSerial().toString(16).padStart(2, "0")}${hex(8)}`;
       state.processes.set(id, {
         id,
@@ -523,6 +548,20 @@ exports.jobExit = (id) => {
   const process = state.processes.get(id);
   if (process === undefined) throw new Error(`no process ${id}`);
   process.exited = true;
+};
+
+/**
+ * What a wrapped command leaves in its log when it ends: a newline, a record
+ * separator and the command's exit code, on the last line. This is the line
+ * arbor's wrapper writes (`layerfs-workspace.ts`), which is how a caller learns
+ * an exit code the daemon never reports. The process is left as it stands: the
+ * wrapper holds itself open for a moment after the line, exactly as the engine
+ * does on a machine that reaps.
+ */
+exports.jobFinish = (id, exitCode) => {
+  const process = state.processes.get(id);
+  if (process === undefined) throw new Error(`no process ${id}`);
+  process.log += `\n\u001e${exitCode}\n`;
 };
 
 /** One Sandbox's own files, outside every Workspace it holds: what staging lands in. */

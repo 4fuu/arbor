@@ -14,7 +14,9 @@
  * to run a command there; a plain-directory workspace owns no execution
  * environment, so the caller runs the command itself. Where an implementation
  * can also run a command that outlives the call, `bash` hands it to
- * `bash_output` and `bash_stop` after its wait window.
+ * `bash_output` and `bash_stop` after its wait window - and a command that ends
+ * inside the window answers from the job it ran as, with its output and its
+ * exit code, exactly as one that ran to completion does.
  */
 
 import { spawn } from "node:child_process";
@@ -24,6 +26,7 @@ import type {
   BackgroundJob,
   CallContext,
   DirectToolSpec,
+  ExecResult,
   TextTable,
   ToolCall,
   ToolGroup,
@@ -158,34 +161,35 @@ export class FileToolGroup implements ToolGroup {
     const jobs = workspace.jobs;
     if (jobs !== undefined) {
       // The implementation owns the execution environment, so the command runs
-      // there and `path` is not a host path. A command that outlives the wait
-      // window is followed with `bash_output` and stopped with `bash_stop`
-      // (docs/tools.md#rules), the same way a host directory's is.
+      // there and `path` is not a host path. One that ends inside the wait
+      // window answers here with its output and its exit code; one that
+      // outlives it is followed with `bash_output` and stopped with
+      // `bash_stop` (docs/tools.md#rules), the same way a host directory's is.
       let started: BackgroundJob;
       try {
         started = await jobs.start(command);
       } catch (error) {
-        return this.failed(request, error);
+        // A start the implementation could not make is run to completion
+        // instead: the command answers with its output and its exit code, and
+        // the refusal it gave never reaches the model.
+        if (workspace.exec === undefined) return this.failed(request, error);
+        return this.ran(request, await runToEnd(workspace.exec, command));
       }
       this.mounts.set(started.id, workspace);
       const followed = await this.follow(jobs, started.id, numberArg(request.args, "timeout", BASH_WAIT_MS));
-      return {
-        callId: request.callId,
-        ok: true,
-        content: `${tailOf(followed.output)}\n${textOf(table, "result.bash.started", { job: followed.id })}`,
-      };
+      if (followed.running) {
+        return {
+          callId: request.callId,
+          ok: true,
+          content: `${tailOf(followed.output)}\n${textOf(table, "result.bash.started", { job: followed.id })}`,
+        };
+      }
+      return { callId: request.callId, ok: passed(followed.exitCode), content: tailOf(followed.output) };
     }
     if (workspace.exec !== undefined) {
       // The implementation owns the execution environment and starts no
       // background command, so this one runs to completion in the call.
-      const outcome = await workspace.exec(command).catch((error: unknown) => ({
-        exitCode: 1,
-        stdout: "",
-        stderr: error instanceof Error ? error.message : String(error),
-        truncated: false,
-      }));
-      const body = [outcome.stdout, outcome.stderr].filter((part) => part !== "").join("\n");
-      return { callId: request.callId, ok: outcome.exitCode === 0, content: body };
+      return this.ran(request, await runToEnd(workspace.exec, command));
     }
     const job = this.start(command, workspace.path);
     await sleep(numberArg(request.args, "timeout", BASH_WAIT_MS));
@@ -194,6 +198,12 @@ export class FileToolGroup implements ToolGroup {
       ok: job.done ? job.code === 0 : true,
       content: `${job.output}\n${textOf(table, "result.bash.started", { job: job.id })}`,
     };
+  }
+
+  /** One command that ran to its end: what it wrote, and whether it succeeded. */
+  private ran(request: ToolCall, outcome: ExecResult): ToolResult {
+    const body = [outcome.stdout, outcome.stderr].filter((part) => part !== "").join("\n");
+    return { callId: request.callId, ok: outcome.exitCode === 0, content: body };
   }
 
   /**
@@ -235,7 +245,7 @@ export class FileToolGroup implements ToolGroup {
     }
     return {
       callId: request.callId,
-      ok: true,
+      ok: followed.running || passed(followed.exitCode),
       content: `${tailOf(followed.output)}\n${textOf(table, followed.running ? "result.bash.running" : "result.bash.stopped", { job: id })}`,
     };
   }
@@ -470,6 +480,28 @@ function insidePath(root: string, path: string): string | undefined {
 /** The last of a background job's output, the part a caller reads. */
 function tailOf(output: string): string {
   return output.slice(-JOB_BUFFER);
+}
+
+/**
+ * One command to its end in a mount that owns its execution environment, or
+ * the failure it was answered with - so a command the implementation could not
+ * run at all is reported the way one that ran and failed is.
+ */
+function runToEnd(exec: (command: string) => Promise<ExecResult>, command: string): Promise<ExecResult> {
+  return exec(command).catch((error: unknown) => ({
+    exitCode: 1,
+    stdout: "",
+    stderr: error instanceof Error ? error.message : String(error),
+    truncated: false,
+  }));
+}
+
+/**
+ * Whether a command that ended succeeded. One that never reported an exit code
+ * - a command its caller stopped - is not a failure.
+ */
+function passed(exitCode: number | undefined): boolean {
+  return exitCode === undefined || exitCode === 0;
 }
 
 function stringArg(args: Record<string, unknown>, name: string): string {

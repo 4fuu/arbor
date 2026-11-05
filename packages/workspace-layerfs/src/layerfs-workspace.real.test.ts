@@ -205,18 +205,21 @@ describe("a background job", () => {
     assert.equal(followed?.running, true);
     assert.match(followed?.output ?? "", /first/);
 
-    // A command that ends on its own stops being reported as running. It has
-    // to outlive the call that starts it: LayerFS observes the process's
-    // identity in a second command, and a Sandbox's first process reaps an
-    // orphan that already ended, so the engine refuses a start it cannot
-    // observe - which is why this command sleeps before it ends.
-    const quick = await mount.jobs?.start("printf 'quick\\n'; sleep 1");
+    // A command that ends on its own stops being reported as running. It does
+    // not have to outlive the call that starts it: the wrapper this package
+    // starts a command with holds its process open past the engine's
+    // observation and records the exit code in the log, so a truly quick
+    // command starts, ends and answers with its code.
+    const quick = await mount.jobs?.start("printf 'quick\\n'");
     let ended = false;
     for (let attempt = 0; attempt < 50 && !ended; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
       ended = (await mount.jobs?.output(quick?.id ?? ""))?.running === false;
     }
     assert.equal(ended, true);
+    const answered = await mount.jobs?.output(quick?.id ?? "");
+    assert.equal(answered?.exitCode, 0);
+    assert.match(answered?.output ?? "", /quick/);
 
     await mount.jobs?.stop(started?.id ?? "");
     const stopped = await mount.jobs?.output(started?.id ?? "");

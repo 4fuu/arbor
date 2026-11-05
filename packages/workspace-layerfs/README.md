@@ -87,11 +87,25 @@ log inside the Sandbox, so the output is read back with one command in the same
 mount - a Workspace's uncommitted files are readable no other way. A read-only
 view carries no `jobs`: a view must never publish anything.
 
+Every command is wrapped before it is started, for two things that both come
+from the engine. It observes the process it started with a second command inside
+the Sandbox, which reads `/proc/<pid>/stat`; a process the Sandbox's first
+process - docker-init on a Docker host - has already reaped is refused, and an
+ordinary quick command such as `ls` ends long before that second command lands,
+so the wrapper holds the process open for a moment after the command has ended.
+And the daemon reports whether a process still runs and never how a command
+ended, so the wrapper records the command's exit code as the last line of the log
+it is already writing to: a job that carries that line is answered as ended,
+with its code, even while its process is still holding itself open. A command
+that outlives `bash`'s wait window keeps running and is followed with
+`bash_output` and stopped with `bash_stop`, and a command its caller stopped
+never wrote an exit code and so has none.
+
 Two things come from LayerFS itself. A background command holds its Workspace
 mounted, so releasing a mount stops the commands it started first - an unmount
-with one still running is refused `Busy`. And the daemon reports whether a
-process still runs, never its exit code, so a finished background command is
-reported as stopped rather than as succeeded or failed.
+with one still running is refused `Busy`. And the daemon's own answer about a
+process is only whether it still runs, which is why the exit code travels in the
+log rather than in the daemon's report.
 
 `@layerfs/backend` imports `@layerfs/agent` by name, so it loads only where the
 checkout's packages are linked - `.agents/setup` runs `npm install` in the
@@ -155,9 +169,10 @@ skeleton - points it there. With none, the project starts empty.
 - **A snapshot needs a Commit.** LayerFS publishes a Commit from a mounted
   Workspace, so a workspace nothing was ever written to has none, and
   `snapshot` refuses it rather than inventing an id.
-- **A background command's exit code.** The daemon reports whether a process
-  still runs, never how it ended, so `bash_output` answers with what the
-  command wrote and whether it is still running.
+- **A stopped command's exit code.** The daemon reports whether a process still
+  runs and never how it ended, so a command that ended on its own answers with
+  the exit code its wrapper recorded in the log, and one its caller stopped has
+  none.
 
 ## Installing LayerFS
 
@@ -242,14 +257,17 @@ Two rules come from LayerFS itself, not from this package:
   no Store, and runs wherever the packages are installed. It checks this
   package's side of the contract: which Branch a ref names, which Commit an
   event's snapshot holds, what a mount does and what it never publishes, what
-  a background command does, and that what staging writes beside the mount
-  never reaches a snapshot. It loads `@layerfs/backend` too, so the
-  checkout's packages must be linked (`npm install` in `.layerfs/api`) for it
-  to run; without them every case skips with that as the reason.
+  a background command does - the stand-in refuses a command that ends before
+  the engine observes it, and a wrapped command that ended answers with its
+  exit code - and that what staging writes beside the mount never reaches a
+  snapshot. It loads `@layerfs/backend` too, so the checkout's packages must be
+  linked (`npm install` in `.layerfs/api`) for it to run; without them every
+  case skips with that as the reason.
 - `layerfs-workspace.real.test.ts` runs against a real Store, and a real mount
   where the machine has one, and skips with its reason otherwise. Its
   `a background job` case starts a command that outlives the call, reads what
-  it wrote while it runs, watches one end on its own and stops another. Its
+  it wrote while it runs, watches a truly quick one end on its own and answer
+  with its exit code, and stops another. Its
   `staged files` case stages the environment beside the mount, proves a command
   cannot change what was staged, and that the snapshot taken after it holds no
   `/env` file.
