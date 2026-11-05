@@ -1,5 +1,7 @@
 packages:
   - packages/*
 allowBuilds:
-  '@google/genai': set this to true or false
-  protobufjs: set this to true or false
+  # pi-ai's optional postinstall steps: neither is needed, the published
+  # packages ship their generated artifacts.
+  '@google/genai': false
+  protobufjs: false
