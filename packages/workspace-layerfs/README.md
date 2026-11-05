@@ -114,10 +114,23 @@ speaking Engine API 1.48 or newer, the image a Sandbox runs, and a Store on
 ext4, xfs or btrfs. Podman's Docker-compatible socket is not enough: its
 compatibility API stops at 1.44, which LayerFS refuses before it sends a
 request, so `capabilities()` reports it unavailable with the version as the
-reason instead of a false green. A rootless Engine is not enough either: the
+reason instead of a false green.
+
+A rootless Engine can run it, with two things the deployment provides. The
 Sandbox's daemon runs in a user namespace and refuses a `/dev/fuse` it does
-not own, which a rootless Engine can only give it when the device belongs to
-the user the Engine runs as.
+not own, and a rootless container's root is the unprivileged user on the
+host, so the device must belong to that user - a udev rule
+(`KERNEL=="fuse", OWNER="<user>", GROUP="<user>", MODE="0666"`) plus a
+`chown` until the rule applies. And pasta's default `implicit` port driver
+leaves a published port unforwarded, so the SDK's dial to the daemon is
+refused: rootlesskit's `pesto` driver forwards it.
+
+```sh
+mkdir -p ~/.config/systemd/user/docker.service.d
+printf '[Service]\nEnvironment=DOCKERD_ROOTLESS_ROOTLESSKIT_PORT_DRIVER=pesto\n' \
+  > ~/.config/systemd/user/docker.service.d/port-driver.conf
+systemctl --user restart docker
+```
 
 The image a Sandbox runs is built from the pinned commit with the
 `sandbox.Dockerfile` beside this README, on the machine that has the Engine:

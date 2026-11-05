@@ -150,14 +150,14 @@ describe("a real mount", () => {
     const ref = "ws1";
     const mount = await ws.mount(ref);
 
-    const written = await mount.exec?.("printf 'hello\\n' > /notes.txt");
+    const written = await mount.exec?.("printf 'hello\\n' > notes.txt");
     assert.equal(written?.exitCode, 0);
 
     const snapshot = await ws.snapshot(ref, "r902");
     assert.equal(snapshot.ref, "ws1@r902");
     assert.notEqual(snapshot.id, "");
 
-    const read = await mount.exec?.("cat /notes.txt");
+    const read = await mount.exec?.("cat notes.txt");
     assert.equal(read?.stdout, "hello\n");
 
     await mount.release();
@@ -166,9 +166,9 @@ describe("a real mount", () => {
     // written in it is published.
     const view = await ws.mount(`${ref}@r902`);
     assert.equal(view.readOnly, true);
-    const shown = await view.exec?.("cat /notes.txt");
+    const shown = await view.exec?.("cat notes.txt");
     assert.equal(shown?.stdout, "hello\n");
-    await view.exec?.("printf 'changed\\n' > /notes.txt");
+    await view.exec?.("printf 'changed\\n' > notes.txt");
     await view.release();
 
     const page = await ws.snapshots(ref);
@@ -178,7 +178,7 @@ describe("a real mount", () => {
     // The workspace still holds what the agent left: the view published
     // nothing over it.
     const again = await ws.mount(ref);
-    const kept = await again.exec?.("cat /notes.txt");
+    const kept = await again.exec?.("cat notes.txt");
     assert.equal(kept?.stdout, "hello\n");
     await again.release();
 
