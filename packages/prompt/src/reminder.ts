@@ -1,0 +1,80 @@
+/**
+ * Usage reminders (docs/windows.md#usage-reminders).
+ *
+ * Host reminders are appended to an input, never to the prefix: at 15, 30 and
+ * 50 % of the window, write down what a later window would need; at 60, 70 and
+ * 80 %, also end the window with a handoff; a final one at
+ * `window - 2 x reserve`. Each carries the real numbers, its place in the
+ * series and the cost of ignoring it. Only the highest crossed tier is sent;
+ * the lower ones it jumped over are recorded as sent with it.
+ */
+
+import type { TokenUsage } from "@arbor/interfaces";
+
+/** One tier of the series. `tier` names the instruction in the text table. */
+export interface ReminderTier {
+  /** The share of the window, in percent. */
+  percent: number;
+  /** `note`, `handoff` or `final`. */
+  tier: "note" | "handoff" | "final";
+  /** The share of the window's tokens at which this tier fires. */
+  at: (usage: TokenUsage) => number;
+}
+
+const HARD_LIMIT_TOKENS = 16000;
+
+function atPercent(percent: number): (usage: TokenUsage) => number {
+  return (usage) => Math.floor((usage.limit * percent) / 100);
+}
+
+/** The tiers in their fixed order. */
+export const REMINDER_TIERS: readonly ReminderTier[] = [
+  { percent: 15, tier: "note", at: atPercent(15) },
+  { percent: 30, tier: "note", at: atPercent(30) },
+  { percent: 50, tier: "note", at: atPercent(50) },
+  { percent: 60, tier: "handoff", at: atPercent(60) },
+  { percent: 70, tier: "handoff", at: atPercent(70) },
+  { percent: 80, tier: "handoff", at: atPercent(80) },
+  {
+    percent: 100,
+    tier: "final",
+    at: (usage) => usage.limit - 2 * usage.reserve,
+  },
+];
+
+/** How many reminders the series holds. */
+export const REMINDER_SERIES = REMINDER_TIERS.length;
+
+/** The share of the window the host holds back at the hard limit. */
+export function hardLimitReserve(limit: number): number {
+  return Math.min(HARD_LIMIT_TOKENS, Math.floor(limit / 4));
+}
+
+/** The token count at which the host ends the window by itself. */
+export function hardLimitAt(usage: TokenUsage): number {
+  return usage.limit - hardLimitReserve(usage.limit);
+}
+
+/** True once the window has reached its hard limit. */
+export function atHardLimit(usage: TokenUsage): boolean {
+  return usage.used >= hardLimitAt(usage);
+}
+
+/** The share of the window used, in whole percent. */
+export function usedPercent(usage: TokenUsage): number {
+  if (usage.limit <= 0) return 0;
+  return Math.min(100, Math.floor((usage.used / usage.limit) * 100));
+}
+
+/** The tier that fires next, or `null` when none has been crossed. */
+export function nextReminderTier(usage: TokenUsage, sent: number): ReminderTier | null {
+  let crossed: ReminderTier | null = null;
+  for (let index = 0; index < REMINDER_TIERS.length; index += 1) {
+    const tier = REMINDER_TIERS[index];
+    if (tier === undefined) continue;
+    if (usage.used >= tier.at(usage)) crossed = tier;
+  }
+  if (crossed === null) return null;
+  const index = REMINDER_TIERS.indexOf(crossed);
+  return index < sent ? null : crossed;
+}

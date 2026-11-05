@@ -9,7 +9,7 @@
  */
 
 import type { DirectToolSpec, FunctionSpec, ModuleSpec, ParameterSpec, ToolCall, ToolResult } from "./agent.ts";
-import type { WindowRef } from "./refs.ts";
+import type { EventRef, WindowRef } from "./refs.ts";
 import type { WorkspaceMount } from "./workspace.ts";
 
 /** What a call is made in. The service layer fills it; a group never reaches past it. */
@@ -20,6 +20,8 @@ export interface CallContext {
   workspace?: WorkspaceMount;
   /** The environment revision frozen when the window opened. */
   envRevision?: string;
+  /** The event this call is recorded at, so a snapshot can name it. */
+  call?: EventRef;
 }
 
 export interface ToolGroup {

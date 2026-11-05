@@ -57,6 +57,12 @@ export interface OpenWindowRequest {
   modules: readonly ModuleSpec[];
   /** The model the tier maps to, resolved from the backend's catalog. */
   model: string;
+  /**
+   * The first input, already rendered by the host's one renderer: the task,
+   * the board lines related to it and, for a continuation, the previous
+   * window's ref and handoff (docs/prompting.md#layers).
+   */
+  firstInput?: string;
   /** The workspace mounted for this window, when it has one. */
   workspace?: string;
   limits: WindowLimits;
@@ -88,7 +94,9 @@ export interface Delivery {
     | "notice"
     | "broadcast"
     | "window_message"
-    | "environment_delta";
+    | "environment_delta"
+    /** A host usage reminder, appended to an input (docs/windows.md#usage-reminders). */
+    | "reminder";
   /** The window it comes from, for a notice, a broadcast or a window message. */
   from?: WindowRef;
   refs: readonly Ref[];
@@ -108,7 +116,7 @@ export interface WindowSession {
   followUp(delivery: Delivery): Promise<void>;
 
   /** End the run. With a handoff the host opens a continuation. */
-  end(handoff?: Handoff): Promise<void>;
+  end(handoff?: Handoff, reason?: WindowEndReason): Promise<void>;
 
   /** Pause insertion without ending the window. */
   pause(): Promise<void>;

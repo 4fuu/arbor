@@ -12,7 +12,14 @@
 import type { Ref } from "./refs.ts";
 
 /** A field value inside a block. */
-export type BlockValue = string | number | boolean | Ref | readonly Ref[] | readonly Block[];
+export type BlockValue =
+  | string
+  | number
+  | boolean
+  | Ref
+  | readonly Ref[]
+  | readonly string[]
+  | readonly Block[];
 
 /** One typed block. */
 export interface Block<K extends string = string> {
@@ -37,7 +44,7 @@ export type BlockKind =
 /** Declares one field of a block kind. */
 export interface BlockFieldSpec {
   name: string;
-  type: "string" | "number" | "boolean" | "ref" | "refs" | "blocks";
+  type: "string" | "strings" | "number" | "boolean" | "ref" | "refs" | "blocks";
   required?: boolean;
 }
 
