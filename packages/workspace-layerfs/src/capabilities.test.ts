@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { layerfsCapabilities } from "./capabilities.ts";
+import { dockerAvailable, layerfsCapabilities } from "./capabilities.ts";
 import type { LayerfsDeployment } from "./options.ts";
 
 /**
@@ -140,22 +139,28 @@ describe("the Docker Engine check", () => {
     assert.equal(capabilities.dockerReason, null);
   });
 
-  it("reports a rootless Engine unavailable unless /dev/fuse is this user's", async () => {
+  it("refuses a rootless Engine when the device belongs to another user", async () => {
     // A rootless Engine runs the Sandbox in a user namespace, so a /dev/fuse
     // owned by anyone else reaches the container unmapped and the daemon
-    // refuses it. A machine whose own user owns the device is the exception.
+    // refuses it. The owner is named rather than read off the host, so the
+    // test says the same thing on a machine without the device.
     const engine = await fakeEngine(true, "1.52", ["name=rootless", "name=cgroupns"]);
     started.push(engine);
-    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
-    const uid = process.getuid?.();
-    if (uid !== undefined && statSync("/dev/fuse").uid === uid) {
-      assert.equal(capabilities.docker, true);
-      assert.equal(capabilities.dockerReason, null);
-      return;
-    }
-    assert.equal(capabilities.docker, false);
-    assert.match(capabilities.dockerReason ?? "", /rootless/);
-    assert.match(capabilities.dockerReason ?? "", /\/dev\/fuse/);
+    const uid = process.getuid?.() ?? 0;
+    const foreign = uid === 0 ? 1 : 0;
+    const reason = await dockerAvailable(deploymentOf(engine.socket, IMAGE).deployment, { uid: foreign });
+    assert.match(reason ?? "", /rootless/);
+    assert.match(reason ?? "", /\/dev\/fuse/);
+  });
+
+  it("accepts a rootless Engine when the device belongs to its own user", async () => {
+    // The exception: a machine whose own user owns /dev/fuse, which the
+    // container's user namespace maps onto the daemon's root.
+    const engine = await fakeEngine(true, "1.52", ["name=rootless", "name=cgroupns"]);
+    started.push(engine);
+    const uid = process.getuid?.() ?? 0;
+    const reason = await dockerAvailable(deploymentOf(engine.socket, IMAGE).deployment, { uid });
+    assert.equal(reason, null);
   });
 });
 

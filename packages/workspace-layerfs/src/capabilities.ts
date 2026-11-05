@@ -174,13 +174,28 @@ function engineRootless(socket: string): Promise<boolean | null> {
   });
 }
 
+/** The owner of the `/dev/fuse` a mount needs, or null when there is none. */
+function deviceOwner(device?: { uid: number }): number | null {
+  // A caller that cannot read the host's device - a test on a machine without
+  // one - names the owner it wants checked.
+  if (device !== undefined) return device.uid;
+  if (!existsSync("/dev/fuse")) return null;
+  return statSync("/dev/fuse").uid;
+}
+
 /**
  * Why this machine cannot run a mount, or null when it can: an Engine socket
  * that answers, an image named by exact digest, an Engine API at least the
  * floor LayerFS speaks, and - on a rootless Engine - a `/dev/fuse` the
  * Sandbox's daemon will own. Each reason names the rule that refused it.
+ *
+ * `device` names the `/dev/fuse` to check instead of the host's, for a caller
+ * that cannot read it.
  */
-export async function dockerAvailable(deployment: LayerfsDeployment | undefined): Promise<string | null> {
+export async function dockerAvailable(
+  deployment: LayerfsDeployment | undefined,
+  device?: { uid: number },
+): Promise<string | null> {
   const socket = dockerSocketOf(deployment);
   if (!existsSync(socket)) return `no Docker Engine socket at ${socket}`;
   if (!isDigest(sandboxImageOf(deployment))) {
@@ -198,10 +213,10 @@ export async function dockerAvailable(deployment: LayerfsDeployment | undefined)
   // /dev/fuse reaches the container unmapped unless the device is owned by
   // the user the Engine runs as - and the daemon refuses a device it does
   // not own, rather than serving an unprotected mount.
-  if ((await engineRootless(socket)) === true && existsSync("/dev/fuse")) {
+  if ((await engineRootless(socket)) === true) {
     const uid = process.getuid?.();
-    const owner = statSync("/dev/fuse").uid;
-    if (uid !== undefined && owner !== uid) {
+    const owner = deviceOwner(device);
+    if (uid !== undefined && owner !== null && owner !== uid) {
       return (
         `the Docker Engine at ${socket} is rootless, and /dev/fuse belongs to another user: ` +
         `the Sandbox's daemon runs in a user namespace and refuses a device it does not own`
