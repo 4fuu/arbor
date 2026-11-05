@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -117,5 +117,34 @@ describe("the Docker Engine check", () => {
     const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, "arbor-sandbox:latest"));
     assert.equal(capabilities.docker, false);
     assert.match(capabilities.dockerReason ?? "", /LAYERFS_IMAGE/);
+  });
+});
+
+describe("a LayerFS checkout", () => {
+  /**
+   * The SDK and the addon a checkout holds, laid out the way `.agents/setup`
+   * leaves them: the JavaScript packages under `api/`, and the built addon in
+   * the engine beside it. The probe must find the addon there, because a
+   * deployment that ran the setup has no other copy to name.
+   */
+  it("finds the SDK and the built addon in the checkout's own layout", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "arbor-checkout-"));
+    started.push({
+      close: () => rm(directory, { recursive: true, force: true }),
+    });
+    const api = join(directory, "api");
+    await mkdir(join(api, "agent", "src"), { recursive: true });
+    await writeFile(join(api, "agent", "src", "index.js"), "export const LayerFS = {};\n");
+    const addon = join(directory, "engine", "crates", "layerfs-node");
+    await mkdir(addon, { recursive: true });
+    await writeFile(join(addon, "layerfs.node"), "not a real addon: only its path is read\n");
+
+    const capabilities = await layerfsCapabilities({
+      sdk: api,
+      deployment: { docker: join(directory, "no-engine.sock"), image: IMAGE },
+    });
+    assert.equal(capabilities.checkout, api);
+    assert.equal(capabilities.sdk, true);
+    assert.equal(capabilities.addon, true);
   });
 });

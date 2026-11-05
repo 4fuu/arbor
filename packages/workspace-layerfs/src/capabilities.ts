@@ -173,7 +173,9 @@ function addonPathOf(options: LayerfsWorkspaceOptions): string | null {
   if (explicit !== undefined && explicit !== "") return explicit;
   const checkout = layerfsCheckout(options);
   if (checkout === null) return null;
-  return join(checkout, "..", "..", "engine", "crates", "layerfs-node", "layerfs.node");
+  // The checkout is its `api` directory, so the engine - where
+  // `.agents/setup` leaves the built addon - is one level up.
+  return join(checkout, "..", "engine", "crates", "layerfs-node", "layerfs.node");
 }
 
 /** What this machine can run, without starting anything. */
