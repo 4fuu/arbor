@@ -14,7 +14,8 @@ snapshots, and the agent does the rest.
    progress carry over and long work spans windows. A fork copies no files.
 3. **Snapshots.** Every write and every `bash` call ends with a snapshot of
    the directory, and the event records its id. A snapshot is the directory's
-   state at that event and can be read later.
+   state at that event and can be read later. A call that changes no file takes
+   none, and a window that never touches files has no directory to snapshot.
 4. **Read-only views.** Any window can mount another workspace's latest
    snapshot, or any snapshot by its event, read-only by its ref (`ws3`,
    `ws3@r902`), to look at work that is not pushed anywhere.

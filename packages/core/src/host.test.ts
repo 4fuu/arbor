@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -66,6 +66,7 @@ async function host(options: { workspace?: boolean } = {}): Promise<{
   timers: ManualTimers;
   backend: ScriptedBackend;
   probe: ProbeGroup;
+  root: string;
 }> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const timers = new ManualTimers();
@@ -82,7 +83,7 @@ async function host(options: { workspace?: boolean } = {}): Promise<{
     groups: [probe],
   });
   backend.attach(arbor.windowControl());
-  return { arbor, journal, timers, backend, probe };
+  return { arbor, journal, timers, backend, probe, root };
 }
 
 const task = {
@@ -137,6 +138,26 @@ describe("one window end to end", () => {
     assert.match(results.items[0]?.snapshot ?? "", /^ws1@r\d+$/);
     const calls = await journal.list({ kinds: ["tool_call"] });
     assert.equal(results.items[0]?.snapshot, `ws1@${calls.items[0]?.ref}`);
+  });
+
+  it("takes no snapshot for a call that changes no file, and makes no directory", async () => {
+    const { arbor, journal, backend, root } = await host();
+    backend.script([
+      { tool: "probe", args: { text: "CI" } },
+      { text: "完成" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    await backend.finished();
+    const results = await journal.list({ kinds: ["tool_result"] });
+    assert.equal(results.total, 1);
+    // Only a write or a bash call ends with a snapshot
+    // (docs/workspaces.md#what-the-framework-guarantees), so a call that
+    // changes nothing records none.
+    assert.equal(results.items[0]?.snapshot ?? null, null);
+    // A window that never touches files has no directory.
+    assert.deepEqual(await readdir(root), []);
   });
 
   it("sends the frozen prefix: arbor's system prompt and the memory snapshot", async () => {

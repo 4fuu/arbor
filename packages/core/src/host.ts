@@ -1799,15 +1799,26 @@ export class Arbor {
           .before("beforeToolCall", { window, call })
           .catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
     let result: ToolResult;
+    let ran = call;
     if (allowed instanceof Error) {
       result = this.refusalOf(call, allowed);
     } else {
-      result = await this.catalog.call(allowed.call, context).catch((error: unknown) => this.refusalOf(call, error));
+      ran = allowed.call;
+      result = await this.catalog.call(ran, context).catch((error: unknown) => this.refusalOf(call, error));
     }
     if (!this.hooks.empty) await this.hooks.after("afterToolCall", { window, call, result });
-    const changed = record?.mount ?? (await this.mountFor(window));
+    // Every write and every bash call ends with a snapshot of the directory,
+    // and the event records its id (docs/workspaces.md#what-the-framework-
+    // guarantees). A call that changes nothing - a search, a note, a read -
+    // takes none, and a window that never touches files has no directory. The
+    // call that ran is what counts: a hook may have changed it.
     let snapshot: SnapshotRef | null = null;
-    if (changed !== undefined && record?.workspaceRef !== undefined && this.options.workspace !== undefined) {
+    if (
+      changesFiles(ran.name) &&
+      record?.mount !== undefined &&
+      record.workspaceRef !== undefined &&
+      this.options.workspace !== undefined
+    ) {
       const handle = await this.options.workspace.snapshot(record.workspaceRef, at);
       snapshot = handle.ref;
     }
@@ -1937,6 +1948,17 @@ export class Arbor {
     for (const target of targets) this.board.touch(window, target);
     return record;
   }
+}
+
+/**
+ * The tools that change the directory: every write and every bash call
+ * (docs/workspaces.md#what-the-framework-guarantees). `edit` writes a file as
+ * `write` does, and `bash` may or may not - the snapshot is what the event
+ * records either way. Everything else - a search, a note, a read - changes no
+ * file and takes no snapshot.
+ */
+function changesFiles(tool: string): boolean {
+  return tool === "write" || tool === "edit" || tool === "bash";
 }
 
 /** What a refusal records: the rule and the one line the model reads. */
