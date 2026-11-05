@@ -37,6 +37,13 @@ until the project is removed; and its storage is deduplicated across the whole
 Store, so a disk quota is a limit the deployment sets against a workspace's
 logical size, not one LayerFS enforces.
 
+A host that cannot run LayerFS - no `/dev/fuse`, no Docker Engine at the API
+version LayerFS speaks, no Store on its filesystem allowlist, or no Linux at
+all - falls back to a plain directory and logs the reason its capability check
+gave. The interface is the same: forks and snapshots are copies instead of
+metadata, and background jobs stay on the host. The work environment degrades,
+the framework does not fail.
+
 ## What the agent does
 
 Everything that is a judgment or a workflow: cloning, branching, committing,

@@ -77,9 +77,9 @@ check` typechecks and tests every package.
 | `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
 | `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
-| `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts |
+| `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts, background commands |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
-| `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files |
+| `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files or one that runs where LayerFS cannot |
 | `packages/environment-dir` | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
 | `packages/supervisor-process` | the default `Supervisor`: one host process per service, restart with backoff, logs |
 | `packages/prompt` | typed blocks, the one deterministic renderer and the replaceable text table |

@@ -50,6 +50,12 @@ importers:
       '@arbor/tools':
         specifier: workspace:*
         version: link:../tools
+      '@arbor/workspace-dir':
+        specifier: workspace:*
+        version: link:../workspace-dir
+      '@arbor/workspace-layerfs':
+        specifier: workspace:*
+        version: link:../workspace-layerfs
     devDependencies:
       '@arbor/agent-pi':
         specifier: workspace:*
@@ -66,9 +72,6 @@ importers:
       '@arbor/supervisor-process':
         specifier: workspace:*
         version: link:../supervisor-process
-      '@arbor/workspace-dir':
-        specifier: workspace:*
-        version: link:../workspace-dir
       '@types/node':
         specifier: ^26.0.0
         version: 26.6.6

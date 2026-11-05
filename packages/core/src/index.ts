@@ -34,6 +34,7 @@ export { EffectQueue, type EffectInput, type EffectOutcome } from "./effects.ts"
 export { HookRunner, type HookPoint, type HookContextOf, type WindowEndOutcome } from "./hooks.ts";
 export { HookedJournal } from "./hooked-journal.ts";
 export { RefAllocator, eventRefOf, highestOf, type RefSeed } from "./refs.ts";
+export { openWorkspace, type OpenWorkspaceOptions, type WorkspaceChoice } from "./workspace.ts";
 export { DEFAULT_RETRY_MS, RuleScheduler, type RuleSchedulerOptions } from "./scheduler.ts";
 export {
   DEFAULT_MIN_INTERVAL_MS,

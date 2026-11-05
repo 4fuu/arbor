@@ -19,7 +19,9 @@
     "@arbor/interfaces": "workspace:*",
     "@arbor/judge-jev": "workspace:*",
     "@arbor/prompt": "workspace:*",
-    "@arbor/tools": "workspace:*"
+    "@arbor/tools": "workspace:*",
+    "@arbor/workspace-dir": "workspace:*",
+    "@arbor/workspace-layerfs": "workspace:*"
   },
   "devDependencies": {
     "@arbor/agent-pi": "workspace:*",
@@ -27,7 +29,6 @@
     "@arbor/supervisor-process": "workspace:*",
     "@arbor/journal-sqlite": "workspace:*",
     "@arbor/notes-sqlite": "workspace:*",
-    "@arbor/workspace-dir": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

@@ -33,7 +33,7 @@ interface and registering it; nothing else changes.
 | `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
-| `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
+| `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs); a plain directory where LayerFS cannot run |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
@@ -82,6 +82,11 @@ Rules for every interface:
   - pi already has a LayerFS extension, `pi-layerfs`, that backs pi's file
     and bash tools with LayerFS; it is a reference for the integration, not
     a dependency.
+- A host composes its stack with LayerFS where the machine can run it and a
+  plain directory where it cannot, reading `capabilities()` once
+  ([workspaces.md](workspaces.md#what-the-framework-guarantees)). The reason
+  the check gives is logged, never thrown: the work environment degrades, the
+  framework does not fail.
 - **The toolchain** is project-local: `mise.toml` pins Node, pnpm and the
   Rust the LayerFS engine builds with, installed under `~/.local/share/mise`
   and never into `~/.cargo`. `.agents/setup` prepares a machine either that
