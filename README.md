@@ -35,8 +35,10 @@ and every window can find everything that was ever done.
 - **Every module is replaceable.** The agent backend (pi by default), the
   journal, notes, workspaces, the judge, channels and the rest are interfaces.
 
-Status: stage 0. The interfaces and the SQLite journal are built; windows and
-dispatch come next.
+Status: stage 1. One window runs end to end: the pi backend, the prompt
+layers, the direct tools and code mode modules, and the window lifecycle
+with its continuations. Dispatch, notes, the environment and the host API
+come next.
 
 > The design grows out of the context, window and notes mechanisms built for
 > [qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver). This link is
@@ -72,8 +74,11 @@ check` typechecks and tests every package.
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
-| `packages/core` (later) | the service layer: one implementation of every operation |
-| `packages/tools` (later) | the entry points: direct tools, code mode modules, the host API |
+| `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files |
+| `packages/prompt` | typed blocks, the one deterministic renderer and the replaceable text table |
+| `packages/agent-pi` | the default `AgentBackend`: pi-agent-core in process |
+| `packages/tools` | the entry points: direct tools, code mode modules, the host API |
+| `packages/core` | the service layer: one implementation of every operation |
 
 `mise.toml` pins the toolchain - Node, pnpm and the Rust the LayerFS engine
 builds with - installed under `~/.local/share/mise`, and `.agents/setup`

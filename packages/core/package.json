@@ -1,0 +1,31 @@
+{
+  "name": "@arbor/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The service layer for one window: lifecycle, prompt epochs, reminders, continuations, the board, the effect queue and restart recovery.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*",
+    "@arbor/prompt": "workspace:*",
+    "@arbor/tools": "workspace:*"
+  },
+  "devDependencies": {
+    "@arbor/agent-pi": "workspace:*",
+    "@arbor/journal-sqlite": "workspace:*",
+    "@arbor/notes-sqlite": "workspace:*",
+    "@arbor/workspace-dir": "workspace:*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

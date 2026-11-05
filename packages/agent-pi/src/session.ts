@@ -96,10 +96,9 @@ export class PiWindowSession implements WindowSession {
       this.resolveOutcome = resolve;
     });
     this.unsubscribe = this.agent.subscribe((event) => this.onAgentEvent(event));
-    void options.run.then(
-      () => this.settle("model_ended"),
-      (error: unknown) => this.settle("failed", error),
-    );
+    // A finished run is not a finished window: the window stays open for a
+    // related input until the host ends it (docs/windows.md#lifecycle).
+    void options.run.catch((error: unknown) => this.settle("failed", error));
   }
 
   get state(): WindowState {
@@ -187,6 +186,9 @@ export class PiWindowSession implements WindowSession {
       case "message_end":
         if (event.message.role === "assistant") this.trackUsage(event.message.usage);
         break;
+      case "agent_end":
+        this.stream.push({ kind: "run_ended", outcome: this.outcomeOf("model_ended") });
+        break;
       default:
         break;
     }
@@ -218,6 +220,16 @@ export class PiWindowSession implements WindowSession {
       ok: isError === false,
       content,
       ...(isError ? { error: { rule: "tool.execution", message: content.slice(0, 500) } } : {}),
+    };
+  }
+
+  /** The outcome as it stands, for a run that ended. */
+  private outcomeOf(reason: WindowEndReason, handoff?: Handoff): WindowOutcome {
+    return {
+      window: this.window,
+      reason,
+      ...(handoff === undefined ? {} : { handoff }),
+      usage: this.current,
     };
   }
 

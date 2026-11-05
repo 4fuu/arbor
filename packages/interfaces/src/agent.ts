@@ -138,6 +138,8 @@ export type WindowEvent =
   | { kind: "appended"; event: string }
   | { kind: "steered"; delivery: Delivery }
   | { kind: "usage"; usage: TokenUsage }
+  /** The run ended. The window stays open for a related input (docs/windows.md#lifecycle). */
+  | { kind: "run_ended"; outcome: WindowOutcome }
   | { kind: "ended"; outcome: WindowOutcome };
 
 export type WindowEndReason =

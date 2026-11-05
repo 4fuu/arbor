@@ -34,6 +34,14 @@ function controlOf(recorded: Recorded, answer: (call: ToolCall) => ToolResult): 
   };
 }
 
+async function waitFor(done: () => boolean, attempts = 200): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    if (done()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("condition was never met");
+}
+
 function requestOf(overrides: Partial<OpenWindowRequest> = {}): OpenWindowRequest {
   return {
     window: "c1",
@@ -85,8 +93,9 @@ describe("pi backend", () => {
     const session = await backend.open(requestOf());
     for await (const event of session.events()) {
       recorded.events.push(event.kind);
-      if (event.kind === "ended") break;
+      if (event.kind === "run_ended") break;
     }
+    await session.end();
     const outcome = await session.outcome();
 
     assert.equal(outcome.reason, "model_ended");
@@ -127,7 +136,7 @@ describe("pi backend", () => {
     const drain = (async () => {
       for await (const event of session.events()) {
         if (event.kind === "steered") steered.push(event.delivery.kind);
-        if (event.kind === "ended") break;
+        if (event.kind === "run_ended") break;
       }
     })();
     // The delivery is steered while the first turn's tool call is in flight.
@@ -140,9 +149,11 @@ describe("pi backend", () => {
       content: [{ kind: "data", fields: { content: "窗口 c2 写入了 r44" } }],
     });
     await drain;
-    await session.outcome();
+    await session.end();
+    const outcome = await session.outcome();
 
     assert.deepEqual(steered, ["notice"]);
+    assert.equal(outcome.reason, "model_ended");
     // The delivery reached the model as user-role text, never a system message.
     assert.equal(recorded.calls.length, 2);
   });
@@ -176,14 +187,50 @@ describe("pi backend", () => {
       }),
     );
     for await (const event of session.events()) {
-      if (event.kind === "ended") break;
+      if (event.kind === "run_ended") break;
     }
+    await session.end();
 
     assert.ok(seen.some((text) => text.includes("你是 arbor 的 agent。")));
     assert.ok(seen.some((text) => text.includes("窗口是一次性的。")));
     // The memory snapshot is part of the frozen prefix, not a system message of its own.
     assert.ok(seen.some((text) => text.includes("n9@1 构建")));
     assert.ok(!seen.some((text) => /coding agent|You are a coding/i.test(text)));
+  });
+
+  it("keeps the window open after the run ends, for a related input", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([fauxAssistantMessage("第一轮完成"), fauxAssistantMessage("第二轮完成")]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({
+      models,
+      control: controlOf(recorded, () => ({ callId: "x", ok: true, content: "" })),
+    });
+
+    const session = await backend.open(requestOf());
+    const seen: string[] = [];
+    const drain = (async () => {
+      for await (const event of session.events()) seen.push(event.kind);
+    })();
+    await waitFor(() => seen.includes("run_ended"));
+    assert.equal(session.state, "idle");
+    // A related input still reaches the warm prefix.
+    await session.steer({
+      kind: "inserted_task",
+      refs: ["t2"],
+      time: 1700000000000,
+      content: [{ kind: "data", fields: { content: "继续处理" } }],
+    });
+    await waitFor(() => seen.filter((kind) => kind === "run_ended").length === 2);
+    assert.equal(session.state, "idle");
+    await session.end();
+    await session.outcome();
+    await drain;
+    assert.equal(seen.at(-1), "ended");
   });
 
   it("lists only the models that take images", async () => {

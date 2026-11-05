@@ -101,7 +101,7 @@ export interface ToolServices {
   /** A message to every live window. */
   broadcast(from: WindowRef, text: string): Promise<number>;
   /** What is queued for this window and not inserted yet. */
-  inbox(window: WindowRef): Promise<readonly { ref: EventRef; from: WindowRef; text: string }[]>;
+  inbox(window: WindowRef): Promise<readonly { ref: Ref; from: WindowRef; text: string }[]>;
 }
 
 /** The context one call is made in, filled by the service layer. */
