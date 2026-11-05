@@ -391,6 +391,105 @@ describe("mount", () => {
   });
 });
 
+describe("reading and writing a mounted file", () => {
+  it("reads one over LayerFS's own fs.read, and answers null for a file that is not there", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    standin.write("ws1", "/notes.txt", "work in progress\n");
+    const mount = await ws.mount("ws1");
+
+    assert.equal(await mount.readFile?.("notes.txt"), "work in progress\n");
+    // An absolute path is taken as it is, so it escapes the mount's own
+    // directory exactly as it escapes a host workspace's path.
+    assert.equal(await mount.readFile?.("/notes.txt"), null);
+    assert.equal(await mount.readFile?.("missing.txt"), null);
+    assert.equal(await mount.readFile?.("../outside.txt"), null);
+    assert.deepEqual(pick(opsCalled("fs.read")[0] ?? {}, ["branch", "path", "startLine"]), {
+      branch: "ws1",
+      path: "/notes.txt",
+      startLine: 1,
+    });
+
+    await mount.release();
+    await ws.close();
+  });
+
+  it("writes one over LayerFS's own fs.write, which publishes the write as a Commit", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+    const before = standin.headOf("ws1");
+
+    await mount.writeFile?.("notes.txt", "hello\n");
+
+    assert.deepEqual(pick(opsCalled("fs.write")[0] ?? {}, ["branch", "path", "content", "message"]), {
+      branch: "ws1",
+      path: "/notes.txt",
+      content: "hello\n",
+      message: "write /notes.txt",
+    });
+    assert.notEqual(standin.headOf("ws1"), before);
+    assert.equal(await mount.readFile?.("notes.txt"), "hello\n");
+    await mount.release();
+    await ws.close();
+  });
+
+  it("makes the directory a write names before it writes", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    await mount.writeFile?.("src/main.ts", "export const main = 1;\n");
+
+    assert.deepEqual(pick(opsCalled("fs.mkdir")[0] ?? {}, ["branch", "path", "recursive", "message"]), {
+      branch: "ws1",
+      path: "/src",
+      recursive: true,
+      message: "write /src/main.ts",
+    });
+    assert.equal(await mount.readFile?.("src/main.ts"), "export const main = 1;\n");
+    await mount.release();
+    await ws.close();
+  });
+
+  it("refuses a write whose path escapes the workspace", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    const mount = await ws.mount("ws1");
+
+    await assert.rejects(() => mount.writeFile?.("../outside.txt", "x\n") as Promise<void>, (error: unknown) => {
+      assert.equal((error as { rule: string }).rule, "file.outside_workspace");
+      return true;
+    });
+    assert.equal(opsCalled("fs.write").length, 0);
+    await mount.release();
+    await ws.close();
+  });
+
+  it("refuses a write in a read-only view, and still reads one", async (t) => {
+    if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");
+    const ws = workspace();
+    await ws.create("c1");
+    standin.write("ws1", "/a.txt", "hello\n");
+    await ws.snapshot("ws1", "r902");
+
+    const view = await ws.mount("ws1@r902");
+
+    assert.equal(await view.readFile?.("a.txt"), "hello\n");
+    await assert.rejects(() => view.writeFile?.("a.txt", "changed\n") as Promise<void>, (error: unknown) => {
+      assert.equal((error as { rule: string }).rule, "mount.readonly");
+      return true;
+    });
+    assert.equal(opsCalled("fs.write").length, 0);
+    await view.release();
+    await ws.close();
+  });
+});
+
 describe("diff", () => {
   it("maps a commit diff onto arbor's files", async (t) => {
     if (!capabilities.sdk) return t.skip("the LayerFS JavaScript packages are not installed");

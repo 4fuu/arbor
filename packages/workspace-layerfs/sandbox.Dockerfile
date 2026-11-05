@@ -56,14 +56,16 @@ FROM ${BASE_IMAGE}
 
 # What the daemon needs at runtime, and nothing else:
 # - a C runtime: the binary links glibc, libm and libgcc_s;
-# - bash: the SDK's exec runs every workspace command through `bash -c`, and
-#   debian-slim ships dash and coreutils but not bash;
+# - bash, findutils and grep: the SDK's exec runs every workspace command
+#   through `bash -c`, and the file tools list, find and grep through it, so
+#   the image carries the commands an agent's `bash` call expects. debian-slim
+#   ships dash and coreutils, so bash, findutils and grep are added;
 # - SQLite is compiled into the binary (rusqlite bundled on Linux), so there
 #   are no headers or libraries to add;
 # - no fusermount: the daemon mounts FUSE itself through the /dev/fuse device
 #   and the CAP_SYS_ADMIN the Engine gives the container.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash libgcc-s1 \
+  && apt-get install -y --no-install-recommends bash findutils grep libgcc-s1 \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /layerfs/target/release/layerfs-daemon /usr/local/bin/layerfs-daemon

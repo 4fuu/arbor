@@ -114,7 +114,10 @@ speaking Engine API 1.48 or newer, the image a Sandbox runs, and a Store on
 ext4, xfs or btrfs. Podman's Docker-compatible socket is not enough: its
 compatibility API stops at 1.44, which LayerFS refuses before it sends a
 request, so `capabilities()` reports it unavailable with the version as the
-reason instead of a false green.
+reason instead of a false green. A rootless Engine is not enough either: the
+Sandbox's daemon runs in a user namespace and refuses a `/dev/fuse` it does
+not own, which a rootless Engine can only give it when the device belongs to
+the user the Engine runs as.
 
 The image a Sandbox runs is built from the pinned commit with the
 `sandbox.Dockerfile` beside this README, on the machine that has the Engine:
@@ -128,6 +131,31 @@ Name it by digest, never a tag: read it with `docker images --digests` and set
 (`LAYERFS_DAEMON`), which the SDK uploads into the container, so the image's
 base must carry a glibc at least as new as the host build's; the Dockerfile's
 `BASE_IMAGE` argument selects it.
+
+## Running the real tests
+
+`layerfs-workspace.real.test.ts` runs against a real Store, and mounts where
+the machine has them. It reads the deployment from the environment, so run it
+through mise, which `mise.toml` fills in:
+
+```sh
+mise x -- pnpm --filter @arbor/workspace-layerfs test
+```
+
+Two rules come from LayerFS itself, not from this package:
+
+- **One project per Store.** LayerFS initializes one project per Store, and a
+  project's Branches outlive the run that made them, so a full run needs a
+  Store no project was initialized in yet. Remove the Store file first, the
+  way LayerFS's own end-to-end runs use a fresh volume; a Store that already
+  holds a project skips the run and says so.
+- **The Store install runs as user 0.** LayerFS's installer refuses any other
+  user, so under rootless Docker the client runs inside a user namespace of
+  its own - `mise x -- unshare -Ur pnpm ...` - where it is user 0 and the
+  files it makes still belong to the unprivileged user on the host. The
+  Store's directory must also be private (mode 0700): the Sandbox's daemon
+  refuses a Store whose parent it does not own exclusively, which is what
+  `umask 077; mkdir -p .../global` gives it.
 
 ## Tests
 

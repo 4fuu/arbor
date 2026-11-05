@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { statSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -22,17 +23,27 @@ import type { LayerfsDeployment } from "./options.ts";
 const IMAGE = `sha256:${"a".repeat(64)}`;
 
 /** One fake Engine on a unix socket, and how to shut it down. */
-async function fakeEngine(answers: boolean, apiVersion: string | null) {
+async function fakeEngine(answers: boolean, apiVersion: string | null, securityOptions: string[] = []) {
   const directory = await mkdtemp(join(tmpdir(), "arbor-engine-"));
   const socket = join(directory, "engine.sock");
   const server: Server = createServer((request, response) => {
-    if (!answers || request.url !== "/version" || apiVersion === null) {
+    if (!answers || apiVersion === null) {
       response.writeHead(500);
       response.end("{}");
       return;
     }
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({ ApiVersion: apiVersion, Version: "29.9.2" }));
+    if (request.url === "/version") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ApiVersion: apiVersion, Version: "29.9.2" }));
+      return;
+    }
+    if (request.url === "/info") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ SecurityOptions: securityOptions }));
+      return;
+    }
+    response.writeHead(500);
+    response.end("{}");
   });
   await new Promise<void>((resolve) => server.listen(socket, resolve));
   return {
@@ -117,6 +128,34 @@ describe("the Docker Engine check", () => {
     const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, "arbor-sandbox:latest"));
     assert.equal(capabilities.docker, false);
     assert.match(capabilities.dockerReason ?? "", /LAYERFS_IMAGE/);
+  });
+
+  it("accepts a rootful Engine whose /dev/fuse belongs to root", async () => {
+    // A rootful Engine runs the Sandbox as root, so the host's root-owned
+    // device is the daemon's own: the ownership is not the Engine's.
+    const engine = await fakeEngine(true, "1.52", ["name=seccomp,profile=builtin", "name=cgroupns"]);
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, true);
+    assert.equal(capabilities.dockerReason, null);
+  });
+
+  it("reports a rootless Engine unavailable unless /dev/fuse is this user's", async () => {
+    // A rootless Engine runs the Sandbox in a user namespace, so a /dev/fuse
+    // owned by anyone else reaches the container unmapped and the daemon
+    // refuses it. A machine whose own user owns the device is the exception.
+    const engine = await fakeEngine(true, "1.52", ["name=rootless", "name=cgroupns"]);
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    const uid = process.getuid?.();
+    if (uid !== undefined && statSync("/dev/fuse").uid === uid) {
+      assert.equal(capabilities.docker, true);
+      assert.equal(capabilities.dockerReason, null);
+      return;
+    }
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", /rootless/);
+    assert.match(capabilities.dockerReason ?? "", /\/dev\/fuse/);
   });
 });
 

@@ -25,7 +25,7 @@ rust = "1.85.1"
 [env]
 LAYERFS_HOME = "{{config_root}}/.layerfs/home"
 LAYERFS_STORE_PATH = "{{env.HOME}}/.local/share/docker/volumes/arbor-store/_data/global/store.sqlite"
-LAYERFS_IMAGE = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+LAYERFS_IMAGE = "sha256:b49db0421d08a87f250b28099ac12f1a7a9d6e919d6a4bf4187d96082b7c5cb2"
 LAYERFS_DAEMON = "{{config_root}}/.layerfs/target/release/layerfs-daemon"
 LAYERFS_DOCKER = "{{env.XDG_RUNTIME_DIR}}/docker.sock"
 LAYERFS_VOLUME = "arbor-store"

@@ -75,7 +75,7 @@ function write(branch, path, text, message = "write") {
   if (record === undefined) throw new Error(`no such branch ${branch}`);
   const files = state.files.get(branch) ?? new Map();
   state.files.set(branch, files);
-  files.set(path, { type: "file", size: Buffer.byteLength(text, "utf8"), mode: 0o644 });
+  files.set(path, { type: "file", size: Buffer.byteLength(text, "utf8"), mode: 0o644, text });
   const id = commitId();
   const commit = {
     id,
@@ -124,7 +124,7 @@ const childrenOf = (branch, folder) => {
     const name = slash < 0 ? rest : rest.slice(0, slash);
     const child = slash < 0 ? prefix + name : `${prefix}${name}/`;
     if (seen.has(child)) continue;
-    seen.set(child, slash < 0 ? { type: entry.type, size: entry.size, mode: entry.mode } : { type: "directory" });
+    seen.set(child, slash < 0 ? { type: entry.type, size: entry.size, mode: entry.mode } : { type: "dir" });
   }
   return [...seen.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
 };
@@ -164,7 +164,11 @@ function answer(op, args) {
         forkedFrom: from,
         commits: head === null ? [] : [head],
       });
-      const copied = new Map(state.files.get(from) ?? new Map());
+      // Forking from a Commit copies the files of the Branch that holds it,
+      // which is what a read-only view of a snapshot reads.
+      const sourceFiles =
+        state.files.get(from) ?? (source?.branch === undefined ? undefined : state.files.get(source.branch));
+      const copied = new Map(sourceFiles ?? new Map());
       state.files.set(name, copied);
       return value({ kind: "Forked", branch: name, base, head });
     }
@@ -205,6 +209,49 @@ function answer(op, args) {
       const entry = (state.files.get(args.branch) ?? new Map()).get(args.path);
       if (entry === undefined) return refused("NoSuchPath", `${args.path} does not exist`);
       return value({ type: entry.type, inode: 1001, size: entry.size, mode: entry.mode, path: args.path });
+    }
+    case "fs.read": {
+      const record = state.branches.get(args.branch);
+      if (record === undefined) return refused("NoSuchBranch", `no Branch ${args.branch}`);
+      const entry = (state.files.get(args.branch) ?? new Map()).get(args.path);
+      if (entry === undefined) return refused("NoSuchPath", `${args.path} does not exist`);
+      if (entry.type !== "file") return refused("NotFile", `${args.path} is not a file`);
+      return value({
+        kind: "ok",
+        snapshot: `${args.branch}@${hex(12)}`,
+        root: hex(64),
+        path: args.path,
+        text: entry.text ?? "",
+        startLine: args.startLine ?? 1,
+        endLine: args.startLine ?? 1,
+        lineTruncated: false,
+        truncated: false,
+        nextLine: null,
+        size: entry.size,
+      });
+    }
+    case "fs.write": {
+      const record = state.branches.get(args.branch);
+      if (record === undefined) return refused("NoSuchBranch", `no Branch ${args.branch}`);
+      const text =
+        typeof args.content === "string"
+          ? args.content
+          : Buffer.from(args.bytes.base64, "base64").toString("utf8");
+      const id = write(args.branch, args.path, text, args.message ?? "write");
+      return value({ kind: "Committed", head: id, commit: state.commits.get(id) });
+    }
+    case "fs.mkdir": {
+      const record = state.branches.get(args.branch);
+      if (record === undefined) return refused("NoSuchBranch", `no Branch ${args.branch}`);
+      const files = state.files.get(args.branch) ?? new Map();
+      state.files.set(args.branch, files);
+      // recursive: every missing parent is made, as the real call does.
+      let folder = "";
+      for (const part of args.path.split("/").filter(Boolean)) {
+        folder += `/${part}`;
+        if (!files.has(folder)) files.set(folder, { type: "dir", size: 0, mode: 0o755, text: "" });
+      }
+      return value({ kind: "Committed", head: headOf(args.branch), commit: null });
     }
     case "sandbox.create": {
       const used = new Set(state.sandboxes.map((sandbox) => Number(sandbox.sandbox)));

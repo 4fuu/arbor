@@ -15,7 +15,7 @@
  * minors below the floor, and is reported unavailable with that as the reason.
  */
 
-import { existsSync, statfsSync } from "node:fs";
+import { existsSync, statSync, statfsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { request as httpRequest } from "node:http";
 import type { LayerfsDeployment, LayerfsWorkspaceOptions } from "./options.ts";
@@ -116,14 +116,10 @@ function apiMinorOf(body: string): number | null {
   return match === null ? null : Number(match[1]);
 }
 
-/**
- * One unversioned `GET /version` over the Engine's socket: the same read
- * LayerFS's client negotiates with. Null when the socket does not answer it
- * readably - a dead or non-Docker socket cannot run a mount either way.
- */
-function engineApiMinor(socket: string): Promise<number | null> {
+/** One read over the Engine's socket, or null when it does not answer readably. */
+function engineRead(socket: string, path: string): Promise<string | null> {
   return new Promise((resolve) => {
-    const pending = httpRequest({ socketPath: socket, method: "GET", path: "/version" }, (response) => {
+    const pending = httpRequest({ socketPath: socket, method: "GET", path }, (response) => {
       if (response.statusCode !== 200) {
         response.resume();
         resolve(null);
@@ -134,7 +130,7 @@ function engineApiMinor(socket: string): Promise<number | null> {
       response.on("data", (chunk: string) => {
         body += chunk;
       });
-      response.on("end", () => resolve(apiMinorOf(body)));
+      response.on("end", () => resolve(body));
       response.on("error", () => resolve(null));
     });
     pending.setTimeout(VERSION_TIMEOUT_MS, () => {
@@ -147,9 +143,42 @@ function engineApiMinor(socket: string): Promise<number | null> {
 }
 
 /**
+ * One unversioned `GET /version` over the Engine's socket: the same read
+ * LayerFS's client negotiates with. Null when the socket does not answer it
+ * readably - a dead or non-Docker socket cannot run a mount either way.
+ */
+function engineApiMinor(socket: string): Promise<number | null> {
+  return engineRead(socket, "/version").then((body) => (body === null ? null : apiMinorOf(body)));
+}
+
+/**
+ * Whether the Engine is rootless, from the `GET /info` its daemon answers, or
+ * null when it does not answer readably.
+ */
+function engineRootless(socket: string): Promise<boolean | null> {
+  return engineRead(socket, "/info").then((body) => {
+    if (body === null) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body) as unknown;
+    } catch {
+      return null;
+    }
+    const options = (parsed as { SecurityOptions?: unknown } | null)?.SecurityOptions;
+    if (!Array.isArray(options)) return null;
+    // Docker reports each option as `name=<key>`, with a `,profile=` suffix on
+    // some: the rootless one is `name=rootless`.
+    return options.some(
+      (option) => option === "rootless" || (typeof option === "string" && option.startsWith("name=rootless")),
+    );
+  });
+}
+
+/**
  * Why this machine cannot run a mount, or null when it can: an Engine socket
- * that answers, an image named by exact digest, and an Engine API at least the
- * floor LayerFS speaks. Each reason names the rule that refused the call.
+ * that answers, an image named by exact digest, an Engine API at least the
+ * floor LayerFS speaks, and - on a rootless Engine - a `/dev/fuse` the
+ * Sandbox's daemon will own. Each reason names the rule that refused it.
  */
 export async function dockerAvailable(deployment: LayerfsDeployment | undefined): Promise<string | null> {
   const socket = dockerSocketOf(deployment);
@@ -164,6 +193,20 @@ export async function dockerAvailable(deployment: LayerfsDeployment | undefined)
       `the Docker Engine at ${socket} answers API 1.${minor}, older than the ` +
       `1.${DOCKER_API_FLOOR} (Docker Engine 28.0) LayerFS requires`
     );
+  }
+  // A rootless Engine runs the Sandbox in a user namespace, so the host's
+  // /dev/fuse reaches the container unmapped unless the device is owned by
+  // the user the Engine runs as - and the daemon refuses a device it does
+  // not own, rather than serving an unprotected mount.
+  if ((await engineRootless(socket)) === true && existsSync("/dev/fuse")) {
+    const uid = process.getuid?.();
+    const owner = statSync("/dev/fuse").uid;
+    if (uid !== undefined && owner !== uid) {
+      return (
+        `the Docker Engine at ${socket} is rootless, and /dev/fuse belongs to another user: ` +
+        `the Sandbox's daemon runs in a user namespace and refuses a device it does not own`
+      );
+    }
   }
   return null;
 }

@@ -47,7 +47,7 @@ import {
 import { mkdtempSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { layerfsCapabilities, type LayerfsCapabilities } from "./capabilities.ts";
 import type { LayerfsClient, LayerfsError, LayerfsWorkspaceHandle } from "./layerfs-sdk.ts";
 import { loadLayerfsSdk } from "./layerfs-sdk.ts";
@@ -566,6 +566,71 @@ export class LayerfsWorkspace implements Workspace {
           }
         });
       },
+      /**
+       * Read one file over LayerFS's own `fs.read`, which answers the
+       * workspace's committed state - what its last snapshot holds - without a
+       * command in the Sandbox. `null` is a file that is not there.
+       */
+      readFile: async (path: string): Promise<string | null> => {
+        const target = layerfsPathOf(mounted.path, path);
+        if (target === null) return null;
+        try {
+          const read = await client.fs.read(branch, target);
+          return read.text;
+        } catch (error) {
+          // A path that is not there, and one that is a folder, are the same
+          // answer the host path gives: nothing to read.
+          const code = (error as LayerfsError).code;
+          if (code === "NoSuchPath" || code === "NotFile") return null;
+          throw refusal(
+            error,
+            "workspace.read",
+            `the file ${path} could not be read in workspace ${parsed.workspace}`,
+            "check that the workspace still holds the file, then read it again",
+          );
+        }
+      },
+      /**
+       * Write one file over LayerFS's own `fs.write`, which publishes the
+       * write as a Commit on the workspace's Branch, so the next snapshot
+       * holds it. A view refuses: it must never publish anything.
+       */
+      writeFile: async (path: string, text: string): Promise<void> => {
+        if (readOnly) {
+          throw arborError({
+            code: "refused",
+            rule: "mount.readonly",
+            message: `${ref} is a read-only view, so nothing can be written in it`,
+            nextAction: "mount the workspace itself to write in it",
+            refs: [ref],
+          });
+        }
+        const target = layerfsPathOf(mounted.path, path);
+        if (target === null || target === "/") {
+          throw arborError({
+            code: "refused",
+            rule: "file.outside_workspace",
+            message: `${path} is not inside workspace ${parsed.workspace}`,
+            nextAction: "pass a path inside the workspace, such as notes.txt",
+            refs: [ref],
+          });
+        }
+        const folder = dirname(target);
+        const message = `write ${target}`;
+        try {
+          // The parent is made first: a write creates its directory, and a
+          // folder that is already there publishes nothing.
+          if (folder !== "/") await client.fs.mkdir(branch, folder, message);
+          await client.fs.write(branch, target, text, message);
+        } catch (error) {
+          throw refusal(
+            error,
+            "workspace.write",
+            `the file ${path} could not be written in workspace ${parsed.workspace}`,
+            "look at what LayerFS reports, then write the file again",
+          );
+        }
+      },
       release: async () => {
         await this.release(id);
       },
@@ -678,8 +743,10 @@ export class LayerfsWorkspace implements Workspace {
       for (;;) {
         const page = await client.fs.list(ref, folder, PAGE_SIZE, offset);
         for (const entry of page.items) {
+          // LayerFS names a folder "dir"; anything that is not a file and not
+          // a folder - a symbolic link - is not walked.
           if (entry.type === "file") files += 1;
-          else if (entry.type === "directory") folders.push(entry.path);
+          else if (entry.type === "dir") folders.push(entry.path);
         }
         offset += page.items.length;
         if (!page.hasMore || page.items.length === 0) break;
@@ -687,6 +754,21 @@ export class LayerfsWorkspace implements Workspace {
     }
     return files;
   }
+}
+
+/**
+ * One tool path as the LayerFS path it names inside the mounted workspace, or
+ * null when it escapes it. The rules are the host path's own: an absolute
+ * path is taken as it is, a relative one resolves against the mount's
+ * directory, and the result must be that directory or something inside it.
+ * LayerFS paths start at the workspace root, so the mount's directory is
+ * stripped.
+ */
+function layerfsPathOf(root: string, path: string): string | null {
+  if (path === "") return null;
+  const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
+  if (wanted !== root && !wanted.startsWith(`${root}/`)) return null;
+  return wanted === root ? "/" : wanted.slice(root.length);
 }
 
 function clampPage(limit: number | undefined): number {

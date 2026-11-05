@@ -162,7 +162,24 @@ export interface LayerfsClient {
     }>;
   };
   fs: {
+    read(
+      ref: string,
+      path: string,
+      startLine?: number,
+      endLine?: number,
+    ): Promise<{ text: string; nextLine: number | null }>;
     list(ref: string, path?: string, pageSize?: number, pagePos?: number): Promise<LayerfsPage<LayerfsEntry>>;
+    write(
+      branch: string,
+      path: string,
+      content: string,
+      message?: string,
+    ): Promise<{ kind: string; head: string; commit?: LayerfsCommit }>;
+    mkdir(
+      branch: string,
+      path: string,
+      message?: string,
+    ): Promise<{ kind: string; head: string; commit?: LayerfsCommit }>;
   };
   sandbox: {
     create(options?: { image?: string }): Promise<{ sandbox: string; image: string }>;
