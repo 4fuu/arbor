@@ -106,6 +106,13 @@ export interface ScheduledTask {
   task?: Omit<TaskInput, "kind">;
 }
 
+/**
+ * What a schedule's update may change: anything it was created with. A
+ * schedule's ref, its record of when it last fired and whether it is paused
+ * stay the host's own.
+ */
+export type ScheduledTaskUpdate = Partial<ScheduledTaskInput>;
+
 export interface Scheduler {
   /** Which waiting inputs may enter a running window now. */
   insertion(request: InsertionRequest): Promise<InsertionPlan>;
@@ -114,6 +121,13 @@ export interface Scheduler {
   admission(request: AdmissionRequest): Promise<AdmissionPlan>;
 
   schedule(input: ScheduledTaskInput): Promise<TaskRef>;
+
+  /**
+   * Change a recorded schedule: its name, its first time, its repeat rule, its
+   * skip periods, its targets or the task a firing dispatches. Returns the
+   * changed schedule, or null when the ref names none.
+   */
+  update(ref: TaskRef, changes: ScheduledTaskUpdate): Promise<ScheduledTask | null>;
 
   cancel(ref: TaskRef): Promise<void>;
 

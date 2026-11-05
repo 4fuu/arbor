@@ -11,6 +11,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { isAbsolute, join, normalize, resolve, sep } from "node:path";
 import type {
+  Block,
   CallContext,
   WorkspaceMount,
   Event,
@@ -20,14 +21,20 @@ import type {
   NoteRef,
   Page,
   Ref,
+  ScheduledTaskInput,
+  ScheduledTaskUpdate,
+  SkipPeriod,
+  Target,
+  TaskInput,
+  TaskRef,
   ToolCall,
   ToolGroup,
   ToolResult,
   WindowRef,
 } from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
-import type { LiveWindow, ToolServices } from "../host.ts";
-import { moduleSpec } from "../host.ts";
+import { formatTime, textOf } from "@arbor/prompt";
+import type { LiveWindow, TaskSummary, ToolServices } from "../host.ts";
+import { moduleSpec, refused } from "../host.ts";
 
 /** `journal`: search, show, around, trace, links. */
 export class JournalModuleGroup implements ToolGroup {
@@ -441,6 +448,248 @@ export class NotesModuleGroup implements ToolGroup {
   }
 }
 
+/** `tasks`: list, show. The tasks the host dispatched (docs/dispatch.md#tasks). */
+export class TasksModuleGroup implements ToolGroup {
+  readonly id = "modules.tasks";
+
+  private readonly services: ToolServices;
+
+  constructor(services: ToolServices) {
+    this.services = services;
+  }
+
+  tools(): readonly [] {
+    return [];
+  }
+
+  modules(): readonly ModuleSpec[] {
+    return [
+      moduleSpec(this.services.table, "tasks", [
+        { name: "tasks.list", signature: "tasks.list(limit?)" },
+        { name: "tasks.show", signature: "tasks.show(t…)" },
+      ]),
+    ];
+  }
+
+  async call(request: ToolCall, _context: CallContext): Promise<ToolResult> {
+    const table = this.services.table;
+    const args = request.args;
+    switch (request.name) {
+      case "tasks.list": {
+        const tasks = await this.services.tasks(numberArg(args, "limit"));
+        const lines = tasks.map((task) => this.line(task));
+        return {
+          callId: request.callId,
+          ok: true,
+          content: lines.length === 0 ? textOf(table, "result.list.empty") : lines.join("\n"),
+        };
+      }
+      case "tasks.show": {
+        const records = await this.services.task(taskRefsArg(args, "ref"));
+        const lines: string[] = [];
+        for (const record of records) {
+          lines.push(this.line(record));
+          // The outside events the batch was made of, as the journal holds them.
+          for (const event of record.events) lines.push(`${event.ref} ${event.kind} ${bodyOf(event)}`);
+        }
+        return {
+          callId: request.callId,
+          ok: true,
+          content: lines.length === 0 ? textOf(table, "result.list.empty") : lines.join("\n"),
+        };
+      }
+      default:
+        return this.notOwned(request);
+    }
+  }
+
+  /** One task as one line: its ref, its kind, why it is one, its targets and its time. */
+  private line(task: TaskSummary): string {
+    return textOf(this.services.table, "result.tasks.line", {
+      ref: task.ref,
+      kind: task.kind,
+      reason: task.reason,
+      targets: task.targets.join(","),
+      time: formatTime(task.time),
+    });
+  }
+
+  private notOwned(request: ToolCall): ToolResult {
+    return {
+      callId: request.callId,
+      ok: false,
+      content: "",
+      error: {
+        rule: "module.function.unknown",
+        message: textOf(this.services.table, "refused.unknown_function", {
+          module: "tasks",
+          name: request.name,
+        }),
+        nextAction: textOf(this.services.table, "next.unknown_function"),
+      },
+    };
+  }
+}
+
+/** `schedule`: list, create, update, cancel (docs/dispatch.md#scheduled-tasks). */
+export class ScheduleModuleGroup implements ToolGroup {
+  readonly id = "modules.schedule";
+
+  private readonly services: ToolServices;
+
+  constructor(services: ToolServices) {
+    this.services = services;
+  }
+
+  tools(): readonly [] {
+    return [];
+  }
+
+  modules(): readonly ModuleSpec[] {
+    return [
+      moduleSpec(this.services.table, "schedule", [
+        { name: "schedule.list", signature: "schedule.list()" },
+        { name: "schedule.create", signature: "schedule.create({ name?, firstAt, repeat?, skipDaily?, targets?, task })" },
+        { name: "schedule.update", signature: "schedule.update({ ref, name?, firstAt?, repeat?, skipDaily?, targets?, task? })" },
+        { name: "schedule.cancel", signature: "schedule.cancel({ ref })" },
+      ]),
+    ];
+  }
+
+  async call(request: ToolCall, _context: CallContext): Promise<ToolResult> {
+    const table = this.services.table;
+    const args = request.args;
+    switch (request.name) {
+      case "schedule.list": {
+        const schedules = await this.services.schedules();
+        const lines = schedules.map((task) =>
+          textOf(table, "result.schedule.line", {
+            ref: task.ref,
+            name: task.name ?? "",
+            time: formatTime(task.nextAt),
+            repeat: this.repeatText(task.repeat),
+            targets: task.targets.join(","),
+          }),
+        );
+        return {
+          callId: request.callId,
+          ok: true,
+          content: lines.length === 0 ? textOf(table, "result.list.empty") : lines.join("\n"),
+        };
+      }
+      case "schedule.create":
+        return this.create(request);
+      case "schedule.update":
+        return this.update(request);
+      case "schedule.cancel": {
+        const ref = taskRefArg(args, "ref");
+        if (ref === undefined) return this.badInput("ref");
+        await this.services.cancelSchedule(ref);
+        return {
+          callId: request.callId,
+          ok: true,
+          content: textOf(table, "result.schedule.cancelled", { ref }),
+        };
+      }
+      default:
+        return this.notOwned(request);
+    }
+  }
+
+  /** `schedule.create`: one new scheduled task, from what the script named. */
+  private async create(request: ToolCall): Promise<ToolResult> {
+    const table = this.services.table;
+    const args = request.args;
+    const firstAt = numberArg(args, "firstAt");
+    if (firstAt === undefined) return this.badInput("firstAt");
+    const repeat = repeatArg(args);
+    if (repeat === "invalid") return this.badInput("repeat");
+    const task = taskArg(args, "task", firstAt);
+    if (task === undefined) return this.badInput("task");
+    const name = stringArg(args, "name");
+    const skipDaily = skipDailyArg(args);
+    const targets = targetsArg(args);
+    const input: ScheduledTaskInput = {
+      firstAt,
+      ...(name === "" ? {} : { name }),
+      ...(repeat === undefined ? {} : { repeat }),
+      ...(skipDaily.length === 0 ? {} : { skipDaily }),
+      ...(targets.length === 0 ? {} : { targets }),
+      task,
+    };
+    const ref = await this.services.schedule(input);
+    return {
+      callId: request.callId,
+      ok: true,
+      content: textOf(table, "result.schedule.created", { ref }),
+    };
+  }
+
+  /** `schedule.update`: only the fields the script named change. */
+  private async update(request: ToolCall): Promise<ToolResult> {
+    const table = this.services.table;
+    const args = request.args;
+    const ref = taskRefArg(args, "ref");
+    if (ref === undefined) return this.badInput("ref");
+    const repeat = repeatArg(args);
+    if (repeat === "invalid") return this.badInput("repeat");
+    const firstAt = numberArg(args, "firstAt");
+    const task = taskArg(args, "task", firstAt ?? 0);
+    const name = stringArg(args, "name");
+    const skipDaily = skipDailyArg(args);
+    const targets = targetsArg(args);
+    const changes: ScheduledTaskUpdate = {
+      ...(name === "" ? {} : { name }),
+      ...(firstAt === undefined ? {} : { firstAt }),
+      ...(repeat === undefined ? {} : { repeat }),
+      ...(skipDaily.length === 0 ? {} : { skipDaily }),
+      ...(targets.length === 0 ? {} : { targets }),
+      ...(task === undefined ? {} : { task }),
+    };
+    const updated = await this.services.updateSchedule(ref, changes);
+    if (updated === null) return this.notFound(ref);
+    return {
+      callId: request.callId,
+      ok: true,
+      content: textOf(table, "result.schedule.updated", { ref }),
+    };
+  }
+
+  /** One repeat rule as one line: only once, a period, or a daily clock time. */
+  private repeatText(repeat: ScheduledTaskInput["repeat"]): string {
+    const table = this.services.table;
+    if (repeat === undefined) return textOf(table, "result.schedule.once");
+    return "everyMs" in repeat
+      ? textOf(table, "result.schedule.every_ms", { ms: repeat.everyMs })
+      : textOf(table, "result.schedule.daily", { time: repeat.dailyAt });
+  }
+
+  /** One argument the script did not name in a shape this module can read. */
+  private badInput(field: string): ToolResult {
+    return refused("schedule.input.invalid", this.services.table, "schedule.input", { field });
+  }
+
+  private notFound(ref: TaskRef): ToolResult {
+    return refused("schedule.not_found", this.services.table, "schedule.notfound", { ref });
+  }
+
+  private notOwned(request: ToolCall): ToolResult {
+    return {
+      callId: request.callId,
+      ok: false,
+      content: "",
+      error: {
+        rule: "module.function.unknown",
+        message: textOf(this.services.table, "refused.unknown_function", {
+          module: "schedule",
+          name: request.name,
+        }),
+        nextAction: textOf(this.services.table, "next.unknown_function"),
+      },
+    };
+  }
+}
+
 /** `workspace`: snapshots, mount, diff, grep, find, ls. */
 export class WorkspaceModuleGroup implements ToolGroup {
   readonly id = "modules.workspace";
@@ -686,6 +935,87 @@ function eventRefsArg(args: Record<string, unknown>, name: string): EventRef[] {
 function windowArg(args: Record<string, unknown>, name: string): WindowRef {
   const value = refArg(args, name);
   return /^c\d+$/.test(value) ? (value as WindowRef) : ("c0" as WindowRef);
+}
+
+/** The task refs an argument names: one, or a list of them. */
+function taskRefsArg(args: Record<string, unknown>, name: string): TaskRef[] {
+  const value = args[name];
+  if (Array.isArray(value)) {
+    return value.flatMap((one) =>
+      typeof one === "string" && /^t\d+$/.test(one) ? [one as TaskRef] : [],
+    );
+  }
+  const single = refArg(args, name);
+  return /^t\d+$/.test(single) ? [single as TaskRef] : [];
+}
+
+/** One task ref, or undefined when the argument is not one. */
+function taskRefArg(args: Record<string, unknown>, name: string): TaskRef | undefined {
+  return taskRefsArg(args, name)[0];
+}
+
+/**
+ * One repeat rule, `invalid` when the argument is not one this module can read:
+ * a period in milliseconds, or a clock time a firing repeats at daily.
+ */
+function repeatArg(args: Record<string, unknown>): ScheduledTaskInput["repeat"] | "invalid" | undefined {
+  const value = args.repeat;
+  if (value === undefined) return undefined;
+  if (typeof value !== "object" || value === null) return "invalid";
+  const repeat = value as { everyMs?: unknown; dailyAt?: unknown };
+  if (typeof repeat.everyMs === "number" && Number.isFinite(repeat.everyMs) && repeat.everyMs > 0) {
+    return { everyMs: repeat.everyMs };
+  }
+  if (typeof repeat.dailyAt === "string" && /^\d{1,2}:\d{2}$/u.test(repeat.dailyAt.trim())) {
+    return { dailyAt: repeat.dailyAt.trim() };
+  }
+  return "invalid";
+}
+
+/** The daily skip periods an argument names. */
+function skipDailyArg(args: Record<string, unknown>): readonly SkipPeriod[] {
+  const value = args.skipDaily;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((one) => {
+    if (typeof one !== "object" || one === null) return [];
+    const period = one as { from?: unknown; to?: unknown };
+    return typeof period.from === "string" && typeof period.to === "string"
+      ? [{ from: period.from, to: period.to }]
+      : [];
+  });
+}
+
+/** The strings an argument names, or none when it names something else. */
+function stringsArg(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((one): one is string => typeof one === "string" && one !== "");
+}
+
+/** The targets an argument names, or none when it names something else. */
+function targetsArg(args: Record<string, unknown>): readonly Target[] {
+  return stringsArg(args.targets);
+}
+
+/**
+ * What a scheduled firing dispatches. Its time defaults to the firing's own, so
+ * a script names what the task says and why and nothing else; the blocks it
+ * carries are data, exactly as the host holds them.
+ */
+function taskArg(
+  args: Record<string, unknown>,
+  name: string,
+  at: number,
+): Omit<TaskInput, "kind"> | undefined {
+  const value = args[name];
+  if (typeof value !== "object" || value === null) return undefined;
+  const task = value as { reason?: unknown; targets?: unknown; time?: unknown; content?: unknown };
+  if (typeof task.reason !== "string" || task.reason === "" || !Array.isArray(task.content)) return undefined;
+  return {
+    reason: task.reason,
+    targets: stringsArg(task.targets),
+    time: typeof task.time === "number" && Number.isFinite(task.time) ? task.time : at,
+    content: task.content as readonly Block[],
+  };
 }
 
 /**

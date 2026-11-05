@@ -31,8 +31,14 @@ import type {
   Page,
   ParameterSpec,
   Ref,
+  ScheduledTask,
+  ScheduledTaskInput,
+  ScheduledTaskUpdate,
   SearchHit,
   Supervisor,
+  Target,
+  TaskKind,
+  TaskRef,
   TextTable,
   ToolResult,
   WindowRef,
@@ -68,6 +74,24 @@ export interface SendOutcome {
   event: EventRef;
   /** Events on the conversation the window has not seen yet. */
   behind: number;
+}
+
+/** One task as the host recorded it. */
+export interface TaskSummary {
+  ref: TaskRef;
+  kind: TaskKind;
+  /** Why it is a task, for the board and the judge. */
+  reason: string;
+  targets: readonly Target[];
+  time: number;
+  /** The source that made it, when one did. */
+  source?: string;
+}
+
+/** One task with the outside events it batched. */
+export interface TaskRecord extends TaskSummary {
+  /** The events the batch was made of, oldest first. */
+  events: readonly Event[];
 }
 
 /** What a group needs from the service layer. Each group takes what it uses. */
@@ -121,6 +145,20 @@ export interface ToolServices {
   broadcast(from: WindowRef, text: string): Promise<number>;
   /** What is queued for this window and not inserted yet. */
   inbox(window: WindowRef): Promise<readonly { ref: Ref; from: WindowRef; text: string }[]>;
+
+  /** The tasks the host dispatched, newest first (docs/dispatch.md#tasks). */
+  tasks(limit?: number): Promise<readonly TaskSummary[]>;
+  /** The tasks the refs name, each with the outside events it batched. */
+  task(refs: readonly TaskRef[]): Promise<readonly TaskRecord[]>;
+
+  /** The scheduled tasks, soonest first (docs/dispatch.md#scheduled-tasks). */
+  schedules(): Promise<readonly ScheduledTask[]>;
+  /** Record one scheduled task; the ref it returns names it. */
+  schedule(input: ScheduledTaskInput): Promise<TaskRef>;
+  /** Change one scheduled task; null when the ref names none. */
+  updateSchedule(ref: TaskRef, changes: ScheduledTaskUpdate): Promise<ScheduledTask | null>;
+  /** Cancel one scheduled task. */
+  cancelSchedule(ref: TaskRef): Promise<void>;
 
   // ---- the environment (docs/environment.md) ------------------------------
 

@@ -31,6 +31,8 @@ import {
   EnvModuleGroup,
   JournalModuleGroup,
   NotesModuleGroup,
+  ScheduleModuleGroup,
+  TasksModuleGroup,
   WindowsModuleGroup,
   WorkspaceModuleGroup,
 } from "./modules/modules.ts";
@@ -57,6 +59,8 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new WindowsModuleGroup(options.services),
       new BoardModuleGroup(options.services),
       new NotesModuleGroup(options.services),
+      new TasksModuleGroup(options.services),
+      new ScheduleModuleGroup(options.services),
       new WorkspaceModuleGroup(options.services),
       new EnvToolGroup(options.services),
       new EnvModuleGroup(options.services),

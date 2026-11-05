@@ -20,6 +20,7 @@ import type {
   QueuedInput,
   ScheduledTask,
   ScheduledTaskInput,
+  ScheduledTaskUpdate,
   Scheduler,
   Settings,
   SkipPeriod,
@@ -227,6 +228,37 @@ export class RuleScheduler implements Scheduler {
   async cancel(ref: TaskRef): Promise<void> {
     this.tasks.delete(ref);
     this.arm();
+  }
+
+  /**
+   * Change a recorded schedule. A first time that moves, or a repeat rule that
+   * is added, re-times the next firing from the new first time; anything else
+   * leaves the next firing where it stands, and a skip period the change names
+   * still pushes a firing that falls inside it past the period
+   * (docs/dispatch.md#scheduled-tasks).
+   */
+  async update(ref: TaskRef, changes: ScheduledTaskUpdate): Promise<ScheduledTask | null> {
+    const found = this.tasks.get(ref);
+    if (found === undefined) return null;
+    const merged: ScheduledTask = {
+      ...found,
+      ...(changes.name === undefined ? {} : { name: changes.name }),
+      firstAt: changes.firstAt ?? found.firstAt,
+      ...(changes.repeat === undefined ? {} : { repeat: changes.repeat }),
+      ...(changes.skipDaily === undefined ? {} : { skipDaily: [...changes.skipDaily] }),
+      ...(changes.targets === undefined ? {} : { targets: [...changes.targets] }),
+      ...(changes.task === undefined ? {} : { task: changes.task }),
+    };
+    const retimed =
+      changes.firstAt !== undefined || (changes.repeat !== undefined && found.repeat === undefined);
+    const nextAt = retimed ? Math.max(merged.firstAt, this.clock()) + this.jitter() : found.nextAt;
+    const stored: ScheduledTask = {
+      ...merged,
+      nextAt: insideSkip(nextAt, merged.skipDaily) ? skipEnd(nextAt, merged.skipDaily) : nextAt,
+    };
+    this.tasks.set(ref, stored);
+    this.arm();
+    return stored;
   }
 
   async list(): Promise<readonly ScheduledTask[]> {

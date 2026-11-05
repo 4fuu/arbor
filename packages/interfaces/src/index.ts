@@ -215,6 +215,7 @@ export type {
   SkipPeriod,
   ScheduledTaskInput,
   ScheduledTask,
+  ScheduledTaskUpdate,
   Scheduler,
 } from "./scheduler.ts";
 

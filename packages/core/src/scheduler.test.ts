@@ -254,6 +254,77 @@ describe("scheduled tasks", () => {
     assert.equal(after[0]?.nextAt, Date.UTC(2026, 10, 5, 11, 0, 0), "the firing moves to the period's end");
   });
 
+  it("changes a schedule's repeat rule, and re-times it from the new first time", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule());
+    const [before] = await host.scheduler.list();
+
+    host.at(12_000);
+    const updated = await host.scheduler.update(before?.ref ?? ("t0" as TaskRef), {
+      firstAt: 40_000,
+      repeat: { dailyAt: "09:00" },
+    });
+
+    assert.deepEqual(updated?.repeat, { dailyAt: "09:00" });
+    assert.equal(updated?.firstAt, 40_000);
+    assert.equal(updated?.nextAt, 40_000, "a first time that moves re-times the next firing");
+    assert.deepEqual(updated?.targets, ["qq:group:1"], "what the change did not name is kept");
+  });
+
+  it("adds a repeat rule to a one-off schedule, which then fires again", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule());
+    const [before] = await host.scheduler.list();
+
+    const updated = await host.scheduler.update(before?.ref ?? ("t0" as TaskRef), {
+      repeat: { everyMs: 5_000 },
+    });
+
+    assert.deepEqual(updated?.repeat, { everyMs: 5_000 });
+    assert.equal(updated?.nextAt, 10_000);
+    host.at(10_000);
+    host.timers.fireAll();
+    await settle();
+
+    assert.equal(host.fired.length, 1);
+    assert.equal((await host.scheduler.list())[0]?.nextAt, 15_000, "it now repeats");
+  });
+
+  it("leaves the next firing where it stands when only the task changes", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule({ repeat: { everyMs: 5_000 } }));
+    const [before] = await host.scheduler.list();
+
+    host.at(10_000);
+    host.timers.fireAll();
+    await settle();
+    const updated = await host.scheduler.update(before?.ref ?? ("t0" as TaskRef), {
+      task: {
+        reason: "a changed check",
+        targets: ["qq:group:2"],
+        time: 15_000,
+        content: [{ kind: "data", fields: { content: "改过的检查" } }],
+      },
+    });
+
+    assert.equal(updated?.nextAt, 15_000);
+    assert.equal(updated?.task?.reason, "a changed check");
+    host.at(15_000);
+    host.timers.fireAll();
+    await settle();
+
+    assert.equal(host.fired[1]?.reason, "a changed check");
+    assert.deepEqual(host.fired[1]?.targets, ["qq:group:2"]);
+  });
+
+  it("changes nothing when the ref names no schedule", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule());
+
+    assert.equal(await host.scheduler.update("t99" as TaskRef, { name: "改名" }), null);
+    assert.equal((await host.scheduler.list())[0]?.name, undefined);
+  });
+
   it("restores what it was made for after a restart", async () => {
     const host = scheduler();
     const stored: ScheduledTask = {

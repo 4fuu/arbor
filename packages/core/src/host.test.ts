@@ -166,7 +166,7 @@ describe("one window end to end", () => {
     assert.ok(tools.includes("bash"));
     assert.ok(tools.includes("code_exec"));
     const modules = backend.opened[0]?.modules.map((module) => module.name) ?? [];
-    assert.deepEqual(modules, ["journal", "windows", "board", "workspace"]);
+    assert.deepEqual(modules, ["journal", "windows", "board", "tasks", "schedule", "workspace"]);
   });
 
   it("ends the window with a handoff and opens a continuation that carries it", async () => {
@@ -485,5 +485,85 @@ describe("one window end to end", () => {
     const board = await arbor.search("查看");
     assert.equal(board.windows.length, 1);
     assert.equal(board.windows[0]?.window, record.window);
+  });
+
+  it("serves the tasks module from the records dispatch wrote", async () => {
+    const { arbor, journal, backend } = await host();
+    // Two batches, on two targets, so each is one task: the host records a task
+    // and the outside events it batches before anything decides about them
+    // (docs/dispatch.md#tasks).
+    backend.script([{ text: "完成" }]);
+    await arbor.ingest([
+      {
+        source: "qq",
+        target: "qq:group:1",
+        time: 1_700_000_001_000,
+        content: [{ kind: "data", fields: { content: "在吗" } }],
+      },
+    ]);
+    await backend.finished();
+    backend.script([{ text: "完成" }]);
+    await arbor.ingest([
+      {
+        source: "qq",
+        target: "qq:group:2",
+        time: 1_700_000_002_000,
+        content: [{ kind: "data", fields: { content: "看下 CI" } }],
+      },
+    ]);
+    await backend.finished();
+
+    const listed = await arbor.services.tasks();
+    assert.equal(listed.length, 2);
+    assert.equal(listed[0]?.ref, "t2", "the newest task comes first");
+    assert.equal(listed[0]?.kind, "batch");
+    assert.equal(listed[0]?.reason, "a message arrived in qq:group:2");
+    assert.deepEqual(listed[0]?.targets, ["qq:group:2"]);
+    assert.equal(listed[0]?.source, "qq");
+    assert.equal(listed[1]?.ref, "t1");
+    const bounded = await arbor.services.tasks(1);
+    assert.deepEqual(bounded.map((one) => one.ref), ["t2"]);
+
+    const shown = await arbor.services.task(["t1", "t404"]);
+    assert.equal(shown.length, 1, "a ref that names no task is left out");
+    const bodies = (shown[0]?.events ?? []).map((event) => event.body);
+    assert.equal(bodies.length, 1, "the task's batch comes with it");
+    assert.ok(bodies[0]?.includes("在吗"));
+    const inputs = await journal.list({ kinds: ["input"] });
+    assert.equal(inputs.items.length, 2);
+  });
+
+  it("serves the schedule module, and a cancelled schedule does not come back", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "完成" }]);
+    await arbor.open(task);
+    await backend.finished();
+    const at = 1_700_000_000_000;
+    const ref = await arbor.services.schedule({
+      name: "每日汇总",
+      firstAt: at,
+      repeat: { everyMs: 3_600_000 },
+      targets: ["gh:pr:57"],
+      task: { reason: "a scheduled check", targets: ["gh:pr:57"], time: at, content: [{ kind: "data", fields: { content: "到点了" } }] },
+    });
+
+    const listed = await arbor.services.schedules();
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0]?.ref, ref);
+    const repeat = listed[0]?.repeat;
+    assert.equal(repeat !== undefined && "everyMs" in repeat ? repeat.everyMs : undefined, 3_600_000);
+
+    const updated = await arbor.services.updateSchedule(ref, { name: "改名后的汇总", repeat: { dailyAt: "09:00" } });
+    assert.equal(updated?.name, "改名后的汇总");
+    assert.deepEqual((await arbor.services.schedules())[0]?.repeat, { dailyAt: "09:00" });
+    assert.equal(await arbor.services.updateSchedule("t404", { name: "x" }), null);
+
+    await arbor.services.cancelSchedule(ref);
+    assert.equal((await arbor.services.schedules()).length, 0);
+
+    // The cancellation is recorded, so a restart restores nothing.
+    const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => at });
+    await reopened.start();
+    assert.equal((await reopened.services.schedules()).length, 0);
   });
 });

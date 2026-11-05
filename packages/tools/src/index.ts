@@ -27,6 +27,8 @@ export {
   type ReloadOutcome,
   type SearchOutcome,
   type SendOutcome,
+  type TaskRecord,
+  type TaskSummary,
   type ToolServices,
 } from "./host.ts";
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
@@ -37,6 +39,8 @@ export {
   BoardModuleGroup,
   JournalModuleGroup,
   NotesModuleGroup,
+  ScheduleModuleGroup,
+  TasksModuleGroup,
   WindowsModuleGroup,
   WorkspaceModuleGroup,
 } from "./modules/modules.ts";

@@ -56,11 +56,13 @@ import type {
   Scheduler,
   ScheduledTask,
   ScheduledTaskInput,
+  ScheduledTaskUpdate,
   ServiceStatus,
   Settings,
   Supervisor,
   Task,
   TaskInput,
+  TaskKind,
   TaskRef,
   Target,
   TextTable,
@@ -83,6 +85,7 @@ import type {
 } from "@arbor/interfaces";
 import { arborError } from "@arbor/errors";
 import { isAbsolute, join } from "node:path";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@arbor/interfaces";
 import {
   REMINDER_TIERS,
   REMINDER_SERIES,
@@ -100,7 +103,16 @@ import {
 } from "@arbor/prompt";
 import { Jev, scrubJson } from "@arbor/judge-jev";
 import type { JevDecisionLog } from "@arbor/judge-jev";
-import { callContext, type EnvCatalog, type LiveWindow, type ReloadOutcome, type SearchOutcome, type ToolServices } from "@arbor/tools";
+import {
+  callContext,
+  type EnvCatalog,
+  type LiveWindow,
+  type ReloadOutcome,
+  type SearchOutcome,
+  type TaskRecord,
+  type ToolServices,
+  type TaskSummary,
+} from "@arbor/tools";
 import { ToolCatalog } from "@arbor/tools";
 import { Board, hostBody, type BoardEntry } from "./board.ts";
 import { Coordinator, type CoordinationHost } from "./coordination.ts";
@@ -124,6 +136,14 @@ const DEFAULT_CONTEXT_TOKENS = 200000;
 
 /** How long a window protects the target it started on. 60 s. */
 const DEFAULT_PROTECTION_SECONDS = 60;
+
+/**
+ * How many of the newest task events a lookup by task ref searches. A task ref
+ * is not an event ref, so the record is found among the task events the host
+ * wrote; the bound keeps one lookup inside one page, the way the restart
+ * recovery reads the schedules it restores.
+ */
+const MAX_TASK_LOOKUP = MAX_PAGE_LIMIT;
 
 /** The timers the host needs, so a test drives them by hand. */
 export interface Timers {
@@ -559,18 +579,27 @@ export class Arbor {
       await this.continueWindow(event.window, { midTaskReset: true });
     }
     // The scheduled tasks come back from the journal, so a restart does not
-    // lose a schedule that has not fired yet.
+    // lose a schedule that has not fired yet. The records are replayed in
+    // order, so a cancellation the journal recorded after a schedule's own
+    // record leaves nothing to restore.
     const schedules = await this.journal.list({ kinds: ["schedule"], limit: 200 });
-    const restored = schedules.items.flatMap((event) => {
-      if (event.body === null) return [];
+    const restored = new Map<TaskRef, ScheduledTask>();
+    for (const event of schedules.items) {
+      if (event.body === null) continue;
+      let parsed: (ScheduledTask & { cancelled?: unknown }) | null;
       try {
-        const parsed = JSON.parse(event.body) as ScheduledTask | null;
-        return parsed === null || typeof parsed.ref !== "string" ? [] : [parsed];
+        parsed = JSON.parse(event.body) as ScheduledTask & { cancelled?: unknown };
       } catch {
-        return [];
+        continue;
       }
-    });
-    await this.scheduler.restore?.(restored);
+      if (parsed === null || typeof parsed.ref !== "string") continue;
+      if (parsed.cancelled === true) {
+        restored.delete(parsed.ref as TaskRef);
+        continue;
+      }
+      restored.set(parsed.ref as TaskRef, parsed);
+    }
+    await this.scheduler.restore?.([...restored.values()]);
   }
 
   /** Open a window for one task, at a model tier. */
@@ -732,11 +761,79 @@ export class Arbor {
   /** Cancel one scheduled task. */
   async cancelSchedule(ref: TaskRef): Promise<void> {
     await this.scheduler.cancel(ref);
+    // Recorded, so a restart does not restore a schedule that was cancelled.
+    await this.journal.append({
+      kind: "schedule",
+      body: JSON.stringify({ ref, cancelled: true }),
+      refs: [ref],
+    });
+  }
+
+  /**
+   * Change one scheduled task: its name, its first time, its repeat rule, its
+   * skip periods, its targets or what a firing dispatches. Null when the ref
+   * names no schedule, which is what the `schedule` module reports
+   * (docs/tools.md#modules).
+   */
+  async updateSchedule(ref: TaskRef, changes: ScheduledTaskUpdate): Promise<ScheduledTask | null> {
+    const updated = await this.scheduler.update(ref, changes);
+    if (updated === null) return null;
+    // The whole schedule, so a restart restores what a firing dispatches now.
+    await this.journal.append({ kind: "schedule", body: JSON.stringify(updated), refs: [ref] });
+    return updated;
   }
 
   /** The scheduled tasks, soonest first. */
   async schedules(): Promise<readonly ScheduledTask[]> {
     return this.scheduler.list();
+  }
+
+  /**
+   * The tasks the host dispatched, newest first, as the `tasks` module lists
+   * them (docs/tools.md#modules). A task is the record the dispatcher wrote
+   * before anything decided about it, so its ref names the batch and the
+   * outside events it was made of from the start (docs/dispatch.md#tasks).
+   */
+  async tasks(limit?: number): Promise<readonly TaskSummary[]> {
+    const wanted = Math.max(1, Math.min(MAX_PAGE_LIMIT, limit ?? DEFAULT_PAGE_LIMIT));
+    const counted = await this.journal.list({ kinds: ["task"], limit: 1 });
+    const page = await this.journal.list({
+      kinds: ["task"],
+      limit: wanted,
+      offset: Math.max(0, counted.total - wanted),
+    });
+    const summaries: TaskSummary[] = [];
+    for (const event of page.items) {
+      const summary = summaryOf(event);
+      if (summary !== undefined) summaries.push(summary);
+    }
+    return summaries.reverse();
+  }
+
+  /**
+   * The tasks the refs name, each with the outside events it batched, as the
+   * `tasks` module shows them. A ref that names no task is left out, the way a
+   * journal read leaves out a ref that names no event.
+   */
+  async task(refs: readonly TaskRef[]): Promise<readonly TaskRecord[]> {
+    const recorded = await this.journal.list({ kinds: ["task"], limit: MAX_TASK_LOOKUP });
+    const found: TaskRecord[] = [];
+    for (const ref of refs) {
+      const event = recorded.items.find((one) => taskOf(one.body)?.ref === ref);
+      if (event === undefined) continue;
+      const summary = summaryOf(event);
+      if (summary === undefined) continue;
+      found.push({ ...summary, events: await this.batched(event) });
+    }
+    return found;
+  }
+
+  /** The outside events a task event says its batch was made of. */
+  private async batched(event: Event): Promise<readonly Event[]> {
+    const refs = event.links
+      .filter((link) => link.kind === "origin")
+      .map((link) => link.to as EventRef);
+    return this.journal.getMany(refs);
   }
 
   /** Pause insertion into a window without ending it. */
@@ -1388,6 +1485,13 @@ export class Arbor {
       broadcast: async (from, text) => host.broadcast(from, text),
       inbox: async (window) => host.inboxOf(window),
 
+      tasks: async (limit) => host.tasks(limit),
+      task: async (refs) => host.task(refs),
+      schedules: async () => host.schedules(),
+      schedule: async (input) => host.schedule(input),
+      updateSchedule: async (ref, changes) => host.updateSchedule(ref, changes),
+      cancelSchedule: async (ref) => host.cancelSchedule(ref),
+
       envPaths: () => {
         const environment = this.options.environment;
         return environment === undefined
@@ -1846,6 +1950,43 @@ function refusalText(result: ToolResult): string {
 function removeFrom(inbox: QueuedItem[], item: QueuedItem): void {
   const index = inbox.indexOf(item);
   if (index >= 0) inbox.splice(index, 1);
+}
+
+/**
+ * What one task event records: the task it names, what kind of task it is, why
+ * it is one and the source that made it (docs/dispatch.md#tasks). The dispatcher
+ * writes this body before anything decides about the task, so the record is
+ * there whatever the routing decided.
+ */
+function taskOf(body: string | null): { ref: TaskRef; kind: TaskKind; reason: string; source?: string } | null {
+  if (body === null) return null;
+  try {
+    const parsed = JSON.parse(body) as { task?: unknown; kind?: unknown; reason?: unknown; source?: unknown };
+    if (typeof parsed.task !== "string" || !/^t\d+$/.test(parsed.task)) return null;
+    if (typeof parsed.reason !== "string") return null;
+    return {
+      ref: parsed.task as TaskRef,
+      kind: typeof parsed.kind === "string" ? (parsed.kind as TaskKind) : "batch",
+      reason: parsed.reason,
+      ...(typeof parsed.source === "string" ? { source: parsed.source } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One task event as the record the `tasks` module reads. */
+function summaryOf(event: Event): TaskSummary | undefined {
+  const task = taskOf(event.body);
+  if (task === null) return undefined;
+  return {
+    ref: task.ref,
+    kind: task.kind,
+    reason: task.reason,
+    targets: [...event.targets],
+    time: event.time,
+    ...(task.source === undefined ? {} : { source: task.source }),
+  };
 }
 
 /** One outside event, as the input block it arrives as. */

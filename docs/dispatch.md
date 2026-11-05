@@ -172,4 +172,7 @@ of leaving the judge to guess.
 
 A scheduled task is a task source driven by time: a first time, a repeat rule,
 optional daily skip periods, optional targets. Spreading colliding repeating
-tasks apart and their jitter are settings, off by default.
+tasks apart and their jitter are settings, off by default. The model manages
+them through the `schedule` module - `create`, `update`, `cancel` and `list`
+([tools.md](tools.md#modules)) - and every change is one service call the host
+records, so a restart restores a schedule that has not fired yet.

@@ -5,10 +5,21 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import type { CallContext, NoteStore, NoteWriteInput, ToolResult, WorkspaceMount } from "@arbor/interfaces";
+import type {
+  CallContext,
+  Event,
+  NoteStore,
+  NoteWriteInput,
+  ScheduledTask,
+  ScheduledTaskInput,
+  ScheduledTaskUpdate,
+  TaskRef,
+  ToolResult,
+  WorkspaceMount,
+} from "@arbor/interfaces";
 import { Renderer, zhTextTable } from "@arbor/prompt";
 import { ToolCatalog } from "./catalog.ts";
-import type { LiveWindow, ToolServices } from "./host.ts";
+import type { LiveWindow, TaskSummary, ToolServices } from "./host.ts";
 import { handoffOf } from "./groups/core.ts";
 
 interface Harness {
@@ -19,6 +30,14 @@ interface Harness {
   ended: { window: string; handoff?: unknown }[];
   sent: { to: string; content: string }[];
   written: { window: string; input: NoteWriteInput }[];
+  /** Every `schedule.create` argument the service layer was handed. */
+  created: ScheduledTaskInput[];
+  /** Every `schedule.update` argument the service layer was handed. */
+  changed: { ref: TaskRef; changes: ScheduledTaskUpdate }[];
+  /** Every `schedule.cancel` ref the service layer was handed. */
+  cancelled: TaskRef[];
+  /** The events each task's record carries, as the host would hand them back. */
+  batched: Map<string, Event[]>;
   /** The workspace ref the window's first file call created. */
   refOf(window: string): string;
 }
@@ -44,6 +63,39 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
   ];
   const board = new Map<string, string>([["c1", "整理笔记"]]);
   const inbox: { ref: `r${number}`; from: `c${number}`; text: string }[] = [];
+  // The task records and the schedules the host would hold, so the modules are
+  // driven against the service calls they make.
+  const summaries: TaskSummary[] = [
+    {
+      ref: "t1",
+      kind: "batch",
+      reason: "a message arrived in qq:group:1",
+      targets: ["qq:group:1"],
+      time: 1,
+    },
+    {
+      ref: "t2",
+      kind: "scheduled",
+      reason: "a scheduled check",
+      targets: ["gh:pr:57"],
+      time: 2,
+    },
+  ];
+  const batched = new Map<string, Event[]>();
+  const stored: ScheduledTask[] = [
+    {
+      ref: "t5",
+      name: "每日汇总",
+      firstAt: 1_700_000_000_000,
+      nextAt: 1_700_003_600_000,
+      repeat: { everyMs: 3_600_000 },
+      targets: ["gh:pr:57"],
+      paused: false,
+    },
+  ];
+  const created: ScheduledTaskInput[] = [];
+  const changed: { ref: TaskRef; changes: ScheduledTaskUpdate }[] = [];
+  const cancelled: TaskRef[] = [];
 
   const services: ToolServices = {
     table: zhTextTable,
@@ -142,6 +194,25 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
     broadcast: async () => 0,
     inbox: async () => inbox,
 
+    tasks: async (limit) => summaries.slice(-(limit ?? 20)),
+    task: async (refs) =>
+      refs.flatMap((ref) => {
+        const summary = summaries.find((one) => one.ref === ref);
+        return summary === undefined ? [] : [{ ...summary, events: batched.get(ref) ?? [] }];
+      }),
+    schedules: async () => stored,
+    schedule: async (input) => {
+      created.push(input);
+      return "t9" as TaskRef;
+    },
+    updateSchedule: async (ref, changes) => {
+      changed.push({ ref, changes });
+      return stored.find((one) => one.ref === ref) ?? null;
+    },
+    cancelSchedule: async (ref) => {
+      cancelled.push(ref);
+    },
+
     envPaths: () => undefined,
     envCatalog: () => ({ items: [], modules: [], removed: [] }),
     envItemAt: async () => undefined,
@@ -160,6 +231,10 @@ async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
     ended,
     sent,
     written,
+    created,
+    changed,
+    cancelled,
+    batched,
     refOf: (window: string) => refs.get(window) ?? "",
   };
 }
@@ -183,7 +258,7 @@ describe("tool catalog", () => {
       assert.ok(tools.includes("code_exec"));
       assert.ok(tools.includes("tool_search"));
       const modules = catalog.modules().map((module) => module.name);
-      assert.deepEqual(modules, ["journal", "windows", "board", "notes", "workspace"]);
+      assert.deepEqual(modules, ["journal", "windows", "board", "notes", "tasks", "schedule", "workspace"]);
       // A module's line describes what it can do and never names a function.
       const journal = catalog.modules().find((module) => module.name === "journal");
       assert.ok((journal?.description ?? "").length > 0);
@@ -376,6 +451,107 @@ describe("tool catalog", () => {
     assert.ok(list.content.includes("修 CI"));
     const expect = await run(catalog, "board.expect", { item: "gh:pr:57" });
     assert.equal(expect.content, "m1");
+  });
+
+  it("lists the tasks the host dispatched and shows one with the events it batched", async () => {
+    const { catalog, journal, batched } = await harness();
+    const input = await journal.append({ kind: "input", body: "CI 红了", targets: ["gh:pr:57"] });
+    batched.set("t2", [input]);
+
+    const list = await run(catalog, "tasks.list", {});
+    assert.ok(list.content.includes("t2"), "the newest task is listed");
+    assert.ok(list.content.includes("a scheduled check"));
+    const one = await run(catalog, "tasks.list", { limit: 1 });
+    assert.ok(one.content.includes("t2"));
+    assert.ok(!one.content.includes("t1"), "the bound keeps the newest one");
+
+    const shown = await run(catalog, "tasks.show", { ref: "t2" });
+    assert.ok(shown.content.includes("a scheduled check"));
+    assert.ok(shown.content.includes(`${input.ref} input CI 红了`), "the batch's events come with it");
+    const several = await run(catalog, "tasks.show", { ref: ["t1", "t9"] });
+    assert.ok(several.content.includes("a message arrived in qq:group:1"));
+    assert.ok(!several.content.includes("t9"), "a ref that names no task is left out");
+  });
+
+  it("creates, updates and cancels a scheduled task through one service call each", async () => {
+    const { catalog, created, changed, cancelled } = await harness();
+
+    const made = await run(catalog, "schedule.create", {
+      name: "每日汇总",
+      firstAt: 1_700_000_000_000,
+      repeat: { everyMs: 3_600_000 },
+      targets: ["gh:pr:57"],
+      task: { reason: "a scheduled check", targets: ["gh:pr:57"], content: [{ kind: "data", fields: { content: "到点了" } }] },
+    });
+    assert.equal(made.ok, true);
+    assert.ok(made.content.includes("t9"));
+    assert.deepEqual(created, [
+      {
+        firstAt: 1_700_000_000_000,
+        name: "每日汇总",
+        repeat: { everyMs: 3_600_000 },
+        targets: ["gh:pr:57"],
+        // The task's own time defaults to the firing's, so a script names only
+        // what the task says.
+        task: {
+          reason: "a scheduled check",
+          targets: ["gh:pr:57"],
+          time: 1_700_000_000_000,
+          content: [{ kind: "data", fields: { content: "到点了" } }],
+        },
+      },
+    ]);
+
+    const list = await run(catalog, "schedule.list", {});
+    assert.ok(list.content.includes("t5"));
+    assert.ok(list.content.includes("每日汇总"));
+    assert.ok(list.content.includes("每 3600000 ms"));
+
+    const updated = await run(catalog, "schedule.update", { ref: "t5", name: "改名后的汇总" });
+    assert.equal(updated.ok, true);
+    assert.deepEqual(changed, [{ ref: "t5", changes: { name: "改名后的汇总" } }], "only what it named changes");
+
+    const stopped = await run(catalog, "schedule.cancel", { ref: "t5" });
+    assert.equal(stopped.ok, true);
+    assert.ok(stopped.content.includes("不再触发"));
+    assert.deepEqual(cancelled, ["t5"]);
+  });
+
+  it("refuses a schedule create it cannot read, and an update of a ref that names none", async () => {
+    const { catalog } = await harness();
+    const noTime = await run(catalog, "schedule.create", {
+      task: { reason: "a check", content: [{ kind: "data", fields: { content: "x" } }] },
+    });
+    assert.equal(noTime.ok, false);
+    assert.equal(noTime.error?.rule, "schedule.input.invalid");
+    assert.ok(noTime.error?.message.includes("firstAt"));
+    assert.ok(noTime.error?.nextAction !== undefined && noTime.error.nextAction.length > 0);
+
+    const badRepeat = await run(catalog, "schedule.create", {
+      firstAt: 1_700_000_000_000,
+      repeat: { hourly: true },
+      task: { reason: "a check", content: [{ kind: "data", fields: { content: "x" } }] },
+    });
+    assert.equal(badRepeat.error?.rule, "schedule.input.invalid");
+    assert.ok(badRepeat.error?.message.includes("repeat"));
+
+    const missing = await run(catalog, "schedule.update", { ref: "t404", name: "改名" });
+    assert.equal(missing.ok, false);
+    assert.equal(missing.error?.rule, "schedule.not_found");
+    assert.ok(missing.error?.nextAction?.includes("schedule.list"));
+  });
+
+  it("runs the tasks and schedule modules from a script, through the same service calls", async () => {
+    const { catalog, cancelled } = await harness();
+    const result = await run(catalog, "code_exec", {
+      script:
+        "await schedule.cancel({ ref: 't5' });" +
+        "const page = await tasks.list({ limit: 1 });" +
+        "return page",
+    });
+    assert.equal(result.ok, true);
+    assert.ok(result.content.includes("a scheduled check"));
+    assert.deepEqual(cancelled, ["t5"]);
   });
 
   it("sends a message to another live window and lists the live windows", async () => {
