@@ -18,7 +18,16 @@
     "@arbor/errors": "workspace:*",
     "@arbor/interfaces": "workspace:*"
   },
+  "peerDependencies": {
+    "@arbor/segmenter-jieba": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@arbor/segmenter-jieba": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@arbor/segmenter-jieba": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

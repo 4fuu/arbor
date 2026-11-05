@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "./sqlite-journal.ts";
+import { fallbackSegmenter } from "./segmenter.ts";
 
+// The fixture pins the approximation, so these hold whether or not the optional
+// jieba package is installed; search-jieba.test.ts covers the other one.
 async function fixture(): Promise<SqliteJournal> {
-  const journal = new SqliteJournal({ path: ":memory:" });
+  const journal = new SqliteJournal({ path: ":memory:", segmenter: fallbackSegmenter });
   await journal.append({
     kind: "input",
     window: "c1",
@@ -96,7 +99,7 @@ describe("search", () => {
   });
 
   it("ranks the document that is about the query above one that only mentions it", async () => {
-    const journal = new SqliteJournal({ path: ":memory:" });
+    const journal = new SqliteJournal({ path: ":memory:", segmenter: fallbackSegmenter });
     await journal.append({ kind: "input", window: "c1", body: "部署上线" });
     await journal.append({
       kind: "input",
@@ -174,5 +177,18 @@ describe("search", () => {
     await journal.redact("r1", "personal data");
     assert.equal((await journal.search("部署上线")).total, 0);
     assert.equal((await journal.search("部署")).total, 2);
+  });
+
+  it("indexes and queries with one segmenter when the caller names none", async () => {
+    // jieba when the optional package is installed, the approximation
+    // otherwise. Either way the two words find the text that holds them, which
+    // they would not if indexing and querying used different segmenters.
+    const journal = new SqliteJournal({ path: ":memory:" });
+    await journal.append({ kind: "input", window: "c1", body: "部署上线" });
+
+    const page = await journal.search("部署 上线");
+    assert.equal(page.total, 1);
+    assert.equal(page.items[0]?.ref, "r1");
+    assert.equal(page.items[0]?.match, "word");
   });
 });

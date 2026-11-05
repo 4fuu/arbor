@@ -68,6 +68,7 @@ check` typechecks and tests every package.
 | `packages/interfaces` | the interfaces layer: every replaceable interface, plus the core's own shapes. Types only. |
 | `packages/errors` | the error shape every refusal uses: the rule and the next action |
 | `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
+| `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts |
 | `packages/core` (later) | the service layer: one implementation of every operation |

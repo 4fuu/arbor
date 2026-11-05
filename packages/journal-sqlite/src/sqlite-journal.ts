@@ -53,7 +53,7 @@ import type {
 } from "@arbor/interfaces";
 import type { BlobRegistry } from "./blob-store.ts";
 import { FsBlobStore, blobIdOf } from "./blob-store.ts";
-import { defaultSegmenter, indexText } from "./segmenter.ts";
+import { indexText, resolveSegmenter } from "./segmenter.ts";
 import { IMPLICIT_CITE_WEIGHT, TRIGRAM_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 import { buildFilters, likePattern, ranked, substring, trigramMatch, wordMatch } from "./search.ts";
 import type { Ranked, SearchFilters } from "./search.ts";
@@ -210,7 +210,7 @@ export class SqliteJournal implements Journal {
     this.path = options.path ?? ":memory:";
     this.db = new DatabaseSync(this.path);
     createSchema(this.db);
-    this.segmenter = options.segmenter ?? defaultSegmenter;
+    this.segmenter = options.segmenter ?? resolveSegmenter();
     this.clock = options.now ?? (() => Date.now());
 
     if (options.blobs !== undefined) {

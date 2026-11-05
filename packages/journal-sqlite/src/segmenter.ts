@@ -1,17 +1,24 @@
 /**
  * Word segmentation for the journal's word index (docs/journal.md#search).
  *
- * The spec calls for jieba segmentation with BM25. A dictionary segmenter is a
- * native dependency and a data file, so the default here approximates it and
- * stays swappable: Chinese, Japanese and Korean runs are indexed per character
- * and per bigram, and every other script per word. A deployment that wants
- * jieba's dictionary implements `Segmenter` and registers it with the journal.
+ * The spec calls for jieba segmentation with BM25, and the default is jieba
+ * when `@arbor/segmenter-jieba` is installed: `resolveSegmenter` loads it, and
+ * the journal uses what it returns when the caller names no segmenter. The
+ * package is an optional peer dependency, so a deployment that leaves it out
+ * keeps working.
  *
- * Character and bigram indexing is what makes a two-character Chinese query
- * find the phrase it appears in, without a dictionary.
+ * What is left here is the approximation that answers when jieba is not there:
+ * Chinese, Japanese and Korean runs are indexed per character and per bigram,
+ * and every other script per word. Character and bigram indexing is what makes
+ * a two-character Chinese query find the phrase it appears in, without a
+ * dictionary.
  */
 
+import { createRequire } from "node:module";
 import type { Segmenter } from "@arbor/interfaces";
+
+/** The package that holds the jieba segmenter, when a deployment installed it. */
+const JIEBA_PACKAGE = "@arbor/segmenter-jieba";
 
 /** CJK unified ideographs, extensions, compatibility, kana and hangul. */
 function isCjk(codePoint: number): boolean {
@@ -29,7 +36,7 @@ function isCjk(codePoint: number): boolean {
 /** Whitespace and punctuation separate words; everything else is part of one. */
 const SEPARATOR = /[\s\p{P}\p{S}\p{C}\p{Z}]/u;
 
-export const defaultSegmenter: Segmenter = {
+export const fallbackSegmenter: Segmenter = {
   segment(text: string): string[] {
     const chars = Array.from(text);
     const tokens: string[] = [];
@@ -69,6 +76,37 @@ export const defaultSegmenter: Segmenter = {
     return tokens;
   },
 };
+
+/**
+ * Load the jieba segmenter, or `null` when it is not there: the package is not
+ * installed, or it holds no segmenter.
+ */
+function loadJieba(): Segmenter | null {
+  const require = createRequire(import.meta.url);
+  const loaded: unknown = require(JIEBA_PACKAGE);
+  const candidate = (loaded as { jiebaSegmenter?: unknown } | null)?.jiebaSegmenter;
+  if (candidate === null || typeof candidate !== "object") return null;
+  const shape = candidate as { segment?: unknown };
+  return typeof shape.segment === "function" ? (candidate as Segmenter) : null;
+}
+
+/**
+ * The segmenter a journal uses when the caller names none: jieba when the
+ * package is installed, the per-character-and-bigram approximation otherwise.
+ *
+ * `load` replaces how the jieba package is loaded. A host that resolves modules
+ * its own way passes its own; so does a test that has no jieba package to load.
+ * A load that fails falls back rather than stopping the journal, because the
+ * package is optional: it may be missing, or its prebuilt binary may not load
+ * on this platform.
+ */
+export function resolveSegmenter(load: () => Segmenter | null = loadJieba): Segmenter {
+  try {
+    return load() ?? fallbackSegmenter;
+  } catch {
+    return fallbackSegmenter;
+  }
+}
 
 /** The text the word index stores: the segments, one per line. */
 export function indexText(text: string, segmenter: Segmenter): string {

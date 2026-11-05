@@ -98,11 +98,16 @@ by jieba segmentation with BM25, a trigram index for exact substrings, and a
 fallback for one- or two-character queries. Results are merged, exact
 substring hits first, and each carries its ref and window.
 
-The default word index segments Chinese, Japanese and Korean text per character
-and per bigram and every other script per word, which is what makes a
-two-character query find the phrase it appears in without a dictionary. A
-deployment that wants jieba's dictionary segmentation implements `Segmenter`
-and registers it.
+The word index segments with jieba's dictionary, cut in search mode: a long
+word is also indexed as the words inside it, and punctuation and spaces are not
+words, so a query that carries them still matches. The default segments this
+way through `@arbor/segmenter-jieba`, which `@arbor/journal-sqlite` takes as an
+optional peer dependency. When that package is not installed, or its prebuilt
+binary does not load on the platform, the word index falls back to segmenting
+Chinese, Japanese and Korean text per character and per bigram and every other
+script per word, which is what makes a two-character query find the phrase it
+appears in without a dictionary. A deployment replaces either one by
+implementing `Segmenter` and registering it with the journal.
 
 ## Media
 

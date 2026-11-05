@@ -8,7 +8,7 @@ export type { SqliteJournalOptions } from "./sqlite-journal.ts";
 export { FsBlobStore, blobIdOf, blobRefOf } from "./blob-store.ts";
 export type { BlobEntry, BlobRegistry } from "./blob-store.ts";
 
-export { defaultSegmenter, indexText } from "./segmenter.ts";
+export { fallbackSegmenter, resolveSegmenter, indexText } from "./segmenter.ts";
 
 export {
   SCHEMA_VERSION,

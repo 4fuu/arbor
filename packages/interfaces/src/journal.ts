@@ -62,9 +62,11 @@ export interface BlobStore {
 }
 
 /**
- * Word segmentation for the word index. The default segments Chinese text per
- * character and per bigram and Latin text per word; a deployment that wants
- * jieba's dictionary segmentation implements this and registers it.
+ * Word segmentation for the word index. The default is jieba's dictionary
+ * segmentation when `@arbor/segmenter-jieba` is installed, and the
+ * per-character-and-bigram approximation when it is not
+ * (docs/journal.md#search); a deployment replaces either by implementing this
+ * and registering it.
  */
 export interface Segmenter {
   segment(text: string): string[];

@@ -1,0 +1,25 @@
+{
+  "name": "@arbor/segmenter-jieba",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default Segmenter: jieba's dictionary segmentation for the journal's word index.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/interfaces": "workspace:*",
+    "@node-rs/jieba": "^2.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}
