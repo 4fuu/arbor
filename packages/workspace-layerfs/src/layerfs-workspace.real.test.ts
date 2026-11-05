@@ -30,7 +30,7 @@ const deployment: LayerfsDeployment = {
   volume: process.env.LAYERFS_VOLUME,
 };
 
-const capabilities = layerfsCapabilities({ deployment });
+const capabilities = await layerfsCapabilities({ deployment });
 const store = capabilities.sdk && capabilities.addon && capabilities.store;
 const mounting = store && capabilities.fuse && capabilities.docker;
 

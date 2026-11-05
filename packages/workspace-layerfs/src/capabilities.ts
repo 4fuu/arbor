@@ -7,10 +7,17 @@
  * LayerFS's own allowlist), and, for a mount, `/dev/fuse` plus a Docker Engine
  * and the image a Sandbox runs. Tests that need one of them skip when it is
  * missing, so a host without FUSE still runs everything else.
+ *
+ * The Engine check is a live one: LayerFS's own client negotiates the Engine
+ * API version once and refuses an older daemon before it sends a request, so a
+ * socket that only looks like Docker is not enough. Podman's compatibility
+ * API answers every call this package shapes but stops at API 1.44, four
+ * minors below the floor, and is reported unavailable with that as the reason.
  */
 
 import { existsSync, statfsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import { request as httpRequest } from "node:http";
 import type { LayerfsDeployment, LayerfsWorkspaceOptions } from "./options.ts";
 import { layerfsCheckout } from "./layerfs-sdk.ts";
 
@@ -35,6 +42,11 @@ export interface LayerfsCapabilities {
   fuse: boolean;
   /** A Docker Engine socket and the image a Sandbox runs. */
   docker: boolean;
+  /**
+   * Why `docker` is false: the rule that refused it, in words a host can act
+   * on. Null exactly when `docker` is true.
+   */
+  dockerReason: string | null;
   /** The checkout the SDK was found in, when there is one. */
   checkout: string | null;
 }
@@ -69,12 +81,91 @@ function dockerSocketOf(deployment: LayerfsDeployment | undefined): string {
   return deployment?.docker ?? process.env.LAYERFS_DOCKER ?? DEFAULT_DOCKER_SOCKET;
 }
 
-/** Whether a Docker Engine socket is reachable and an image is named. */
-export function dockerAvailable(deployment: LayerfsDeployment | undefined): boolean {
-  const socket = dockerSocketOf(deployment);
-  if (!existsSync(socket)) return false;
-  const image = deployment?.image ?? process.env.LAYERFS_IMAGE ?? "";
+/** The image a Sandbox runs, when the deployment names one. */
+function sandboxImageOf(deployment: LayerfsDeployment | undefined): string {
+  return deployment?.image ?? process.env.LAYERFS_IMAGE ?? "";
+}
+
+/** Whether `image` is the exact digest shape LayerFS mounts with. */
+function isDigest(image: string): boolean {
   return image.startsWith("sha256:") && image.length === 71;
+}
+
+/**
+ * The oldest Docker Engine API minor version a Sandbox runs on: 1.48, Docker
+ * Engine 28.0. LayerFS's client reads the daemon's version once and refuses an
+ * older one before it sends a request, so a socket that only answers like
+ * Docker is not enough - Podman's compatibility API stops at 1.44.
+ */
+export const DOCKER_API_FLOOR = 48;
+
+/** How long the Engine's version read may take before its socket counts as dead. */
+const VERSION_TIMEOUT_MS = 2_000;
+
+/** The `ApiVersion` an Engine's `GET /version` reports, as its minor number. */
+function apiMinorOf(body: string): number | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body) as unknown;
+  } catch {
+    return null;
+  }
+  const version = (parsed as { ApiVersion?: unknown } | null)?.ApiVersion;
+  if (typeof version !== "string") return null;
+  const match = /^1\.(\d+)$/.exec(version);
+  return match === null ? null : Number(match[1]);
+}
+
+/**
+ * One unversioned `GET /version` over the Engine's socket: the same read
+ * LayerFS's client negotiates with. Null when the socket does not answer it
+ * readably - a dead or non-Docker socket cannot run a mount either way.
+ */
+function engineApiMinor(socket: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const pending = httpRequest({ socketPath: socket, method: "GET", path: "/version" }, (response) => {
+      if (response.statusCode !== 200) {
+        response.resume();
+        resolve(null);
+        return;
+      }
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => {
+        body += chunk;
+      });
+      response.on("end", () => resolve(apiMinorOf(body)));
+      response.on("error", () => resolve(null));
+    });
+    pending.setTimeout(VERSION_TIMEOUT_MS, () => {
+      pending.destroy();
+      resolve(null);
+    });
+    pending.on("error", () => resolve(null));
+    pending.end();
+  });
+}
+
+/**
+ * Why this machine cannot run a mount, or null when it can: an Engine socket
+ * that answers, an image named by exact digest, and an Engine API at least the
+ * floor LayerFS speaks. Each reason names the rule that refused the call.
+ */
+export async function dockerAvailable(deployment: LayerfsDeployment | undefined): Promise<string | null> {
+  const socket = dockerSocketOf(deployment);
+  if (!existsSync(socket)) return `no Docker Engine socket at ${socket}`;
+  if (!isDigest(sandboxImageOf(deployment))) {
+    return "LAYERFS_IMAGE is not an exact sha256: digest, so no Sandbox image is named";
+  }
+  const minor = await engineApiMinor(socket);
+  if (minor === null) return `the Docker Engine at ${socket} did not answer GET /version`;
+  if (minor < DOCKER_API_FLOOR) {
+    return (
+      `the Docker Engine at ${socket} answers API 1.${minor}, older than the ` +
+      `1.${DOCKER_API_FLOOR} (Docker Engine 28.0) LayerFS requires`
+    );
+  }
+  return null;
 }
 
 function addonPathOf(options: LayerfsWorkspaceOptions): string | null {
@@ -86,15 +177,19 @@ function addonPathOf(options: LayerfsWorkspaceOptions): string | null {
 }
 
 /** What this machine can run, without starting anything. */
-export function layerfsCapabilities(options: LayerfsWorkspaceOptions = {}): LayerfsCapabilities {
+export async function layerfsCapabilities(
+  options: LayerfsWorkspaceOptions = {},
+): Promise<LayerfsCapabilities> {
   const checkout = layerfsCheckout(options);
   const addon = addonPathOf(options);
+  const dockerReason = await dockerAvailable(options.deployment);
   return {
     sdk: checkout !== null,
     addon: addon !== null && existsSync(addon),
     store: storeFilesystemSupported(storePathOf(options.deployment)),
     fuse: fuseAvailable(),
-    docker: dockerAvailable(options.deployment),
+    docker: dockerReason === null,
+    dockerReason,
     checkout,
   };
 }

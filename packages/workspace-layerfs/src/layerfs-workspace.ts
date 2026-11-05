@@ -48,7 +48,7 @@ import { mkdtempSync, statSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { layerfsCapabilities } from "./capabilities.ts";
+import { layerfsCapabilities, type LayerfsCapabilities } from "./capabilities.ts";
 import type { LayerfsClient, LayerfsError, LayerfsWorkspaceHandle } from "./layerfs-sdk.ts";
 import { loadLayerfsSdk } from "./layerfs-sdk.ts";
 import {
@@ -166,7 +166,7 @@ export class LayerfsWorkspace implements Workspace {
   }
 
   /** What this machine can run. A host reads this before it mounts anything. */
-  capabilities(): ReturnType<typeof layerfsCapabilities> {
+  async capabilities(): Promise<LayerfsCapabilities> {
     return layerfsCapabilities({ sdk: this.options.sdk, deployment: this.options.deployment });
   }
 

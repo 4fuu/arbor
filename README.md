@@ -74,3 +74,10 @@ check` typechecks and tests every package.
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
 | `packages/core` (later) | the service layer: one implementation of every operation |
 | `packages/tools` (later) | the entry points: direct tools, code mode modules, the host API |
+
+`mise.toml` pins the toolchain - Node, pnpm and the Rust the LayerFS engine
+builds with - installed under `~/.local/share/mise`, and `.agents/setup`
+prepares a machine from it, or from system packages and rustup on an apt host.
+`packages/workspace-layerfs/sandbox.Dockerfile` builds the image a LayerFS
+Sandbox runs, from the pinned LayerFS commit, on the machine that has the
+Docker Engine.

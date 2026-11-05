@@ -100,12 +100,34 @@ skeleton - points it there. With none, the project starts empty.
 LayerFS is not a dependency of this repository: its core is Rust and its
 JavaScript packages are built beside a pinned checkout. `.agents/setup` clones
 that checkout into `.layerfs`, builds `engine/crates/layerfs-node/layerfs.node`
-and `layerfs-daemon` with Cargo 1.85.1, and leaves them where this package finds
-them. `ARBOR_LAYERFS_SDK` (or the `sdk` option) names another checkout.
+and `layerfs-daemon`, and leaves them where this package finds them.
+`ARBOR_LAYERFS_SDK` (or the `sdk` option) names another checkout.
 
-Running a mount needs more than the build: `/dev/fuse`, a Docker Engine, the
-image a Sandbox runs, and a Store on ext4, xfs or btrfs. `capabilities()`
-reports which of those a host has.
+The toolchain has two paths. On a machine with mise, the repository's
+`mise.toml` provides Node, pnpm and Rust 1.85.1 under `~/.local/share/mise` -
+never into `~/.cargo` - and the system provides the C compiler, pkg-config and
+fuse3; that is the path for Arch and other hosts without apt. On an apt machine
+`.agents/setup` installs those as packages and takes Rust from rustup.
+
+Running a mount needs more than the build: `/dev/fuse`, a Docker Engine
+speaking Engine API 1.48 or newer, the image a Sandbox runs, and a Store on
+ext4, xfs or btrfs. Podman's Docker-compatible socket is not enough: its
+compatibility API stops at 1.44, which LayerFS refuses before it sends a
+request, so `capabilities()` reports it unavailable with the version as the
+reason instead of a false green.
+
+The image a Sandbox runs is built from the pinned commit with the
+`sandbox.Dockerfile` beside this README, on the machine that has the Engine:
+
+```sh
+docker build -f packages/workspace-layerfs/sandbox.Dockerfile -t arbor-layerfs-sandbox .
+```
+
+Name it by digest, never a tag: read it with `docker images --digests` and set
+`LAYERFS_IMAGE` to it. The daemon that runs in the Sandbox is the host build
+(`LAYERFS_DAEMON`), which the SDK uploads into the container, so the image's
+base must carry a glibc at least as new as the host build's; the Dockerfile's
+`BASE_IMAGE` argument selects it.
 
 ## Tests
 

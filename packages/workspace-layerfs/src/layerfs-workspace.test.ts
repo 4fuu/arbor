@@ -44,7 +44,7 @@ interface Standin {
 
 const standin = require(FIXTURE) as Standin;
 
-const capabilities = layerfsCapabilities({});
+const capabilities = await layerfsCapabilities({});
 
 /** Which calls the binding saw, by method name. */
 function opsCalled(name: string): Record<string, unknown>[] {

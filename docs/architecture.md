@@ -65,14 +65,29 @@ Rules for every interface:
   `@layerfs/runtime`) and a native binding, and `bash` runs in workspaces its
   daemon mounts over FUSE. That shapes the deployment:
   - Linux with `/dev/fuse`; macOS and Windows only through a Linux VM.
-  - Its Store runs without crash or power-loss durability, so the journal
-    never depends on it: a lost snapshot loses a view of files, never a
-    record.
+  - A Docker Engine speaking Engine API 1.48 (Docker Engine 28.0) or newer,
+    because LayerFS's client refuses an older one before it sends a request.
+    Podman's Docker-compatible socket is not enough: its compatibility API
+    stops at 1.44, so `capabilities()` reports it unavailable with the
+    version as the reason. The image a Sandbox runs is built from the pinned
+    LayerFS commit with
+    [`packages/workspace-layerfs/sandbox.Dockerfile`](packages/workspace-layerfs/sandbox.Dockerfile)
+    and named by digest, never a tag.
+  - Its Store is one SQLite file on ext4, xfs or btrfs - its own allowlist,
+    because the locks that guard it live in the filesystem - and it runs
+    without crash or power-loss durability, so the journal never depends on
+    it: a lost snapshot loses a view of files, never a record.
   - It is young and its JavaScript API broke between 1.0 and 1.1, so its
     version is pinned behind `Workspace`.
   - pi already has a LayerFS extension, `pi-layerfs`, that backs pi's file
     and bash tools with LayerFS; it is a reference for the integration, not
     a dependency.
+- **The toolchain** is project-local: `mise.toml` pins Node, pnpm and the
+  Rust the LayerFS engine builds with, installed under `~/.local/share/mise`
+  and never into `~/.cargo`. `.agents/setup` prepares a machine either that
+  way (mise, for hosts without apt) or from system packages and rustup (apt).
+  The rest of the build - a C compiler, pkg-config, fuse3 - stays a system
+  package on both paths.
 
 ## Models
 

@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import { layerfsCapabilities } from "./capabilities.ts";
+import type { LayerfsDeployment } from "./options.ts";
+
+/**
+ * The Engine check a host reads before it mounts: the socket, the image and
+ * the Engine API version, each on both sides of its rule. The Engine is a
+ * local server on a unix socket that answers `GET /version` the way Docker
+ * does, so the floor is checked without one: LayerFS's own client reads the
+ * same unversioned endpoint and refuses an older daemon before it sends a
+ * request, and a socket that only looks like Docker - Podman's compatibility
+ * API stops at 1.44 - must be reported unavailable, with the version as the
+ * reason, instead of a false green.
+ */
+
+/** The exact image digest shape a Sandbox mounts with. */
+const IMAGE = `sha256:${"a".repeat(64)}`;
+
+/** One fake Engine on a unix socket, and how to shut it down. */
+async function fakeEngine(answers: boolean, apiVersion: string | null) {
+  const directory = await mkdtemp(join(tmpdir(), "arbor-engine-"));
+  const socket = join(directory, "engine.sock");
+  const server: Server = createServer((request, response) => {
+    if (!answers || request.url !== "/version" || apiVersion === null) {
+      response.writeHead(500);
+      response.end("{}");
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ ApiVersion: apiVersion, Version: "29.9.2" }));
+  });
+  await new Promise<void>((resolve) => server.listen(socket, resolve));
+  return {
+    socket,
+    async close(): Promise<void> {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+/** The deployment a capability read uses: this socket, and an image. */
+function deploymentOf(socket: string, image: string): { deployment: LayerfsDeployment } {
+  return { deployment: { docker: socket, image } };
+}
+
+const started: { close(): Promise<void> }[] = [];
+
+afterEach(async () => {
+  while (started.length > 0) {
+    const engine = started.pop();
+    if (engine !== undefined) await engine.close();
+  }
+});
+
+describe("the Docker Engine check", () => {
+  it("accepts an Engine at the API floor LayerFS speaks", async () => {
+    const engine = await fakeEngine(true, "1.48");
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, true);
+    assert.equal(capabilities.dockerReason, null);
+  });
+
+  it("accepts an Engine above the floor", async () => {
+    const engine = await fakeEngine(true, "1.52");
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, true);
+    assert.equal(capabilities.dockerReason, null);
+  });
+
+  it("refuses an Engine one minor below the floor and names both versions", async () => {
+    const engine = await fakeEngine(true, "1.47");
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", /1\.47/);
+    assert.match(capabilities.dockerReason ?? "", /1\.48/);
+  });
+
+  it("reports Podman's socket unavailable with its version as the reason", async () => {
+    // Podman answers every call LayerFS shapes but reports API 1.44, so the
+    // capability must not report a mount as possible.
+    const engine = await fakeEngine(true, "1.44");
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", /1\.44/);
+    assert.match(capabilities.dockerReason ?? "", /1\.48/);
+  });
+
+  it("reports a socket that does not answer its version unavailable", async () => {
+    const engine = await fakeEngine(false, null);
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, IMAGE));
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", /did not answer/);
+  });
+
+  it("refuses a missing socket and names its path", async () => {
+    const missing = join(tmpdir(), "arbor-no-engine-here.sock");
+    const capabilities = await layerfsCapabilities(deploymentOf(missing, IMAGE));
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", new RegExp(missing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  });
+
+  it("refuses an image that is not an exact digest", async () => {
+    const engine = await fakeEngine(true, "1.52");
+    started.push(engine);
+    const capabilities = await layerfsCapabilities(deploymentOf(engine.socket, "arbor-sandbox:latest"));
+    assert.equal(capabilities.docker, false);
+    assert.match(capabilities.dockerReason ?? "", /LAYERFS_IMAGE/);
+  });
+});

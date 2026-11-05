@@ -1,0 +1,26 @@
+# The project-local toolchain: Node runs the TypeScript sources directly and
+# LayerFS's engine is Rust, so the tools this repository needs are Node, pnpm
+# and Rust. mise installs all three under ~/.local/share/mise (never ~/.cargo),
+# which is why this file exists instead of a rustup or a system package.
+#
+# Versions: Node 24 or newer and pnpm 12, per .agents/setup; Rust 1.85.1, the
+# toolchain the pinned LayerFS commit builds with (its Cargo.toml sets
+# rust-version 1.85).
+[tools]
+node = "26"
+pnpm = "12"
+rust = "1.85.1"
+
+# The LayerFS deployment this checkout runs against, mapped onto the SDK's own
+# LAYERFS_ names (packages/workspace-layerfs/src/options.ts). A setting never
+# holds a secret: it names one. LAYERFS_IMAGE is a placeholder until the
+# Sandbox image is built and pulled by digest - see the Dockerfile in
+# packages/workspace-layerfs.
+[env]
+LAYERFS_HOME = "{{config_root}}/.layerfs/home"
+LAYERFS_STORE_PATH = "/var/lib/docker/volumes/arbor-store/_data/global/store.sqlite"
+LAYERFS_IMAGE = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+LAYERFS_DAEMON = "{{config_root}}/.layerfs/target/release/layerfs-daemon"
+LAYERFS_DOCKER = "/var/run/docker.sock"
+LAYERFS_VOLUME = "arbor-store"
+LAYERFS_CONTAINER_PREFIX = "arbor-"
