@@ -365,6 +365,50 @@ describe("one window end to end", () => {
     assert.ok(result.error?.message.includes("当前话题"));
   });
 
+  it("fills a note write's anchor in, so the model never declares one", async () => {
+    const journal = new SqliteJournal({ path: ":memory:" });
+    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const notes = new SqliteNoteStore({ path: ":memory:", journal });
+    const timers = new ManualTimers();
+    const backend = new ScriptedBackend();
+    const arbor = new Arbor({ journal, backend, timers, notes, now: () => 1700000000000 });
+    backend.attach(arbor.windowControl());
+    backend.script([
+      { tool: "note_write", args: { title: "部署", summary: "上线步骤", body: "先灰度，再全量" } },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    const revision = await notes.revisions("n1");
+    assert.equal(revision.items.length, 1);
+    assert.equal(revision.items[0]?.anchor?.window, "c1");
+    assert.match(revision.items[0]?.anchor?.event ?? "", /^r\d+$/);
+  });
+
+  it("refuses a note write against a revision that has moved on", async () => {
+    const journal = new SqliteJournal({ path: ":memory:" });
+    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const notes = new SqliteNoteStore({ path: ":memory:", journal });
+    const timers = new ManualTimers();
+    const backend = new ScriptedBackend();
+    const arbor = new Arbor({ journal, backend, timers, notes, now: () => 1700000000000 });
+    backend.attach(arbor.windowControl());
+    backend.script([
+      { tool: "note_write", args: { title: "部署", body: "第一版" } },
+      { tool: "note_replace", args: { id: "n1", revision: 0, body: "第二版" } },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    const results = await journal.list({ kinds: ["tool_result"] });
+    // The first write succeeded; the replace named a revision that never existed.
+    assert.ok(results.items[0]?.body?.includes("已写入 n1@1"));
+    // The refusal is recorded with the rule that refused it, so a trace shows why.
+    assert.ok(results.items[1]?.body?.includes("note.write"));
+    const body = await notes.read("n1");
+    assert.equal(body?.body, "第一版");
+  });
+
   it("keeps the board current with the live windows", async () => {
     const { arbor, backend } = await host();
     backend.script([{ text: "完成" }]);

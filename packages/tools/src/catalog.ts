@@ -23,6 +23,7 @@ import { directToolIn, runScript, type CodeExecContext, type ScriptCatalog } fro
 import type { ToolServices } from "./host.ts";
 import { CoreToolGroup } from "./groups/core.ts";
 import { FileToolGroup } from "./groups/files.ts";
+import { NoteToolGroup } from "./groups/notes.ts";
 import {
   BoardModuleGroup,
   JournalModuleGroup,
@@ -48,6 +49,7 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
     this.groups = [
       new CoreToolGroup(options.services),
       new FileToolGroup(options.services),
+      new NoteToolGroup(options.services),
       new JournalModuleGroup(options.services),
       new WindowsModuleGroup(options.services),
       new BoardModuleGroup(options.services),

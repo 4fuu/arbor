@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import type { CallContext, NoteStore, ToolResult, WorkspaceMount } from "@arbor/interfaces";
+import type { CallContext, NoteStore, NoteWriteInput, ToolResult, WorkspaceMount } from "@arbor/interfaces";
 import { Renderer, zhTextTable } from "@arbor/prompt";
 import { ToolCatalog } from "./catalog.ts";
 import type { LiveWindow, ToolServices } from "./host.ts";
@@ -18,16 +18,18 @@ interface Harness {
   workspace: DirectoryWorkspace;
   ended: { window: string; handoff?: unknown }[];
   sent: { to: string; content: string }[];
+  written: { window: string; input: NoteWriteInput }[];
   /** The workspace ref the window's first file call created. */
   refOf(window: string): string;
 }
 
-async function harness(options: { notes?: NoteStore } = {}): Promise<Harness> {
+async function harness(options: { notes?: boolean } = {}): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-tools-"));
   const workspace = new DirectoryWorkspace({ root });
   const ended: Harness["ended"] = [];
   const sent: Harness["sent"] = [];
+  const written: { window: string; input: NoteWriteInput }[] = [];
   const mounts = new Map<string, WorkspaceMount>();
   const live: LiveWindow[] = [
     {
@@ -46,7 +48,7 @@ async function harness(options: { notes?: NoteStore } = {}): Promise<Harness> {
   const services: ToolServices = {
     table: zhTextTable,
     journal,
-    ...(options.notes === undefined ? {} : { notes: options.notes }),
+    ...(options.notes === false ? {} : { notes: notesStore() }),
     workspace,
     ensureWorkspace: async (window) => {
       const found = mounts.get(window);
@@ -62,6 +64,21 @@ async function harness(options: { notes?: NoteStore } = {}): Promise<Harness> {
       return { callId: "", ok: true, content: "已结束" };
     },
     hasOpenWork: async () => true,
+    writeNote: async (window, input) => {
+      written.push({ window, input });
+      return {
+        ref: "n1@1",
+        id: "n1",
+        title: input.title,
+        summary: input.summary ?? "",
+        body: input.body,
+        visibility: input.visibility ?? "shared",
+        status: "active",
+        revision: 1,
+        time: 1,
+        window,
+      };
+    },
     search: async (window, query) => ({
       query,
       scope: ["journal"],
@@ -136,6 +153,7 @@ async function harness(options: { notes?: NoteStore } = {}): Promise<Harness> {
     workspace,
     ended,
     sent,
+    written,
     refOf: (window: string) => refs.get(window) ?? "",
   };
 }
@@ -159,7 +177,7 @@ describe("tool catalog", () => {
       assert.ok(tools.includes("code_exec"));
       assert.ok(tools.includes("tool_search"));
       const modules = catalog.modules().map((module) => module.name);
-      assert.deepEqual(modules, ["journal", "windows", "board", "workspace"]);
+      assert.deepEqual(modules, ["journal", "windows", "board", "notes", "workspace"]);
       // A module's line describes what it can do and never names a function.
       const journal = catalog.modules().find((module) => module.name === "journal");
       assert.ok((journal?.description ?? "").length > 0);
@@ -168,9 +186,9 @@ describe("tool catalog", () => {
   });
 
   it("omits the notes module when no NoteStore is configured", async () => {
-    const withoutNotes = await harness();
+    const withoutNotes = await harness({ notes: false });
     assert.ok(!withoutNotes.catalog.modules().some((module) => module.name === "notes"));
-    const notes = await harness({ notes: notesStore() });
+    const notes = await harness();
     assert.ok(notes.catalog.modules().some((module) => module.name === "notes"));
   });
 
@@ -412,6 +430,49 @@ describe("tool catalog", () => {
 
     const grep = await run(catalog, "workspace.grep", { pattern: "deploy" });
     assert.ok(grep.content.includes("notes/a.txt:1:deploy is done"));
+  });
+
+  it("writes memory through the note tools, with the host filling the anchor", async () => {
+    const { catalog, written } = await harness();
+    const tools = catalog.tools().map((tool) => tool.name);
+    assert.ok(tools.includes("note_write"));
+    assert.ok(tools.includes("note_replace"));
+    assert.ok(tools.includes("note_delete"));
+
+    const created = await run(catalog, "note_write", {
+      title: "部署",
+      summary: "上线步骤",
+      body: "先灰度，再全量",
+    });
+    assert.equal(created.ok, true);
+    assert.equal(written.length, 1);
+    assert.equal(written[0]?.window, "c1");
+    assert.equal(written[0]?.input.title, "部署");
+    // The group never declares an anchor: the service layer fills it in.
+    assert.equal(written[0]?.input.anchor, undefined);
+
+    const replaced = await run(catalog, "note_replace", {
+      id: "n1",
+      revision: 1,
+      title: "部署",
+      body: "先灰度，再全量，最后回滚",
+    });
+    assert.equal(replaced.ok, true);
+    assert.equal(written[1]?.input.replace, true);
+    assert.equal(written[1]?.input.expectedRevision, 1);
+
+    const removed = await run(catalog, "note_delete", { id: "n1", revision: 2 });
+    assert.equal(removed.ok, true);
+    assert.equal(written[2]?.input.delete, true);
+  });
+
+  it("omits the note tools when no NoteStore is configured", async () => {
+    const { catalog } = await harness({ notes: false });
+    const tools = catalog.tools().map((tool) => tool.name);
+    assert.ok(!tools.includes("note_write"));
+    const result = await run(catalog, "note_write", { title: "x", body: "y" });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.rule, "tool.unknown");
   });
 
   it("renders a refusal as the renderer's error block, so the model reads the rule", async () => {

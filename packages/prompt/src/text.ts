@@ -131,6 +131,7 @@ export const zhTextTable: TextTable = {
   "refused.edit.nomatch": "{path} 中没有匹配 {old} 的文本。",
   "refused.send.target": "发送目标不能为空。",
   "refused.send.content": "发送内容不能为空。",
+  "refused.note.write.empty": "标题和正文不能为空。",
   "refused.end.no_handoff": "有未完成的工作时必须带交接内容：当前话题、进展、待办、约定。",
   "refused.windows.ended": "窗口 {window} 已结束。",
   "refused.windows.notfound": "没有窗口 {window}。",
@@ -152,6 +153,7 @@ export const zhTextTable: TextTable = {
   "next.edit.nomatch": "先 read 该文件，取其中一段原文作为 old。",
   "next.send.target": "目标写成一个引用或一个外部 id。",
   "next.send.content": "补上要发送的内容。",
+  "next.note.write.empty": "补上标题和正文后再写。",
   "next.end.no_handoff": "补上交接待办：当前话题、进展、待办、约定，各自带上引用。",
   "next.windows.ended": "用 windows.list 找一个运行中的窗口，或用 windows.show 读它的记录。",
   "next.windows.notfound": "用 windows.list 查看当前窗口。",
@@ -172,6 +174,9 @@ export const zhTextTable: TextTable = {
   "tool.write": "把整个文件写入工作区。",
   "tool.edit": "把工作区中一处文件内容替换为另一处。",
   "tool.code_exec": "执行一段脚本，脚本中调用模块函数；决策类工具不能在脚本中调用。",
+  "tool.note_write": "写入一条新笔记：标题、摘要和正文。",
+  "tool.note_replace": "按读取的修订替换一条笔记的正文；修订过期时调用被拒绝。",
+  "tool.note_delete": "按读取的修订删除一条笔记。",
   "tool.tool_search": "按关键词、module.function 名称或不带参数查询模块、函数、技能和 MCP 服务器。",
 
   "param.query": "查询词。",
@@ -192,6 +197,12 @@ export const zhTextTable: TextTable = {
   "param.new": "替换后的内容。",
   "param.script": "要执行的脚本。",
   "param.keywords": "关键词，或一个 module.function 名称。",
+  "param.title": "笔记标题。",
+  "param.summary": "不超过 200 字的摘要。",
+  "param.body": "笔记正文。",
+  "param.visibility": "可见范围：shared 或 private。",
+  "param.id": "笔记引用，例如 n012。",
+  "param.revision": "写入方读取的修订号。",
 
   // ---- modules (docs/tools.md#modules) -----------------------------------
   "module.journal": "查询记录：搜索、按引用查看、查看上下文、追踪来源、查看相关项。",

@@ -18,7 +18,9 @@ import type {
   Handoff,
   Journal,
   ModuleSpec,
+  Note,
   NoteStore,
+  NoteWriteInput,
   Page,
   ParameterSpec,
   Ref,
@@ -76,6 +78,12 @@ export interface ToolServices {
 
   /** True when the window still has work the host can see. */
   hasOpenWork(window: WindowRef): Promise<boolean>;
+
+  /**
+   * One note write, with the anchor the host fills in: the window, the event
+   * and the evidence. The model never declares an anchor.
+   */
+  writeNote(window: WindowRef, input: NoteWriteInput): Promise<Note>;
 
   /** One query over the journal, the notes and the board. */
   search(window: WindowRef, query: string, scope?: readonly string[]): Promise<SearchOutcome>;

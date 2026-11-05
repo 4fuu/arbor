@@ -15,6 +15,7 @@
 
 import type {
   AgentBackend,
+  Anchor,
   BoardLine,
   Block,
   CallContext,
@@ -25,7 +26,9 @@ import type {
   Handoff,
   Journal,
   ModelInfo,
+  Note,
   NoteStore,
+  NoteWriteInput,
   OpenWindowRequest,
   Page,
   Ref,
@@ -623,6 +626,7 @@ export class Arbor {
       ensureWorkspace: async (window) => host.mountFor(window),
       endWindow: async (window, handoff) => host.endWindow(window, handoff),
       hasOpenWork: async (window) => host.hasOpenWork(window),
+      writeNote: async (window, input) => host.writeNote(window, input),
       search: async (window, query, scope) => host.searchFor(window, query, scope),
       send: async (window, request) => host.send(window, request),
 
@@ -675,6 +679,39 @@ export class Arbor {
   private async hasOpenWork(window: WindowRef): Promise<boolean> {
     const gaps = await this.journal.targetsBehind(window);
     return gaps.length > 0;
+  }
+
+  /**
+   * One note write. The anchor is the host's: the window that wrote it, the
+   * event the write is recorded at, and the refs the window cited
+   * (docs/memory.md#anchors). The model never fills one in.
+   */
+  private async writeNote(window: WindowRef, input: NoteWriteInput): Promise<Note> {
+    const notes = this.options.notes;
+    if (notes === undefined) {
+      throw arborError({
+        code: "unavailable",
+        rule: "notes.absent",
+        message: "notes: 本主机没有配置笔记存储",
+        nextAction: "本主机没有配置笔记存储。",
+      });
+    }
+    const anchor: Anchor = { window, event: await this.lastEvent(window) };
+    return notes.write({ ...input, anchor, refs: [...(input.refs ?? []), ...(await this.citedRefs(window))] });
+  }
+
+  /** The newest event a window wrote, for its next write's anchor. */
+  private async lastEvent(window: WindowRef): Promise<EventRef> {
+    const page = await this.journal.list({ window, limit: 1 });
+    const last = page.items.at(-1);
+    return last?.ref ?? ("r0" as EventRef);
+  }
+
+  /** The refs the window cited, for the write's evidence. */
+  private async citedRefs(window: WindowRef): Promise<Ref[]> {
+    const page = await this.journal.list({ window, kinds: ["tool_call"], limit: 1 });
+    const last = page.items.at(-1);
+    return last === undefined ? [] : [...last.refs];
   }
 
   private async searchFor(window: WindowRef, query: string, scope?: readonly string[]): Promise<SearchOutcome> {

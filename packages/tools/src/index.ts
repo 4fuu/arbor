@@ -29,6 +29,7 @@ export {
   type ToolServices,
 } from "./host.ts";
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
+export { NoteToolGroup } from "./groups/notes.ts";
 export { FileToolGroup } from "./groups/files.ts";
 export {
   BoardModuleGroup,
