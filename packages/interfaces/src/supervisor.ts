@@ -34,6 +34,11 @@ export interface ServiceSpec {
   /** Resource quotas the supervisor applies. */
   quota?: { memoryBytes?: number; cpuShares?: number };
   env?: Record<string, string>;
+  /**
+   * The directory the service owns, which the command runs in and which no
+   * window ends or reclaims. The environment forks it from the draft.
+   */
+  dir?: string;
 }
 
 export interface ServiceHandle {
@@ -76,4 +81,11 @@ export interface Supervisor {
   restart(name: string): Promise<ServiceHandle>;
 
   logs(name: string, options?: LogOptions): Promise<LogPage>;
+
+  /**
+   * Report every state change, so the host records it in the journal and runs
+   * its hooks (docs/environment.md#services). Optional: an implementation that
+   * reports no changes leaves service failures to `status`.
+   */
+  onStateChange?(handler: (status: ServiceStatus) => void | Promise<void>): void;
 }

@@ -55,6 +55,14 @@ export interface BlockFieldSpec {
  */
 export interface BlockKindSpec {
   kind: string;
+  /**
+   * A kind this one extends, built-in or another plugin's. Its tag, fields,
+   * lines and data mark are kept, and this spec's are added to them, so a
+   * plugin adds its own fields to a block the core builds - a note, an outside
+   * message - and the one renderer still renders it
+   * (docs/prompting.md#blocks-and-the-renderer).
+   */
+  extends?: string;
   /** XML tag the renderer wraps one block in; omitted for an untagged block. */
   tag?: string;
   fields: readonly BlockFieldSpec[];

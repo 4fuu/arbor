@@ -266,12 +266,15 @@ export function conversationUpdateBlock(update: {
   };
 }
 
+/** What a delta says arrived, changed or left: one character per item. */
+const DELTA_MARK = { added: "+", changed: "~", removed: "-" } as const;
+
 /** One environment delta: one line per item, `+`, `~` or `-`. */
 export function environmentDeltaBlock(delta: EnvDelta, time: number): Block {
   const items: Block[] = delta.items.map((change) => ({
     kind: "env_item",
     fields: {
-      change: change.change,
+      change: DELTA_MARK[change.change],
       kind: change.item.kind,
       name: change.item.name,
       description: change.item.description,

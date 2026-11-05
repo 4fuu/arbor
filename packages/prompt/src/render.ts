@@ -44,12 +44,47 @@ export class Renderer {
     for (const spec of options.builtin === false ? [] : BUILTIN_BLOCK_KINDS) {
       this.kinds.set(spec.kind, spec);
     }
-    for (const spec of options.kinds ?? []) this.kinds.set(spec.kind, spec);
+    for (const spec of options.kinds ?? []) this.register(spec);
   }
 
   /** Register a plugin's kind. Its mapping is declarative, like a built-in one. */
   register(spec: BlockKindSpec): void {
-    this.kinds.set(spec.kind, spec);
+    this.kinds.set(spec.kind, this.merge(spec));
+  }
+
+  /**
+   * A plugin's fixed strings, merged into this renderer's table. A deployment
+   * that replaces the table passes its own object, so a plugin's entries never
+   * reach another host's.
+   */
+  extend(entries: TextTable): void {
+    Object.assign(this.table as Record<string, string>, entries);
+  }
+
+  /**
+   * One spec against the kind it extends: the extended kind's tag, fields,
+   * lines and data mark are kept, and this spec's are added. A field named
+   * twice keeps this spec's declaration, so a plugin may restate one.
+   */
+  private merge(spec: BlockKindSpec): BlockKindSpec {
+    const base = spec.extends === undefined ? undefined : this.kinds.get(spec.extends);
+    if (base === undefined) return spec;
+    const fields = [...base.fields];
+    for (const field of spec.fields) {
+      const at = fields.findIndex((one) => one.name === field.name);
+      if (at === -1) fields.push(field);
+      else fields[at] = field;
+    }
+    const tag = spec.tag ?? base.tag;
+    const data = spec.data ?? base.data;
+    const lines = [...(base.lines ?? []), ...(spec.lines ?? [])];
+    return {
+      kind: spec.kind,
+      ...(tag === undefined ? {} : { tag }),
+      fields,
+      ...(spec.lines === undefined && base.lines === undefined ? {} : { lines }),
+      ...(data === undefined ? {} : { data }),
+    };
   }
 
   /** The kinds this renderer knows, in registration order. */

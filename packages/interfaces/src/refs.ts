@@ -27,8 +27,14 @@ export type SnapshotRef = `${WorkspaceRef}@${EventRef | "latest"}`;
 /** An environment revision: `e7`. */
 export type EnvRef = `e${number}`;
 
-/** A skill, MCP server or service, at a revision: `sk:deploy@4`, `mcp:weather@2`. */
-export type EnvItemRef = `${"sk" | "mcp" | "svc"}:${string}@${number}`;
+/** A skill, MCP server, service or the settings, at a revision: `sk:deploy@4`, `set:settings@2`. */
+export type EnvItemRef = `${"sk" | "mcp" | "svc" | "set"}:${string}@${number}`;
+
+/**
+ * An item named without its revision, as `reload({ remove })` takes it:
+ * `skill:deploy`, `mcp:weather`, `service:crawler`, `set:settings`.
+ */
+export type EnvItemName = `${"skill" | "sk" | "mcp" | "service" | "svc" | "settings" | "set"}:${string}`;
 
 /** Media and files stored once by content beside the journal: `b7`. */
 export type BlobRef = `b${number}`;
@@ -46,6 +52,7 @@ export type Ref =
   | SnapshotRef
   | EnvRef
   | EnvItemRef
+  | EnvItemName
   | BlobRef
   | ExternalRef;
 

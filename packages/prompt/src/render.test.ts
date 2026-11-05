@@ -96,6 +96,59 @@ describe("renderer", () => {
     assert.ok(text.includes("上海 当前 18 度。"));
   });
 
+  it("takes a plugin's own fields onto a built-in kind, and the one renderer writes them", () => {
+    // A plugin extends `note` and `outside_message` in place: the built-in shape
+    // is kept, and its own fields render after the built-in ones
+    // (docs/architecture.md#plugins).
+    const renderer = new Renderer();
+    renderer.extend({ "note.review": "复核：{review}", "outside_message.trust": "来源可信度：{trust}" });
+    renderer.register({
+      kind: "note",
+      extends: "note",
+      lines: ["note.review"],
+      fields: [{ name: "review", type: "string" }],
+    });
+    renderer.register({
+      kind: "outside_message",
+      extends: "outside_message",
+      lines: ["outside_message.trust"],
+      fields: [{ name: "trust", type: "string" }],
+    });
+    const note = renderer.render([
+      {
+        kind: "note",
+        fields: {
+          ref: "n012@3",
+          title: "部署",
+          summary: "上线步骤",
+          revision: 3,
+          status: "active",
+          review: "未复核",
+          body: [dataBlock("先灰度，再全量")],
+        },
+      },
+    ]);
+    // The built-in lines are unchanged, and the plugin's field has its own line.
+    assert.ok(note.includes("n012@3 部署"));
+    assert.ok(note.includes("摘要：上线步骤"));
+    assert.ok(note.includes("复核：未复核"));
+    assert.ok(note.includes("<data>"), "a note stays data");
+    const outside = renderer.render([
+      {
+        kind: "outside_message",
+        fields: { external: "qq:12345", source: "qq", time: "2026-11-05 07:42:35", trust: "未知" },
+      },
+    ]);
+    assert.ok(outside.includes("外部消息 qq:12345（qq，2026-11-05 07:42:35）"));
+    assert.ok(outside.includes("来源可信度：未知"));
+    // A block of the same kind without the plugin's field renders as it always did.
+    const plain = renderer.render([
+      { kind: "note", fields: { ref: "n1@1", title: "构建", summary: "CI", revision: 1, status: "active" } },
+    ]);
+    assert.ok(!plain.includes("复核"));
+    assert.ok(plain.includes("n1@1 构建"));
+  });
+
   it("renders an unknown kind as data, so nothing is lost", () => {
     const renderer = new Renderer();
     const text = renderer.render([{ kind: "mystery", fields: { note: "来自插件" } }]);

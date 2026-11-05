@@ -8,9 +8,15 @@
  * delta. Each item has its own revision, so changes to different items never
  * conflict. Two things are outside the model's reach: the value of a secret,
  * and the built-in skills.
+ *
+ * The settings are an item like any other, at `/env/settings.json`, so the
+ * model changes its own identity, general rules, judge and model tiers the same
+ * way it changes a skill.
  */
 
-import type { EnvItemRef, EnvRef } from "./refs.ts";
+import type { FunctionSpec } from "./agent.ts";
+import type { EnvItemName, EnvItemRef, EnvRef } from "./refs.ts";
+import type { Settings } from "./settings.ts";
 import type { ArborErrorInfo } from "@arbor/errors";
 
 export type EnvItemKind = "skill" | "mcp" | "service" | "settings";
@@ -28,13 +34,23 @@ export interface EnvItem {
   time: number;
   /** True for the built-in skills, which are read-only. */
   builtin?: boolean;
+  /**
+   * An MCP server's functions, listed when the server was last validated. A
+   * server is a module of its own in code mode, so this is what the catalog
+   * declares and what `tool_search` answers (docs/tools.md#modules).
+   */
+  functions?: readonly FunctionSpec[];
 }
 
-/** A draft in a workspace, waiting for `reload`. */
+/**
+ * One draft of an environment item, waiting for `reload`. A window's draft
+ * names a path inside that window's workspace; a plugin's draft names a path on
+ * the host, beside the plugin's own files.
+ */
 export interface EnvDraft {
   kind: EnvItemKind;
   name: string;
-  /** Where the draft is, in the window's workspace. */
+  /** Where the draft is: in the window's workspace, or a host path for a plugin. */
   path: string;
   /** The revision the draft was copied from; a newer one refuses the install. */
   copiedFrom?: number;
@@ -68,23 +84,38 @@ export interface EnvDelta {
 export interface Environment {
   /** The shared mount every window reads `/env` through. */
   readonly mount: string;
+  /** The directory the mount is, on the host, which the file tools read. */
+  readonly directory: string;
 
   revision(): Promise<EnvRef>;
 
   list(): Promise<readonly EnvItem[]>;
 
   /** An item's revisions, or the environment's when `item` is omitted. */
-  history(item?: EnvItemRef): Promise<readonly EnvRevision[]>;
+  history(item?: EnvItemRef | EnvItemName): Promise<readonly EnvRevision[]>;
+
+  /** The settings, from `/env/settings.json`. Undefined until one is installed. */
+  settings(): Promise<Settings | undefined>;
 
   /** Validate drafts: a skill parses, an MCP server starts and lists its functions. */
   validate(drafts: readonly EnvDraft[]): Promise<EnvValidation>;
 
-  /** `reload({ install })`. Replaces each item as a whole, or refuses and changes nothing. */
-  install(drafts: readonly EnvDraft[]): Promise<EnvRevision>;
+  /**
+   * `reload({ install, remove })`. Replaces each item as a whole, or refuses
+   * and changes nothing. One call is one environment revision, so a call that
+   * both installs and removes lands as a single delta.
+   */
+  install(drafts: readonly EnvDraft[], remove?: readonly (EnvItemRef | EnvItemName)[]): Promise<EnvRevision>;
 
   /** `reload({ remove })`. */
-  remove(items: readonly EnvItemRef[]): Promise<EnvRevision>;
+  remove(items: readonly (EnvItemRef | EnvItemName)[]): Promise<EnvRevision>;
 
   /** What changed since a revision, for a live window's delta. */
   delta(since: EnvRef): Promise<EnvDelta>;
+
+  /** Start every installed service again, after a host restart. */
+  resume(): Promise<void>;
+
+  /** Call one function of an installed MCP server, from a script in `code_exec`. */
+  call(server: string, fn: string, args: Record<string, unknown>): Promise<string>;
 }

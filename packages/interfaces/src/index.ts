@@ -18,6 +18,7 @@ export type {
   SnapshotRef,
   EnvRef,
   EnvItemRef,
+  EnvItemName,
   BlobRef,
   ExternalRef,
   Ref,

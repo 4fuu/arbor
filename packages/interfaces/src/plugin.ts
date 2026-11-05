@@ -11,7 +11,7 @@
  * any item.
  */
 
-import type { Block, BlockKindSpec } from "./blocks.ts";
+import type { Block, BlockKindSpec, TextTable } from "./blocks.ts";
 import type { Channel } from "./channel.ts";
 import type { EffectExecutor } from "./effects.ts";
 import type { EnvDraft } from "./environment.ts";
@@ -34,6 +34,12 @@ export interface PromptSection {
   blocks: readonly BlockKindSpec[];
   /** Its content, as blocks. The plugin hands blocks, never finished text. */
   content(): readonly Block[] | Promise<readonly Block[]>;
+  /**
+   * The fixed strings its own blocks write, merged into the host's text table.
+   * A plugin names no secret here, and writes no prompt text of its own: its
+   * blocks carry data, and the table carries the words.
+   */
+  text?: TextTable;
 }
 
 export interface Plugin {
