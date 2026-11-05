@@ -85,6 +85,8 @@ class ScriptedSession implements WindowSession {
   private readonly runDone: Promise<void>;
   private readonly resolveRun: () => void;
   private ended = false;
+  /** The run's steps are used up, or the window ended. */
+  settled = false;
 
   constructor(backend: ScriptedBackend, window: string, usage: TokenUsage) {
     this.backend = backend;
@@ -117,6 +119,7 @@ class ScriptedSession implements WindowSession {
 
   async end(handoff?: unknown, reason: WindowEndReason = "model_ended"): Promise<void> {
     if (this.ended) return;
+    this.settled = true;
     this.ended = true;
     this.current = "ended";
     const outcome: WindowOutcome = {
@@ -167,6 +170,7 @@ class ScriptedSession implements WindowSession {
 
   /** The run ended; the window stays open for a related input. */
   runEnded(): void {
+    this.settled = true;
     if (this.current === "ended") return;
     this.current = "idle";
     this.push({
@@ -181,6 +185,7 @@ class ScriptedSession implements WindowSession {
   }
 
   private finishRun(): void {
+    this.settled = true;
     this.resolveRun();
     this.flush();
   }
@@ -275,14 +280,21 @@ export class ScriptedBackend implements AgentBackend {
 
   /**
    * Resolves when every scripted run has used up its steps and the host has
-   * seen the events it produced.
+   * seen the events it produced. A window is opened asynchronously, so this
+   * waits for the session to exist before it waits for the run.
    */
   async finished(): Promise<void> {
-    for (const session of this.sessions) {
-      if (session.state === "ended") continue;
-      await session.runFinished();
+    for (let attempt = 0; attempt < 500; attempt += 1) {
+      if (this.steps.length === 0) {
+        const busy = [...this.sessions].filter((session) => !session.settled);
+        if (busy.length === 0) {
+          await turn();
+          await turn();
+          return;
+        }
+      }
+      await turn();
     }
-    await turn();
-    await turn();
+    throw new Error("the scripted run never finished");
   }
 }

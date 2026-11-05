@@ -58,13 +58,22 @@ export class PiAgentBackend implements AgentBackend {
 
   private readonly runtime: Models;
   private readonly renderer: Renderer;
-  private readonly control: WindowControl | undefined;
+  private control: WindowControl | undefined;
 
   constructor(options: PiBackendOptions = {}) {
     this.name = options.name ?? "pi";
     this.runtime = options.models ?? builtinModels();
     this.renderer = options.renderer ?? new Renderer();
     this.control = options.control;
+  }
+
+  /**
+   * Take the host's window control. A backend that runs windows in process
+   * needs it, and the host builds it after the backend exists, so the two are
+   * joined here rather than through a constructor argument.
+   */
+  attachControl(control: WindowControl): void {
+    this.control = control;
   }
 
   /** The catalog this backend can run. Only models that take images. */

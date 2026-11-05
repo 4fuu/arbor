@@ -25,6 +25,11 @@ export function parameterSchema(parameter: ParameterSpec): Record<string, unknow
   if (parameter.type === "refs" || parameter.type === "blocks" || parameter.type === "array") {
     schema.items = { type: "string" };
   }
+  if (parameter.type === "object") {
+    // A nested object carries whatever its own fields say, the way a tool
+    // schema from another system does.
+    schema.additionalProperties = true;
+  }
   return schema;
 }
 
@@ -34,6 +39,8 @@ function jsonType(type: ParameterSpec["type"]): string {
       return "number";
     case "boolean":
       return "boolean";
+    case "object":
+      return "object";
     case "refs":
     case "blocks":
     case "array":

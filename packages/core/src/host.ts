@@ -161,6 +161,8 @@ export class Arbor {
   /** The service layer the tools call. One implementation of every operation. */
   readonly services: ToolServices;
   private started = false;
+  /** The model a window gets when settings map no tier. */
+  private fallbackModel: string | undefined;
 
   constructor(options: ArborOptions) {
     this.options = options;
@@ -183,6 +185,10 @@ export class Arbor {
     });
     this.services = this.buildServices();
     this.catalog = new ToolCatalog({ services: this.services, groups: options.groups });
+    // A backend that runs windows in process takes the host's control: record a
+    // call at its event, run it through the tool groups, end when asked to.
+    const attach = (options.backend as { attachControl?: (control: WindowControl) => void }).attachControl;
+    attach?.call(options.backend, this.windowControl());
   }
 
   /** The models the backend can run, for settings' tier mapping. */
@@ -359,7 +365,7 @@ export class Arbor {
         },
         tools: this.catalog.tools(),
         modules: this.catalog.modules(),
-        model: this.modelFor(),
+        model: await this.modelFor(),
         firstInput: input.firstInput,
         limits: input.limits,
         ...(input.continuation === undefined ? {} : { continuation: input.continuation }),
@@ -903,15 +909,26 @@ export class Arbor {
     };
   }
 
-  /** The model a new window gets, from settings' tiers. */
-  private modelFor(): string {
+  /**
+   * The model a new window gets. Settings map each tier to a model; without a
+   * mapping the host takes the first model the backend can run, so a window
+   * opens even before the judge and the settings exist.
+   */
+  private async modelFor(): Promise<string> {
     const tiers = this.options.settings?.modelTiers ?? {};
     const tier = this.options.settings?.defaultTier;
     if (tier !== undefined) {
       const mapped = tiers[tier];
       if (mapped !== undefined) return mapped;
     }
-    return Object.values(tiers)[0] ?? this.options.defaultModel ?? "default";
+    const first = Object.values(tiers)[0];
+    if (first !== undefined) return first;
+    if (this.options.defaultModel !== undefined) return this.options.defaultModel;
+    if (this.fallbackModel === undefined) {
+      const catalog = await this.backend.models();
+      this.fallbackModel = catalog[0]?.id;
+    }
+    return this.fallbackModel ?? "default";
   }
 
   /** The board lines related to a task's targets. */

@@ -233,6 +233,45 @@ describe("pi backend", () => {
     assert.equal(seen.at(-1), "ended");
   });
 
+  it("passes a nested object argument through to the call", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([
+        fauxToolCall("end", { handoff: { topics: ["部署"], progress: ["已改配置"] } }, { id: "call_1" }),
+      ]),
+      fauxAssistantMessage("完成"),
+    ]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({
+      models,
+      control: controlOf(recorded, () => ({ callId: "call_1", ok: true, content: "已结束" })),
+    });
+
+    const session = await backend.open(
+      requestOf({
+        tools: [
+          {
+            name: "end",
+            description: "结束本窗口；有未完成工作时带交接内容。",
+            parameters: { handoff: { type: "object", description: "交接内容" } },
+          },
+        ],
+      }),
+    );
+    for await (const event of session.events()) {
+      if (event.kind === "run_ended") break;
+    }
+    await session.end();
+
+    // A nested object is declared as an object, not coerced to a string.
+    assert.deepEqual(recorded.calls[0]?.args, { handoff: { topics: ["部署"], progress: ["已改配置"] } });
+    assert.equal(recorded.results[0]?.content, "已结束");
+  });
+
   it("lists only the models that take images", async () => {
     const faux = fauxProvider({
       models: [
