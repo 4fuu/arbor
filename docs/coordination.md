@@ -80,9 +80,6 @@ the ref leads to the full event.
 - `windows.send(to, text, reply_to?)` sends a message to another live window.
   A message to an ended window is refused with the next action named: read its
   history, or address a live one.
-- `windows.yield(to, note?)` hands the current task to another live window,
-  for example one already doing the same thing. The task enters that window
-  under the insertion rules.
 - A reply is routed back as an input block; a sender never blocks waiting for
   one.
 - The send and the delivery are events, linked to each other.

@@ -28,7 +28,7 @@ often the logs show it used.
 | Module | Functions |
 | --- | --- |
 | `journal` | `search`, `show(ref)`, `around(ref, before?, after?)`, `trace(ref)`, `links(ref, offset?)` |
-| `windows` | `list`, `show(c…)`, `send(to, text, reply_to?)`, `broadcast(text)`, `yield(to, note?)`, `inbox` |
+| `windows` | `list`, `show(c…)`, `send(to, text, reply_to?)`, `broadcast(text)`, `inbox` |
 | `env` | `list`, `history(item?)` |
 | `services` | `list`, `status(name)`, `logs(name)` |
 | `board` | `list`, `set(line)`, `expect(item? \| description?)`, `unexpect(ref)` |

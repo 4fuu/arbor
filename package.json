@@ -1,0 +1,15 @@
+{
+  "name": "arbor",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "arbor: a framework for an agent without sessions",
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "check": "pnpm typecheck && pnpm test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

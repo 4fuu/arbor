@@ -1,0 +1,25 @@
+{
+  "name": "@arbor/journal-sqlite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default Journal: append-only events with a global sequence, targets, native ids, refs, blobs and lexical search on SQLite.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

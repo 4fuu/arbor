@@ -75,6 +75,7 @@ One reference format points at anything, in every tool argument and result:
 | `m55` | a message between windows |
 | `ws3`, `ws3@r902` | a workspace, or its snapshot at an event |
 | `e7` | an environment revision |
+| `b7` | an image or file stored once by content beside the journal |
 | `sk:deploy@4`, `mcp:weather@2`, `svc:crawler@3` | a skill, an MCP server or a service, at a revision |
 | `qq:12345` | an outside message, by its native id |
 
@@ -96,6 +97,12 @@ All text search is lexical and built for Chinese and mixed text: a word index
 by jieba segmentation with BM25, a trigram index for exact substrings, and a
 fallback for one- or two-character queries. Results are merged, exact
 substring hits first, and each carries its ref and window.
+
+The default word index segments Chinese, Japanese and Korean text per character
+and per bigram and every other script per word, which is what makes a
+two-character query find the phrase it appears in without a dictionary. A
+deployment that wants jieba's dictionary segmentation implements `Segmenter`
+and registers it.
 
 ## Media
 

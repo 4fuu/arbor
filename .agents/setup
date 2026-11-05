@@ -1,0 +1,16 @@
+#!/bin/sh
+# Prepare a fresh orb for arbor.
+#
+# Node runs the TypeScript sources directly, so there is no build step: the only
+# setup is installing the workspace dependencies and running the checks once, so
+# a broken environment fails here instead of in a later stage.
+
+set -eu
+
+echo "node $(node --version)"
+echo "pnpm $(pnpm --version)"
+
+# arbor needs pnpm 12 and Node 24 or newer.
+pnpm install --frozen-lockfile
+
+pnpm check

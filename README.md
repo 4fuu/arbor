@@ -35,7 +35,8 @@ and every window can find everything that was ever done.
 - **Every module is replaceable.** The agent backend (pi by default), the
   journal, notes, workspaces, the judge, channels and the rest are interfaces.
 
-Status: design. No code yet.
+Status: stage 0. The interfaces and the SQLite journal are built; windows and
+dispatch come next.
 
 > The design grows out of the context, window and notes mechanisms built for
 > [qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver). This link is
@@ -56,3 +57,16 @@ Status: design. No code yet.
 | [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |
 | [docs/prompting.md](docs/prompting.md) | how every model-facing text is written: layers, notes, deliveries, errors, judge questions, terms |
+
+## Repository layout
+
+Node runs the TypeScript sources directly, so there is no build step: `pnpm
+check` typechecks and tests every package.
+
+| Path | Layer |
+| --- | --- |
+| `packages/interfaces` | the interfaces layer: every replaceable interface, plus the core's own shapes. Types only. |
+| `packages/errors` | the error shape every refusal uses: the rule and the next action |
+| `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
+| `packages/core` (later) | the service layer: one implementation of every operation |
+| `packages/tools` (later) | the entry points: direct tools, code mode modules, the host API |

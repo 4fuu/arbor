@@ -1,0 +1,19 @@
+{
+  "name": "@arbor/errors",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The core error shape every arbor refusal uses: errors name the rule and the next action.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

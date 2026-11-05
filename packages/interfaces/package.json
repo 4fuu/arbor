@@ -1,0 +1,22 @@
+{
+  "name": "@arbor/interfaces",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Every replaceable interface in arbor, and the core's own shapes.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
