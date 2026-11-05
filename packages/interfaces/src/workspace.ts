@@ -33,11 +33,35 @@ export interface MountOptions {
   readOnly?: boolean;
 }
 
-/** A mounted workspace: a path in the host's filesystem, released when done. */
+/** The result of one command run in a mounted workspace. */
+export interface ExecResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  /** The streams were cut to fit a bound. An implementation that never cuts them reports `false`. */
+  truncated: boolean;
+}
+
+/**
+ * A mounted workspace: a path in the host's filesystem, released when done.
+ *
+ * `path` is where the workspace's files are. It is a host path for an
+ * implementation that mounts a directory on the host, and the mounted
+ * directory of an implementation that owns its own execution environment -
+ * LayerFS mounts a Workspace inside its Sandbox, so a command runs there
+ * through `exec`, not on the host.
+ */
 export interface WorkspaceMount {
   ref: WorkspaceRef | SnapshotRef;
   path: string;
   readOnly: boolean;
+  /**
+   * Run one command in the workspace's directory. Present when the
+   * implementation owns the execution environment; a host-directory
+   * implementation leaves it out and the caller runs the command itself in
+   * `path`.
+   */
+  exec?(command: string): Promise<ExecResult>;
   release(): Promise<void>;
 }
 

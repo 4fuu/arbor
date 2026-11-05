@@ -4,6 +4,14 @@
 # Node runs the TypeScript sources directly, so there is no build step: the only
 # setup is installing the workspace dependencies and running the checks once, so
 # a broken environment fails here instead of in a later stage.
+#
+# Stage 6 adds LayerFS, the default Workspace's backend. Its core is Rust and
+# its JavaScript packages are not published, so a checkout is pinned here and
+# built: the native addon the SDK loads, and the daemon a Sandbox runs. The
+# build needs a Rust toolchain and the SQLite headers; mounting a workspace
+# additionally needs /dev/fuse, a Docker Engine and the image a Sandbox runs,
+# which this orb does not provide, so the integration tests that mount skip
+# here and run where a deployment configured them.
 
 set -eu
 
@@ -12,5 +20,52 @@ echo "pnpm $(pnpm --version)"
 
 # arbor needs pnpm 12 and Node 24 or newer.
 pnpm install --frozen-lockfile
+
+# The LayerFS pin: one commit, the tree its JavaScript packages and engine
+# crates live in. The v1.1.0 tag's own tree holds no engine, so the pin is a
+# commit on main.
+LAYERFS_COMMIT=67310175ebba2b84efefb4df76f875a43487cf50
+LAYERFS_DIR="$(pwd)/.layerfs"
+
+# The engine builds with Cargo and links SQLite; a mount needs /dev/fuse at
+# run time. A C toolchain and pkg-config are the build's, the rest is the
+# daemon's and the addon's.
+install_packages() {
+  if [ "$(id -u)" = "0" ]; then
+    apt-get install -y --no-install-recommends "$@"
+  else
+    sudo -n apt-get install -y --no-install-recommends "$@"
+  fi
+}
+
+if ! command -v apt-get >/dev/null 2>&1; then
+  echo "setup: apt-get is unavailable, so system packages cannot be installed" >&2
+  exit 1
+fi
+
+install_packages build-essential pkg-config libsqlite3-dev fuse3
+
+if [ ! -d "$LAYERFS_DIR/.git" ]; then
+  echo "layerfs: cloning $LAYERFS_COMMIT into .layerfs"
+  git clone --quiet https://github.com/Ephemeral-AI-Lab/layerfs.git "$LAYERFS_DIR"
+  git -C "$LAYERFS_DIR" checkout --quiet "$LAYERFS_COMMIT"
+fi
+
+if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
+  echo "layerfs: installing the Rust toolchain the engine builds with"
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.85.1 --no-modify-path
+fi
+
+# shellcheck disable=SC1091
+. "$HOME/.cargo/env"
+
+echo "layerfs: building the native addon and the daemon (this takes a few minutes)"
+CARGO_TARGET_DIR="$LAYERFS_DIR/target" cargo build \
+  --manifest-path "$LAYERFS_DIR/Cargo.toml" \
+  --locked --release -p layerfs-node -p layerfs-daemon
+
+cp "$LAYERFS_DIR/target/release/liblayerfs_node.so" \
+  "$LAYERFS_DIR/engine/crates/layerfs-node/layerfs.node"
+echo "layerfs: addon and daemon built"
 
 pnpm check

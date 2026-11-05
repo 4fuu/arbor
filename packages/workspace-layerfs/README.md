@@ -1,0 +1,118 @@
+# @arbor/workspace-layerfs
+
+The default `Workspace`: a directory per window on
+[LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs), with forks for
+continuations that copy no files, a snapshot after every write and every `bash`
+call, and read-only mounts of another workspace's snapshots by ref
+([docs/workspaces.md](../../docs/workspaces.md)).
+
+```ts
+import { LayerfsWorkspace } from "@arbor/workspace-layerfs";
+
+const workspace = new LayerfsWorkspace({
+  project: "arbor",
+  retentionMs: 30 * 24 * 60 * 60 * 1000,
+  quotaBytes: 20 * 1024 * 1024 * 1024,
+  deployment: {
+    home: "/var/lib/arbor/layerfs",
+    storePath: "/var/lib/arbor/layerfs/store.sqlite",
+    image: "sha256:…",
+    daemon: "/opt/layerfs/layerfs-daemon",
+    docker: "/var/run/docker.sock",
+    volume: "arbor-store",
+  },
+});
+
+const ws1 = await workspace.create("c41");   // the window's own directory
+const ws2 = await workspace.fork(ws1, "c42"); // a continuation: no file copied
+const mount = await workspace.mount(ws1);
+await mount.exec?.("npm test");
+await workspace.snapshot(ws1, "r902");        // the event that changed files
+await mount.release();
+const view = await workspace.mount("ws1@r902"); // read-only, by ref
+await view.release();
+```
+
+## What an arbor ref names in LayerFS
+
+| Arbor | LayerFS |
+| --- | --- |
+| `ws3` | the Branch `ws3`, forked from the base Branch (`main`) on first use, or from the workspace it continues |
+| `ws3@r902` | the Commit this package recorded for event `r902` |
+| `mount("ws3")` | that Branch, mounted read-write in a Sandbox |
+| `mount("ws3@r902")` | the Branch `ws3-r902-view`, forked at that Commit once and mounted read-only |
+
+No LayerFS id crosses the interface. This package keeps the mapping - which
+Branch a workspace is, which Commit an event's snapshot holds - in its own
+SQLite registry beside the LayerFS Store, because a Commit id is not a ref and
+may not be recorded where the core can see it
+([docs/architecture.md](../../docs/architecture.md#interfaces)). The registry is
+also what makes a snapshot ref stable: `ws3@r902` keeps resolving to the same
+Commit after the workspace moves on.
+
+## Mounts and `bash`
+
+LayerFS mounts a Workspace inside the Sandbox its daemon runs in, over FUSE, so
+a mount's `path` is that Sandbox's own directory and not a host path. A command
+therefore runs through the mount's `exec`, which the interface carries for an
+implementation that owns its execution environment
+([`ExecResult`](../../packages/interfaces/src/workspace.ts)); a
+host-directory implementation leaves it out and the caller runs the command
+itself in `path`.
+
+Releasing a read-write mount commits it first, so nothing the agent did is lost
+by ending a mount - a LayerFS unmount of a dirty Workspace is refused, and
+discarding one throws the work away. A read-only view is discarded instead: a
+view must never publish anything.
+
+## Settings
+
+| Setting | Meaning |
+| --- | --- |
+| `project` | the LayerFS project every window's directory lives in. `arbor` |
+| `baseBranch` | the Branch a new window's directory forks from. `main` |
+| `retentionMs` | how long snapshots are kept before the host reclaims them (`settings.workspaces.retentionMs`). The host calls `reclaim`; this package runs no clock |
+| `quotaBytes` | the limit `quota` reports. `0` is no limit |
+| `stateDir` | where the registry lives. Inside `deployment.home` by default |
+| `deployment` | LayerFS's own settings, mapped onto its `LAYERFS_` environment names |
+| `sdk` | where the LayerFS JavaScript packages are, when not the checkout `.agents/setup` makes |
+
+`deployment.source` is the folder a first Init imports into the base Branch, so
+a deployment that wants every window to start from something - credentials, a
+skeleton - points it there. With none, the project starts empty.
+
+## What LayerFS does not give
+
+- **Reclaim cannot erase history.** Its Store has no per-Branch delete, so
+  `reclaim` releases the mounts, drops the refs that resolved them and marks
+  the workspace reclaimed; the Branch and its Commits stay in the Store until
+  the project itself is removed.
+- **A quota is reported, not enforced.** LayerFS has no quota of its own, and
+  its storage is deduplicated across the whole Store, so `quota` reports the
+  workspace's logical size (the newest Commit's tree) and its file count, which
+  costs one walk of the tree.
+- **A snapshot needs a Commit.** LayerFS publishes a Commit from a mounted
+  Workspace, so a workspace nothing was ever written to has none, and
+  `snapshot` refuses it rather than inventing an id.
+
+## Installing LayerFS
+
+LayerFS is not a dependency of this repository: its core is Rust and its
+JavaScript packages are built beside a pinned checkout. `.agents/setup` clones
+that checkout into `.layerfs`, builds `engine/crates/layerfs-node/layerfs.node`
+and `layerfs-daemon` with Cargo 1.85.1, and leaves them where this package finds
+them. `ARBOR_LAYERFS_SDK` (or the `sdk` option) names another checkout.
+
+Running a mount needs more than the build: `/dev/fuse`, a Docker Engine, the
+image a Sandbox runs, and a Store on ext4, xfs or btrfs. `capabilities()`
+reports which of those a host has.
+
+## Tests
+
+- `layerfs-workspace.test.ts` drives the real `@layerfs/agent` JavaScript over
+  the stand-in native binding in `fixture/`, so it needs no Docker, no FUSE and
+  no Store, and runs wherever the packages are installed. It checks this
+  package's side of the contract: which Branch a ref names, which Commit an
+  event's snapshot holds, what a mount does and what it never publishes.
+- `layerfs-workspace.real.test.ts` runs against a real Store, and a real mount
+  where the machine has one, and skips with its reason otherwise.

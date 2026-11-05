@@ -24,7 +24,15 @@ snapshots, and the agent does the rest.
 
 The default `Workspace` is [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs),
 used only for cheap forks, snapshots and mounts
-([architecture.md](architecture.md#stack) lists what it requires).
+([architecture.md](architecture.md#stack) lists what it requires). In that
+implementation a workspace is a LayerFS Branch and a snapshot is one of its
+Commits, and `bash` runs inside the Sandbox LayerFS mounts the Branch in, so a
+mount's path is that Sandbox's own directory. Two consequences come from
+LayerFS itself: its Store has no per-Branch delete, so reclaiming a workspace
+drops the refs that resolved it and leaves its history in the Store until the
+project is removed; and its storage is deduplicated across the whole Store, so
+a disk quota is a limit the deployment sets against a workspace's logical size,
+not one LayerFS enforces.
 
 ## What the agent does
 
@@ -47,6 +55,8 @@ dispatching ([coordination.md](coordination.md#the-board)).
   snapshots, read-only. Whether work was pushed before the end is the agent's
   responsibility; nothing in the directory is lost either way.
 - After a retention period the host reclaims the snapshots by itself. This is
-  a setting, not a task for a model.
+  a setting, not a task for a model. Reclaiming drops the refs that resolved
+  them; whether the history underneath is erased too is the implementation's,
+  and the default one keeps it until the project is removed.
 
 A deployment that never works with files needs no workspace and no LayerFS.
