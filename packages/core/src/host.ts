@@ -26,6 +26,7 @@ import type {
   BoardLine,
   Block,
   CallContext,
+  Channel,
   Delivery,
   Environment,
   EnvDraft,
@@ -71,6 +72,7 @@ import type {
   ToolResult,
   TokenUsage,
   OutsideEvent,
+  Unsubscribe,
   WindowEndReason,
   WindowRef,
   ToolCallContext,
@@ -282,6 +284,10 @@ export class Arbor {
   private nextQueueId = 0;
   /** The plugins this host runs, in the order they registered. */
   private readonly plugins: Plugin[] = [];
+  /** The channels those plugins registered, in the order they registered. */
+  private readonly registeredChannels: Channel[] = [];
+  /** The push sources the host took, so `close` lets them go. */
+  private readonly subscriptions: Unsubscribe[] = [];
   /** The prompt sections the plugins registered, one per plugin. */
   private readonly sections: PromptSection[] = [];
   /** The environment as the catalog reads it, kept in step with every change. */
@@ -377,6 +383,10 @@ export class Arbor {
       if (section.text !== undefined) this.renderer.extend(section.text);
     }
     for (const executor of plugin.adapters?.effectExecutors ?? []) this.effects.addExecutor(executor);
+    // A channel is an outside source: the host takes its push source at `start`
+    // and ingests what arrives (docs/dispatch.md#tasks). A channel a deployment
+    // only uses as a sink is simply never subscribed to.
+    for (const channel of plugin.adapters?.channels ?? []) this.registeredChannels.push(channel);
     // A plugin's items arrive in `/env` on the next load, so its abilities reach
     // live windows as a delta and new ones through their prefix.
     this.loading = undefined;
@@ -385,6 +395,11 @@ export class Arbor {
   /** The plugins this host runs, in the order they registered. */
   registered(): readonly Plugin[] {
     return [...this.plugins];
+  }
+
+  /** The channels the plugins registered, in the order they registered. */
+  channels(): readonly Channel[] {
+    return [...this.registeredChannels];
   }
 
   /** The criteria the plugins added for the judge, which dispatch reads. */
@@ -612,6 +627,33 @@ export class Arbor {
       restored.set(parsed.ref as TaskRef, parsed);
     }
     await this.scheduler.restore?.([...restored.values()]);
+    // A plugin's channel is an outside source, so the host takes its push source
+    // and ingests what arrives (docs/dispatch.md#tasks). A channel without one
+    // is a sink a deployment polls, or one nothing pushes to.
+    this.subscribeChannels();
+  }
+
+  /**
+   * Take every registered channel's push source. What arrives is outside
+   * traffic, so it goes through `ingest` exactly as a task source's does: one
+   * task per conversation, and the events recorded before anything routes
+   * (docs/dispatch.md#tasks).
+   */
+  private subscribeChannels(): void {
+    for (const channel of this.registeredChannels) {
+      if (channel.subscribe === undefined) continue;
+      this.subscriptions.push(
+        channel.subscribe(async (events) => {
+          if (events.length === 0) return;
+          await this.ingest(events);
+        }),
+      );
+    }
+  }
+
+  /** Let every push source go. What they recorded stays in the journal. */
+  private async unsubscribeChannels(): Promise<void> {
+    for (const unsubscribe of this.subscriptions.splice(0)) await unsubscribe();
   }
 
   /** Open a window for one task, at a model tier. */
@@ -1035,6 +1077,7 @@ export class Arbor {
     }
     this.held.length = 0;
     this.scheduler.close?.();
+    await this.unsubscribeChannels();
     for (const record of this.live()) {
       if (record.session === undefined) continue;
       await record.session.end(undefined, "host_restart");
@@ -1066,6 +1109,14 @@ export class Arbor {
       open: async (task, tier) => host.openWindow(task, tier),
       insert: async (record, task) => host.insert(record, task),
       logDecision: (record) => host.recordDecision(record),
+      // A plugin's criteria for its own inputs reach the judge as part of the
+      // question, the way the plugin surface describes
+      // (docs/architecture.md#plugins).
+      criteria: (decision) =>
+        host
+          .judgeCriteria()
+          .filter((one) => one.decision === decision)
+          .flatMap((one) => one.criteria),
     };
   }
 

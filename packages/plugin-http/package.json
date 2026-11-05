@@ -1,0 +1,36 @@
+{
+  "name": "@arbor/plugin-http",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The HTTP test channel plugin: a webhook in, sends out, and a page that drives the whole host.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\"",
+    "start": "node src/server.ts"
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*",
+    "@arbor/prompt": "workspace:*"
+  },
+  "devDependencies": {
+    "@arbor/agent-pi": "workspace:*",
+    "@arbor/core": "workspace:*",
+    "@arbor/environment-dir": "workspace:*",
+    "@arbor/journal-sqlite": "workspace:*",
+    "@arbor/judge-jev": "workspace:*",
+    "@arbor/notes-sqlite": "workspace:*",
+    "@arbor/supervisor-process": "workspace:*",
+    "@arbor/workspace-dir": "workspace:*",
+    "@arbor/workspace-layerfs": "workspace:*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

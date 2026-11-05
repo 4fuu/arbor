@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>arbor · HTTP 测试频道</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --line: #c9c9c9;
+        --muted: #777;
+        --in: #eef2f7;
+        --out: #dff0e2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      header h1 {
+        font-size: 15px;
+        margin: 0;
+      }
+      #status {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr) 320px;
+        gap: 16px;
+        padding: 16px;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+      section {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 12px;
+        min-height: 120px;
+      }
+      h2 {
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+        margin: 0 0 8px;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #conversation-list li {
+        padding: 4px 6px;
+        border-radius: 4px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      #conversation-list li:hover {
+        background: var(--in);
+      }
+      #conversation-list li[aria-current="true"] {
+        background: var(--in);
+        font-weight: 600;
+      }
+      #conversation-list li .count {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      form {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      input,
+      textarea,
+      button {
+        font: inherit;
+        padding: 6px 8px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      #composer {
+        margin-top: 12px;
+        align-items: flex-end;
+      }
+      #text {
+        flex: 1;
+        resize: vertical;
+        min-height: 56px;
+      }
+      ol#messages {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .message {
+        max-width: 78%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      .message.in {
+        align-self: flex-start;
+        background: var(--in);
+      }
+      .message.out {
+        align-self: flex-end;
+        background: var(--out);
+      }
+      .message header {
+        display: flex;
+        gap: 8px;
+        padding: 0 0 4px;
+        border: 0;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 4px 6px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 500;
+      }
+      td.doing {
+        max-width: 150px;
+        overflow-wrap: anywhere;
+      }
+      .empty {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>arbor · HTTP 测试频道</h1>
+      <p id="status">连接中……</p>
+    </header>
+    <main>
+      <section id="conversations">
+        <h2>会话</h2>
+        <ul id="conversation-list"></ul>
+        <form id="new-conversation">
+          <input id="new-conversation-name" placeholder="新会话名" autocomplete="off" />
+          <button type="submit">新建</button>
+        </form>
+      </section>
+
+      <section id="chat">
+        <h2 id="conversation-title">选择一个会话</h2>
+        <ol id="messages"></ol>
+        <p id="chat-empty" class="empty">还没有消息。</p>
+        <form id="composer">
+          <textarea id="text" placeholder="给这个会话发一条消息"></textarea>
+          <button id="send" type="submit">发送</button>
+        </form>
+      </section>
+
+      <section id="board">
+        <h2>现场板（只读）</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>窗口</th>
+              <th>状态</th>
+              <th>在做</th>
+              <th>用量</th>
+            </tr>
+          </thead>
+          <tbody id="board-body"></tbody>
+        </table>
+        <p id="board-empty" class="empty">没有运行中的窗口。</p>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

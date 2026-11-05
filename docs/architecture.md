@@ -35,7 +35,7 @@ interface and registering it; nothing else changes.
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs); a plain directory where LayerFS cannot run |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
-| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them |
+| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@arbor/plugin-http](../packages/plugin-http)) |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
@@ -131,6 +131,16 @@ or a whole domain such as a chat channel or a code host:
   refused with the rule and the ref of the change that removed it, and live
   windows get the removal as a delta. The next epoch leaves it out. Events
   the plugin recorded stay in the journal and their refs keep resolving.
+
+The first plugin is the HTTP test channel
+([@arbor/plugin-http](../packages/plugin-http)): a webhook in, sends out, and a
+page a person drives the whole host from. It registers a `Channel`, the
+`EffectExecutor` that carries a window's `send` out through it, a prompt section
+and one judge criterion, and adds no direct tool or code mode module of its own.
+The host takes a channel's push source at `start` and ingests what arrives as
+outside traffic, exactly as a task source's events are
+([dispatch.md](dispatch.md#tasks)); a channel a deployment only uses as a sink
+is never subscribed to.
 
 ## Hooks
 

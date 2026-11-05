@@ -89,7 +89,7 @@ export const MAX_PROFILE_TASKS = 5;
 export const MAX_PROFILE_INPUTS = 3;
 
 /** How a task reached the window it went to. */
-export type DispatchRoute = "filtered" | "hard_rule" | "judge" | "fallback" | "waiting";
+export type DispatchRoute = "filtered" | "hard_rule" | "judge" | "fallback" | "waiting" | "redelivered";
 
 /** What one dispatch decided. */
 export interface DispatchResult {
@@ -136,6 +136,12 @@ export interface DispatchHost {
   insert(record: WindowRecord, task: Task): Promise<void>;
   /** Every judge decision, for the log. */
   logDecision?(record: DecisionRecord): void;
+  /**
+   * The extra criteria the plugins registered for one decision, which ride on
+   * the request the judge is asked with
+   * (packages/interfaces/src/plugin.ts, `Plugin.judgeCriteria`).
+   */
+  criteria?(decision: JudgeRequest["decision"]): readonly string[];
 }
 
 export class Dispatcher {
@@ -153,6 +159,13 @@ export class Dispatcher {
   async dispatch(task: TaskInput): Promise<DispatchResult> {
     const taskRef = this.host.nextTask();
     const recorded = await this.record(task, taskRef);
+    // Every outside event in the batch is one the journal already holds, so the
+    // message is stored once and the delivery is not new input: nothing is
+    // recorded for it and nothing is routed (docs/journal.md#external-ids). A
+    // window that already answered it is not asked to answer it again.
+    if (recorded === null) {
+      return { task: taskRef, window: null, route: "redelivered" };
+    }
     const full: Task = { ...task, ref: taskRef, eventRefs: recorded.eventRefs, refs: recorded.refs };
     for (const event of recorded.events) await this.host.circulate?.(event);
     if (!(await this.filter(full))) {
@@ -192,6 +205,22 @@ export class Dispatcher {
   // ---- 1. filter ----------------------------------------------------------
 
   /**
+   * One request, with the criteria its plugins registered for this decision.
+   * A criterion steers the wording of the question and never enters its state,
+   * so it changes what the judge is asked, not what it is shown
+   * (packages/interfaces/src/judge.ts).
+   */
+  private ask<S>(decision: JudgeRequest["decision"], mode: JudgeRequest["mode"], state: S): JudgeRequest {
+    const criteria = this.host.criteria?.(decision) ?? [];
+    return {
+      decision,
+      mode,
+      state,
+      ...(criteria.length === 0 ? {} : { criteria }),
+    } as JudgeRequest;
+  }
+
+  /**
    * Does the batch need handling? An explicit request always passes. The judge
    * decides the rest; a decision that is `off`, `shadow`, unanswered or
    * unreachable passes the batch, which is this decision's own fallback.
@@ -204,7 +233,7 @@ export class Dispatcher {
     const judge = this.host.judge;
     if (judge === undefined) return true;
     try {
-      const answer = (await judge.decide({ decision: "filter", mode, state })) as FilterAnswer;
+      const answer = (await judge.decide(this.ask("filter", mode, state))) as FilterAnswer;
       this.log("filter", mode, state, answer);
       if (mode === "shadow") return true;
       return thresholded(answer, FILTER_THRESHOLD);
@@ -268,6 +297,17 @@ export class Dispatcher {
   private async storedEvent(external: string): Promise<Ref | null> {
     const page = await this.host.journal.list({ external, kinds: ["input", "send"], limit: 5 });
     return page.items[0]?.ref ?? null;
+  }
+
+  /**
+   * The event a native id is already stored as, or null when it is new. The
+   * journal's unique index on `external` is what makes a redelivered message
+   * stored once (docs/journal.md#external-ids); this is the read that tells a
+   * redelivery from a new message before anything is appended for it.
+   */
+  private async stored(external: string): Promise<Event | null> {
+    const page = await this.host.journal.list({ external, kinds: ["input"], limit: 1 });
+    return page.items[0] ?? null;
   }
 
   /** The exact expectations of one window that this task answers. */
@@ -374,7 +414,7 @@ export class Dispatcher {
     if (judge === undefined) return none;
     let answer: RouteAnswer;
     try {
-      answer = (await judge.decide({ decision: "route", mode, state })) as RouteAnswer;
+      answer = (await judge.decide(this.ask("route", mode, state))) as RouteAnswer;
     } catch (error) {
       this.failed("route", mode, state, error);
       return none;
@@ -412,7 +452,7 @@ export class Dispatcher {
     if (judge === undefined) return this.defaultTier(tiers);
     let answer: ModelTierAnswer;
     try {
-      answer = (await judge.decide({ decision: "model_tier", mode, state })) as ModelTierAnswer;
+      answer = (await judge.decide(this.ask("model_tier", mode, state))) as ModelTierAnswer;
     } catch (error) {
       this.failed("model_tier", mode, state, error);
       return this.defaultTier(tiers);
@@ -446,7 +486,7 @@ export class Dispatcher {
     if (judge === undefined) return [];
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide({ decision: "notice", mode, state });
+      answer = await judge.decide(this.ask("notice", mode, state));
     } catch (error) {
       this.failed("notice", mode, state, error);
       return [];
@@ -479,7 +519,7 @@ export class Dispatcher {
     if (judge === undefined) return every;
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide({ decision: "broadcast", mode, state });
+      answer = await judge.decide(this.ask("broadcast", mode, state));
     } catch (error) {
       this.failed("broadcast", mode, state, error);
       return every;
@@ -511,7 +551,7 @@ export class Dispatcher {
     if (judge === undefined) return [];
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide({ decision: "active_set", mode, state });
+      answer = await judge.decide(this.ask("active_set", mode, state));
     } catch (error) {
       this.failed("active_set", mode, state, error);
       return [];
@@ -556,12 +596,22 @@ export class Dispatcher {
   private async record(
     task: TaskInput,
     taskRef: TaskRef,
-  ): Promise<{ eventRefs: readonly EventRef[]; refs: readonly Ref[]; events: readonly Event[] }> {
+  ): Promise<{ eventRefs: readonly EventRef[]; refs: readonly Ref[]; events: readonly Event[] } | null> {
     const eventRefs: EventRef[] = [];
     const refs = new Set<Ref>();
     const events: Event[] = [];
-    for (const event of task.events ?? []) {
+    const batched = task.events ?? [];
+    for (const event of batched) {
       const carried = [...(event.refs ?? []), ...(event.replyTo === undefined ? [] : [event.replyTo])];
+      // A native id the journal already holds is a redelivery. The message is
+      // stored once, so it is not appended again and it is not news: the refs it
+      // names still ride on the task, so what it answers stays reachable.
+      if (event.external !== undefined && (await this.stored(event.external)) !== null) {
+        for (const ref of carried) refs.add(ref);
+        refs.add(event.external);
+        if (event.replyTo !== undefined) refs.add(event.replyTo);
+        continue;
+      }
       const appended = await this.host.journal.append({
         kind: "input",
         body: this.host.render(event.content),
@@ -576,6 +626,10 @@ export class Dispatcher {
       if (event.external !== undefined) refs.add(event.external);
       if (event.replyTo !== undefined) refs.add(event.replyTo);
     }
+    // A task made without outside events - a scheduled firing, a service event,
+    // a direct open - always has its own record; a batch of nothing but
+    // redeliveries has none.
+    if (batched.length > 0 && events.length === 0) return null;
     const carried = [...refs];
     await this.host.journal.append({
       kind: "task",

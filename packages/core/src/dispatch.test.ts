@@ -13,9 +13,11 @@ import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import type {
   Delivery,
+  ExternalRef,
   Judge,
   JudgeAnswer,
   JudgeRequest,
+  OutsideEvent,
   Ref,
   RouteAnswer,
   RouteScore,
@@ -108,6 +110,18 @@ async function host(options: { judge?: StubJudge; settings?: Settings } = {}): P
   });
   backend.attach(arbor.windowControl());
   return { arbor, journal, backend, judge, setNow: (value: number) => (now = value) };
+}
+
+/** One outside event, the way a channel hands it over. */
+function event(external: ExternalRef, text: string, overrides: Partial<OutsideEvent> = {}): OutsideEvent {
+  return {
+    source: "qq",
+    external,
+    target: "qq:group:1",
+    time: 1_700_000_000_000,
+    content: [{ kind: "data", fields: { content: text } }],
+    ...overrides,
+  };
 }
 
 /** One batch of outside events, the way a chat source hands it over. */
@@ -620,5 +634,77 @@ describe("insertion timing", () => {
       ["r8", "r9"],
       "the current target goes first, then priority and age",
     );
+  });
+});
+
+describe("outside events and their native ids", () => {
+  it("stores a redelivered message once, and dispatches nothing for it", async () => {
+    const { arbor, journal, backend } = await host({ judge: windowJudge("c1") });
+    backend.script([{ text: "完成" }]);
+    const message = event("qq:100", "CI 是什么情况");
+
+    const first = await arbor.dispatch(batch("qq:group:1", "CI 是什么情况", { events: [message] }));
+    assert.equal(first.window, "c1");
+    await opened(backend, 1);
+
+    // The same native id again: the channel retried, the way a webhook does.
+    const again = await arbor.dispatch(batch("qq:group:1", "CI 是什么情况", { events: [message] }));
+
+    // The message is stored once, and the retry is not new input: no task was
+    // recorded for it, no window opened, and the first window was not asked to
+    // answer it twice (docs/journal.md#external-ids).
+    assert.equal(again.route, "redelivered");
+    assert.equal(again.window, null);
+    assert.equal((await journal.list({ external: "qq:100" })).items.length, 1);
+    assert.equal((await journal.list({ kinds: ["task"] })).items.length, 1);
+    assert.equal((await journal.list({ kinds: ["window_start"] })).items.length, 1);
+    assert.equal((await journal.list({ kinds: ["delivery"] })).items.length, 0);
+  });
+
+  it("dispatches the new message of a batch that also carries a redelivery", async () => {
+    const { arbor, journal, backend } = await host({ judge: windowJudge("c1") });
+    backend.script([{ text: "完成" }, { text: "完成" }]);
+
+    await arbor.dispatch(batch("qq:group:1", "第一条", { events: [event("qq:100", "第一条")] }));
+    await opened(backend, 1);
+    // The retry of the first message arrives together with a new one.
+    const routed = await arbor.dispatch(
+      batch("qq:group:1", "第二条", {
+        events: [event("qq:100", "第一条"), event("qq:101", "第二条")],
+      }),
+    );
+
+    // The new message is routed into the window already in the conversation.
+    assert.equal(routed.route, "judge");
+    assert.equal(routed.window, "c1");
+    assert.equal((await journal.list({ external: "qq:100" })).items.length, 1);
+    assert.equal((await journal.list({ external: "qq:101" })).items.length, 1);
+    // The task names both: the new one it carries, and the one it answers.
+    const task = (await journal.list({ kinds: ["task"] })).items.at(-1);
+    assert.ok(task?.refs.includes("qq:100"));
+    assert.ok(task?.refs.includes("qq:101"));
+    await opened(backend, 1);
+  });
+});
+
+describe("the criteria a plugin adds", () => {
+  it("rides on the request its own decision is asked with", async () => {
+    const { arbor, judge } = await host();
+    arbor.register({
+      name: "chatbot",
+      judgeCriteria: [{ decision: "route", criteria: ["一个会话只进一个窗口"] }],
+    });
+
+    await arbor.dispatch(batch("qq:group:1", "在吗"));
+
+    // The plugin's criterion reaches the judge as part of the question, and it
+    // steers the wording rather than entering the state.
+    const asked = judge.routes();
+    assert.equal(asked.length, 1);
+    assert.deepEqual(asked[0]?.criteria, ["一个会话只进一个窗口"]);
+    assert.deepEqual(asked[0]?.state.candidates, []);
+    // A decision the plugin registered no criterion for carries none.
+    const filters = judge.requests.filter((request) => request.decision === "filter");
+    assert.equal(filters.at(-1)?.criteria, undefined);
   });
 });

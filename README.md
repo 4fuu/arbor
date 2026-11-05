@@ -35,15 +35,17 @@ and every window can find everything that was ever done.
 - **Every module is replaceable.** The agent backend (pi by default), the
   journal, notes, workspaces, the judge, channels and the rest are interfaces.
 
-Status: stage 5. Many windows run at once: dispatch decides for every task
+Status: stage 7. Many windows run at once: dispatch decides for every task
 whether a live window takes it or a new one opens, the judge (Jev by default)
 answers what the rules leave open, and parallel windows stay current with each
 other through the board, notices, broadcasts and window messages. The host also
 runs the environment the model changes itself: `/env` with skills, MCP servers,
 services and the settings, `reload` as one revision broadcast to every live
 window, the services under a supervisor, and plugins as the one unit of
-extension - hooks, prompt blocks, skills and MCP servers. The host API comes
-next.
+extension - hooks, prompt blocks, skills and MCP servers. One plugin runs the
+whole host end to end: the HTTP test channel takes a webhook in, carries a
+window's sends out, and serves the page a person drives it from. The host API
+comes next.
 
 > The design grows out of the context, window and notes mechanisms built for
 > [qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver). This link is
@@ -82,6 +84,7 @@ check` typechecks and tests every package.
 | `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files or one that runs where LayerFS cannot |
 | `packages/environment-dir` | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
 | `packages/supervisor-process` | the default `Supervisor`: one host process per service, restart with backoff, logs |
+| `packages/plugin-http` | the HTTP test channel: a webhook in, sends out, a page that drives the whole host |
 | `packages/prompt` | typed blocks, the one deterministic renderer and the replaceable text table |
 | `packages/agent-pi` | the default `AgentBackend`: pi-agent-core in process |
 | `packages/tools` | the entry points: direct tools, code mode modules, the host API |
