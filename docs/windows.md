@@ -86,4 +86,7 @@ sent again.
 The default backend keeps a run in memory and the journal is the only
 persistent record. A host restart therefore ends every running window the way
 the hard limit does and opens their continuations from the journal; effects
-already made are not made again.
+already made are not made again. A continued window forks the directory the
+stopped one worked in, which the snapshots its calls recorded name
+([workspaces.md](workspaces.md#what-the-framework-guarantees)); a window that
+never touched files has none, and its continuation starts a fresh one.

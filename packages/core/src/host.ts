@@ -176,6 +176,12 @@ export interface WindowRecord {
   /** The workspace mount, once the window touched files. */
   mount?: WorkspaceMount;
   workspaceRef?: WorkspaceRef;
+  /**
+   * The workspace this window's directory is forked from, when it is a
+   * continuation: the directory the window it continues worked in, so work in
+   * progress carries over (docs/workspaces.md#what-the-framework-guarantees).
+   */
+  forkedFrom?: WorkspaceRef;
   /** The event each tool call was recorded at, for its snapshot. */
   callEvents: Map<string, EventRef>;
   /** The window's session, once it is running. */
@@ -576,7 +582,13 @@ export class Arbor {
     );
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window)) continue;
-      await this.continueWindow(event.window, { midTaskReset: true });
+      await this.continueWindow(event.window, {
+        midTaskReset: true,
+        // The window's directory comes back from the journal: the last snapshot
+        // one of its calls recorded names the workspace it worked in. A window
+        // that never touched files has none, and gets a fresh one.
+        forkedFrom: await this.workspaceOfWork(event.window),
+      });
     }
     // The scheduled tasks come back from the journal, so a restart does not
     // lose a schedule that has not fired yet. The records are replayed in
@@ -1295,6 +1307,9 @@ export class Arbor {
       midTaskReset: reason === "hard_limit",
       targets,
       ...(record.tier === undefined ? {} : { tier: record.tier }),
+      // The continuation works in a fork of the directory this window worked
+      // in, so nothing it did is lost by ending the window.
+      ...(record.workspaceRef === undefined ? {} : { forkedFrom: record.workspaceRef }),
     });
   }
 
@@ -1306,7 +1321,13 @@ export class Arbor {
    */
   private async continueWindow(
     previous: WindowRef,
-    options: { handoff?: Handoff; midTaskReset?: boolean; targets?: readonly string[]; tier?: string },
+    options: {
+      handoff?: Handoff;
+      midTaskReset?: boolean;
+      targets?: readonly string[];
+      tier?: string;
+      forkedFrom?: WorkspaceRef;
+    },
   ): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
     const taskRef = this.refs.nextTask();
@@ -1349,7 +1370,7 @@ export class Arbor {
       targets: [...(options.targets ?? [])],
       refs: [taskRef, previous],
     });
-    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier);
+    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier, options.forkedFrom);
     void this.run(record, {
       firstInput,
       epoch,
@@ -1377,6 +1398,29 @@ export class Arbor {
     });
     this.board.close(record.window);
     this.windows.delete(record.window);
+  }
+
+  /**
+   * The workspace a window worked in, from the last snapshot one of its calls
+   * recorded. A restart keeps no record of the window itself, so the journal is
+   * what its continuation forks from; a window that never touched files has no
+   * snapshot and so no workspace.
+   */
+  private async workspaceOfWork(window: WindowRef): Promise<WorkspaceRef | undefined> {
+    const size = 50;
+    const first = await this.journal.list({ window, kinds: ["tool_result"], limit: size });
+    const page =
+      first.total <= size
+        ? first
+        : await this.journal.list({ window, kinds: ["tool_result"], limit: size, offset: first.total - size });
+    // The journal lists oldest first, so the newest snapshot is at the end.
+    for (let index = page.items.length - 1; index >= 0; index -= 1) {
+      const snapshot = page.items[index]?.snapshot;
+      if (snapshot === undefined || snapshot === null) continue;
+      const workspace = snapshot.slice(0, snapshot.indexOf("@"));
+      if (/^ws\d+$/.test(workspace)) return workspace as WorkspaceRef;
+    }
+    return undefined;
   }
 
   /** The task a window was opened for, so its continuation names it. */
@@ -1530,13 +1574,19 @@ export class Arbor {
     return this.view.items.find((item) => item.kind === wanted && (wanted === "settings" || item.name === name));
   }
 
-  /** The window's own directory, created on first use. */
+  /**
+   * The window's own directory, created on first use. A continuation forks the
+   * directory of the window it continues, so cloned repositories, installed
+   * dependencies and work in progress carry over
+   * (docs/workspaces.md#what-the-framework-guarantees).
+   */
   private async mountFor(window: WindowRef): Promise<WorkspaceMount | undefined> {
     const workspace = this.options.workspace;
     if (workspace === undefined) return undefined;
     const record = this.windows.get(window);
     if (record?.mount !== undefined) return record.mount;
-    const ref = await workspace.create(window);
+    const from = record?.forkedFrom;
+    const ref = from === undefined ? await workspace.create(window) : await workspace.fork(from, window);
     const mount = await workspace.mount(ref);
     if (record !== undefined) {
       record.mount = mount;
@@ -1916,6 +1966,7 @@ export class Arbor {
     doing: string,
     targets: readonly string[],
     tier?: string,
+    forkedFrom?: WorkspaceRef,
   ): WindowRecord {
     const entry: BoardEntry = {
       window,
@@ -1938,6 +1989,7 @@ export class Arbor {
       paused: false,
       ...(tier === undefined ? {} : { tier }),
       ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
+      ...(forkedFrom === undefined ? {} : { forkedFrom }),
       callEvents: new Map(),
       inbox: [],
       protectionUntil: this.clock() + (this.current()?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,

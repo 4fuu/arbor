@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -138,6 +138,45 @@ describe("one window end to end", () => {
     assert.match(results.items[0]?.snapshot ?? "", /^ws1@r\d+$/);
     const calls = await journal.list({ kinds: ["tool_call"] });
     assert.equal(results.items[0]?.snapshot, `ws1@${calls.items[0]?.ref}`);
+  });
+
+  it("forks the workspace for a continuation, so the work carries over", async () => {
+    const { arbor, journal, backend, root } = await host();
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "完成" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    // The model ends with a handoff, so the host opens a continuation.
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
+    await arbor.services.endWindow(record.window, {
+      topics: ["CI"],
+      progress: ["已写下结论"],
+      pending: ["重跑"],
+      agreements: ["先修测试"],
+      refs: ["r1"],
+    });
+    await backend.finished();
+
+    // The continuation reads what the window before it wrote.
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.equal(read.total, 1);
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+
+    // Its directory is a fork of the first window's, not a fresh one: the file
+    // is there without having been written again, and the first window's own
+    // directory still holds it.
+    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
+    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
+
+    // Reading it changed nothing, so the continuation's own call records no
+    // snapshot - only a write or a bash call does.
+    assert.equal(read.items[0]?.snapshot ?? null, null);
   });
 
   it("takes no snapshot for a call that changes no file, and makes no directory", async () => {
@@ -365,8 +404,11 @@ describe("one window end to end", () => {
   });
 
   it("rebuilds a running window from the journal after a restart", async () => {
-    const { arbor, journal, backend } = await host();
-    backend.script([{ text: "第一轮" }]);
+    const { arbor, journal, backend, root } = await host();
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "第一轮" },
+    ]);
     const record = await arbor.open(task);
     await backend.finished();
     // The host stopped without ending the window: only window_start is there.
@@ -376,7 +418,16 @@ describe("one window end to end", () => {
       backend,
       timers,
       now: () => 1700000000000,
+      workspace: new DirectoryWorkspace({ root }),
     });
+    // A restart is a new host, so the backend takes its control, the way pi does.
+    backend.attach(reopened.windowControl());
+    // The continued window forks the directory the stopped one worked in, which
+    // the journal's snapshots name.
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
     await reopened.start();
     await backend.finished();
     const started = await journal.list({ kinds: ["window_start"] });
@@ -386,6 +437,9 @@ describe("one window end to end", () => {
     assert.ok(opened?.continuation?.midTaskReset === true);
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
     assert.equal(record.state, "idle");
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
   });
 
   it("records a send as an effect and never repeats it in the continuation", async () => {
