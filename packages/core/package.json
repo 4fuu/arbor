@@ -23,6 +23,8 @@
   },
   "devDependencies": {
     "@arbor/agent-pi": "workspace:*",
+    "@arbor/environment-dir": "workspace:*",
+    "@arbor/supervisor-process": "workspace:*",
     "@arbor/journal-sqlite": "workspace:*",
     "@arbor/notes-sqlite": "workspace:*",
     "@arbor/workspace-dir": "workspace:*",

@@ -9,7 +9,15 @@
  * input instead.
  */
 
-import type { ActiveSetBudget, EnvRef, NoteRef, NoteSummary, Settings, TextTable } from "@arbor/interfaces";
+import type {
+  ActiveSetBudget,
+  BlockKindSpec,
+  EnvRef,
+  NoteRef,
+  NoteSummary,
+  Settings,
+  TextTable,
+} from "@arbor/interfaces";
 import type { NoteStore } from "@arbor/interfaces";
 import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@arbor/prompt";
 import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@arbor/interfaces";
@@ -35,7 +43,7 @@ export interface PromptEpoch {
 }
 
 export interface SnapshotBuilderOptions {
-  settings?: Settings;
+  settings?: Settings | (() => Settings | undefined);
   table?: TextTable;
   notes?: NoteStore;
   /** The environment items the `<env>` section lists. */
@@ -49,7 +57,13 @@ export interface SnapshotBuilderOptions {
   plugins?: () => readonly PromptSection[];
   minIntervalMs?: number;
   now?: () => number;
-  kinds?: readonly import("@arbor/interfaces").BlockKindSpec[];
+  /** Extra block kinds, from a plugin. */
+  kinds?: readonly BlockKindSpec[];
+  /**
+   * The one renderer, shared with the host and the backend, so a plugin's kinds
+   * and its fixed strings reach every layer. Built when absent.
+   */
+  renderer?: Renderer;
   /**
    * The judge's bounded share of the active set: which notes are still needed,
    * within a share of the budget the rule score did not pick
@@ -74,7 +88,19 @@ export class SnapshotBuilder {
 
   constructor(options: SnapshotBuilderOptions = {}) {
     this.options = options;
-    this.renderer = new Renderer({ ...(options.table === undefined ? {} : { table: options.table }) });
+    this.renderer =
+      options.renderer ??
+      new Renderer({
+        ...(options.table === undefined ? {} : { table: options.table }),
+        ...(options.kinds === undefined ? {} : { kinds: options.kinds }),
+      });
+  }
+
+  /** The settings the prefix is built from, read per epoch. */
+  private settings(): Settings | undefined {
+    const settings = this.options.settings;
+    if (typeof settings === "function") return settings();
+    return settings;
   }
 
   /** The frozen prefix of the current epoch. */
@@ -91,7 +117,7 @@ export class SnapshotBuilder {
     const epoch: PromptEpoch = {
       system: await renderSystemPrompt(
         {
-          settings: this.options.settings,
+          settings: this.settings(),
           tools: this.options.tools === undefined ? [] : this.options.tools(),
           modules: this.options.modules === undefined ? [] : this.options.modules(),
           env,
@@ -132,7 +158,7 @@ export class SnapshotBuilder {
 
   /** The active set's budget: how many notes, and how many tokens. */
   private activeBudget(): ActiveSetBudget {
-    const configured = this.options.settings?.notes;
+    const configured = this.settings()?.notes;
     return {
       count: configured?.activeCount ?? DEFAULT_ACTIVE_BUDGET.count,
       tokens: configured?.activeTokenBudget ?? DEFAULT_ACTIVE_BUDGET.tokens,
@@ -141,10 +167,10 @@ export class SnapshotBuilder {
 
   /** The bounded share of the active set the judge may add. */
   private activeSetShare(): number {
-    return this.options.settings?.judge?.activeSetJudgeShare ?? DEFAULT_ACTIVE_SET_SHARE;
+    return this.settings()?.judge?.activeSetJudgeShare ?? DEFAULT_ACTIVE_SET_SHARE;
   }
 
-  /** Force the next `epoch()` to rebuild, after an environment change. */
+  /** Force the next `epoch()` to rebuild. */
   invalidate(): void {
     this.current = undefined;
   }

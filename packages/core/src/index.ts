@@ -6,6 +6,11 @@
  * The window host owns the lifecycle a model cannot own for itself - the frozen
  * prefix, the reminder series, the hard limit, the continuation and the rebuild
  * after a restart - and records everything it did in the journal.
+ *
+ * The host also runs the environment and the services a model installed, and
+ * the hooks a deployment or a plugin added: `reload` lands as one environment
+ * revision and reaches every live window as a delta, and a hook can observe,
+ * change or refuse at each of the points docs/architecture.md#hooks names.
  */
 
 export { Arbor, type ArborOptions, type Timer, type Timers, type WindowRecord } from "./host.ts";
@@ -26,6 +31,8 @@ export {
   type DispatchRoute,
 } from "./dispatch.ts";
 export { EffectQueue, type EffectInput, type EffectOutcome } from "./effects.ts";
+export { HookRunner, type HookPoint, type HookContextOf, type WindowEndOutcome } from "./hooks.ts";
+export { HookedJournal } from "./hooked-journal.ts";
 export { RefAllocator, eventRefOf, highestOf, type RefSeed } from "./refs.ts";
 export { DEFAULT_RETRY_MS, RuleScheduler, type RuleSchedulerOptions } from "./scheduler.ts";
 export {

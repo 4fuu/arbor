@@ -14,8 +14,10 @@
  * fallbacks live here, in the service layer, around a judge that is replaceable.
  *
  * The host is also the service layer the tools call: `send`, `end`, `search`,
- * the board, the live windows and the workspace all reach it here, once
- * (docs/architecture.md#layers).
+ * the board, the live windows, `reload` and the workspace all reach it here,
+ * once (docs/architecture.md#layers). It runs the environment and the services
+ * a model installed, and the hooks a deployment or a plugin added, at every
+ * point docs/architecture.md#hooks names.
  */
 
 import type {
@@ -25,6 +27,12 @@ import type {
   Block,
   CallContext,
   Delivery,
+  Environment,
+  EnvDraft,
+  EnvItem,
+  EnvItemName,
+  EnvItemRef,
+  EnvRef,
   EnvDelta,
   EffectExecutor,
   Event,
@@ -39,12 +47,18 @@ import type {
   NoteWriteInput,
   OpenWindowRequest,
   Page,
+  Plugin,
+  PromptSection,
   QueuedInput,
+  ReloadContext,
+  RenderedPrompt,
   Ref,
   Scheduler,
   ScheduledTask,
   ScheduledTaskInput,
+  ServiceStatus,
   Settings,
+  Supervisor,
   Task,
   TaskInput,
   TaskRef,
@@ -57,6 +71,7 @@ import type {
   OutsideEvent,
   WindowEndReason,
   WindowRef,
+  ToolCallContext,
   WindowRuntimeState,
   SearchHit,
   SnapshotRef,
@@ -67,11 +82,14 @@ import type {
   WorkspaceRef,
 } from "@arbor/interfaces";
 import { arborError } from "@arbor/errors";
+import { isAbsolute, join } from "node:path";
 import {
   REMINDER_TIERS,
   REMINDER_SERIES,
   Renderer,
   atHardLimit,
+  dataBlock,
+  environmentDeltaBlock,
   firstInputBlocks,
   nextReminderTier,
   outsideMessageBlock,
@@ -82,12 +100,14 @@ import {
 } from "@arbor/prompt";
 import { Jev, scrubJson } from "@arbor/judge-jev";
 import type { JevDecisionLog } from "@arbor/judge-jev";
-import { callContext, type LiveWindow, type SearchOutcome, type ToolServices } from "@arbor/tools";
+import { callContext, type EnvCatalog, type LiveWindow, type ReloadOutcome, type SearchOutcome, type ToolServices } from "@arbor/tools";
 import { ToolCatalog } from "@arbor/tools";
 import { Board, hostBody, type BoardEntry } from "./board.ts";
 import { Coordinator, type CoordinationHost } from "./coordination.ts";
 import { Dispatcher, type DecisionRecord, type DispatchHost, type DispatchResult } from "./dispatch.ts";
-import { EffectQueue, type EffectInput } from "./effects.ts";
+import { EffectQueue, type EffectInput, type EffectQueueOptions } from "./effects.ts";
+import { HookRunner } from "./hooks.ts";
+import { HookedJournal } from "./hooked-journal.ts";
 import { RefAllocator } from "./refs.ts";
 import { DEFAULT_RETRY_MS, RuleScheduler } from "./scheduler.ts";
 import type { PromptEpoch } from "./snapshot.ts";
@@ -177,6 +197,12 @@ export interface ArborOptions {
   scheduler?: Scheduler;
   /** Extra tool groups, from a plugin. */
   groups?: readonly ToolGroup[];
+  /** The environment. Absent when a deployment has no `/env`. */
+  environment?: Environment;
+  /** The service supervisor. Absent when no service may run. */
+  supervisor?: Supervisor;
+  /** The plugins this host runs. Every part of one is optional. */
+  plugins?: readonly Plugin[];
   /** Effect executors, from a plugin. */
   executors?: readonly EffectExecutor[];
   /** The one renderer, shared by the host and the backend. */
@@ -197,6 +223,8 @@ export class Arbor {
   readonly catalog: ToolCatalog;
   readonly renderer: Renderer;
   readonly snapshots: SnapshotBuilder;
+  /** The hooks every plugin registered, in the order they registered. */
+  readonly hooks: HookRunner;
   /** The dispatcher: filter, hard rule, judge, act (docs/dispatch.md). */
   readonly dispatcher: Dispatcher;
   /** The coordinator: staying current, notices, broadcasts, window messages. */
@@ -226,10 +254,25 @@ export class Arbor {
   private readonly scrub: ((text: string) => string) | undefined;
   /** The queue id of the next input that waits for a window. */
   private nextQueueId = 0;
+  /** The plugins this host runs, in the order they registered. */
+  private readonly plugins: Plugin[] = [];
+  /** The prompt sections the plugins registered, one per plugin. */
+  private readonly sections: PromptSection[] = [];
+  /** The environment as the catalog reads it, kept in step with every change. */
+  private view: EnvCatalog = { items: [], modules: [], removed: [] };
+  /** The revision each window last read of an item, for `reload`'s check. */
+  private readonly reads = new Map<WindowRef, Map<string, number>>();
+  /** Functions a delta removed, with the change that removed them. */
+  private readonly removed = new Map<string, EnvRef>();
+  /** The settings the host runs with, read from the environment at each change. */
+  private settings: Settings | undefined;
+  /** The environment, loaded once: the plugins' items installed, the catalog current. */
+  private loading: Promise<void> | undefined;
 
   constructor(options: ArborOptions) {
     this.options = options;
-    this.journal = options.journal;
+    this.hooks = new HookRunner();
+    this.journal = new HookedJournal(options.journal, this.hooks);
     this.backend = options.backend;
     this.table = options.table ?? zhTextTable;
     this.renderer = options.renderer ?? new Renderer({ table: this.table });
@@ -237,17 +280,30 @@ export class Arbor {
     this.timers = options.timers ?? systemTimers;
     this.refs = new RefAllocator();
     this.board = new Board();
-    this.effects = new EffectQueue(options.journal, options.executors ?? []);
+    this.settings = options.settings;
+    const effects: EffectQueueOptions = { hooks: this.hooks };
+    this.effects = new EffectQueue(this.journal, options.executors ?? [], effects);
     this.snapshots = new SnapshotBuilder({
-      ...(options.settings === undefined ? {} : { settings: options.settings }),
+      // The settings are read per epoch, because the model changes them itself.
+      settings: () => this.settings,
       table: this.table,
+      // The one renderer, shared with the backend, so a plugin's kinds and its
+      // fixed strings reach every layer.
+      renderer: this.renderer,
       ...(options.notes === undefined ? {} : { notes: options.notes }),
+      ...(options.environment === undefined
+        ? {}
+        : {
+            env: async () => (await options.environment?.list()) ?? [],
+            envRevision: async () => (await options.environment?.revision()) ?? ("e0" as EnvRef),
+          }),
       tools: () => this.catalog.tools(),
       modules: () => this.catalog.modules(),
+      plugins: () => this.sections,
       now: this.clock,
       activeSet: (candidates, budget, judgeShare) => this.dispatcher.activeSet(candidates, budget, judgeShare),
     });
-    this.scrub = scrubOf(options.settings);
+    this.scrub = scrubOf(this.settings);
     this.judge = options.judge ?? defaultJudge(options.settings, this.scrub, this.judgeRequest);
     this.scheduler =
       options.scheduler ??
@@ -262,6 +318,10 @@ export class Arbor {
     this.coordinator = new Coordinator(this.coordinationHost());
     this.services = this.buildServices();
     this.catalog = new ToolCatalog({ services: this.services, groups: options.groups });
+    for (const plugin of options.plugins ?? []) this.register(plugin);
+    // A service's state change reaches the host, which records it and runs its
+    // hooks (docs/environment.md#services).
+    options.supervisor?.onStateChange?.((status) => this.serviceState(status));
     // A backend that runs windows in process takes the host's control: record a
     // call at its event, run it through the tool groups, end when asked to.
     const attach = (options.backend as { attachControl?: (control: WindowControl) => void }).attachControl;
@@ -271,6 +331,195 @@ export class Arbor {
   /** The models the backend can run, for settings' tier mapping. */
   async models(): Promise<readonly ModelInfo[]> {
     return this.backend.models();
+  }
+
+  // ---- plugins ------------------------------------------------------------
+
+  /**
+   * Plug one in: its hooks, its block kinds and fixed strings on the one
+   * renderer, its prompt section, its executors, and its skills and MCP servers
+   * into `/env` (docs/architecture.md#plugins). A plugin adds; it never patches
+   * the core.
+   */
+  register(plugin: Plugin): void {
+    this.plugins.push(plugin);
+    if (plugin.hooks !== undefined) this.hooks.register(plugin.hooks);
+    const section = plugin.promptSection;
+    if (section !== undefined) {
+      this.sections.push(section);
+      for (const spec of section.blocks) this.renderer.register(spec);
+      if (section.text !== undefined) this.renderer.extend(section.text);
+    }
+    for (const executor of plugin.adapters?.effectExecutors ?? []) this.effects.addExecutor(executor);
+    // A plugin's items arrive in `/env` on the next load, so its abilities reach
+    // live windows as a delta and new ones through their prefix.
+    this.loading = undefined;
+  }
+
+  /** The plugins this host runs, in the order they registered. */
+  registered(): readonly Plugin[] {
+    return [...this.plugins];
+  }
+
+  /** The criteria the plugins added for the judge, which dispatch reads. */
+  judgeCriteria(): readonly { plugin: string; decision: string; criteria: readonly string[] }[] {
+    return this.plugins.flatMap((plugin) =>
+      (plugin.judgeCriteria ?? []).map((one) => ({
+        plugin: plugin.name,
+        decision: one.decision,
+        criteria: one.criteria,
+      })),
+    );
+  }
+
+  // ---- the environment ---------------------------------------------------
+
+  /**
+   * The environment, loaded once: a plugin's items installed, the catalog's view
+   * current and the settings read. A window's first turn waits for it, so a
+   * plugin's abilities are in the prompt it opens with.
+   */
+  private async load(): Promise<void> {
+    this.loading ??= this.loadEnvironment();
+    await this.loading;
+  }
+
+  private async loadEnvironment(): Promise<void> {
+    const environment = this.options.environment;
+    if (environment === undefined) return;
+    await this.installPluginItems();
+    await this.refresh();
+  }
+
+  /** A plugin's skills and MCP servers, installed under the plugin's name. */
+  private async installPluginItems(): Promise<void> {
+    const environment = this.options.environment;
+    if (environment === undefined) return;
+    const items = await environment.list();
+    for (const plugin of this.plugins) {
+      const drafts: EnvDraft[] = [];
+      for (const draft of [...(plugin.skills ?? []), ...(plugin.mcpServers ?? [])]) {
+        if (items.some((item) => item.kind === draft.kind && item.name === draft.name)) continue;
+        drafts.push(draft);
+      }
+      if (drafts.length === 0) continue;
+      const revision = await environment.install(drafts);
+      await this.journal.append({
+        kind: "environment_revision",
+        window: null,
+        body: hostBody({ revision: revision.ref, plugin: plugin.name }),
+        refs: [revision.ref],
+      });
+    }
+  }
+
+  /** The environment as the catalog reads it, and the settings the host runs with. */
+  private async refresh(): Promise<void> {
+    const environment = this.options.environment;
+    if (environment === undefined) return;
+    const items = await environment.list();
+    const modules = items
+      .filter((item: EnvItem) => item.kind === "mcp")
+      .map((item) => ({
+        name: item.name,
+        description: item.description,
+        functions: [...(item.functions ?? [])],
+      }));
+    for (const item of items) {
+      if (item.kind !== "mcp") continue;
+      for (const fn of item.functions ?? []) this.removed.delete(fn.name);
+    }
+    this.view = { items, modules, removed: [...this.removed].map(([name, ref]) => ({ name, ref })) };
+    this.settings = await environment.settings();
+  }
+
+  /** What a window read, so `reload` knows which revision its draft is based on. */
+  private noteRead(window: WindowRef, item: EnvItem): void {
+    const key = `${item.kind}:${item.name}`;
+    const reads = this.reads.get(window);
+    if (reads === undefined) this.reads.set(window, new Map([[key, item.revision]]));
+    else reads.set(key, item.revision);
+  }
+
+  /** The revision a window last read of an item, for `reload`'s conflict check. */
+  private readRevision(window: WindowRef, kind: string, name: string): number | undefined {
+    return this.reads.get(window)?.get(`${kind}:${name}`);
+  }
+
+  /**
+   * `reload`: install drafts and remove items as one environment revision, then
+   * broadcast the delta to every live window. A refusal changes nothing.
+   */
+  private async reload(
+    window: WindowRef,
+    request: { drafts: readonly EnvDraft[]; remove: readonly string[] },
+  ): Promise<ReloadOutcome> {
+    const environment = this.options.environment;
+    if (environment === undefined) {
+      throw arborError({
+        code: "unavailable",
+        rule: "env.absent",
+        message: "环境：本主机没有配置环境",
+        nextAction: "本主机没有配置环境。",
+      });
+    }
+    const mount = await this.mountFor(window);
+    const drafts: EnvDraft[] = [];
+    for (const draft of request.drafts) {
+      const current = this.view.items.find((item: EnvItem) => item.kind === draft.kind && item.name === draft.name);
+      drafts.push({
+        ...draft,
+        path: mount === undefined || isAbsolute(draft.path) ? draft.path : join(mount.path, draft.path),
+        copiedFrom: draft.copiedFrom ?? this.readRevision(window, draft.kind, draft.name) ?? current?.revision ?? 0,
+      });
+    }
+    const context: ReloadContext = {
+      window,
+      drafts,
+      ...(request.remove.length === 0 ? {} : { remove: request.remove }),
+    };
+    const allowed = await this.hooks.before("beforeReload", context);
+    const before = await environment.revision();
+    const revision = await environment.install(
+      allowed.drafts,
+      request.remove as readonly (EnvItemRef | EnvItemName)[],
+    );
+    await this.hooks.after("afterReload", { ...allowed, revision });
+    await this.journal.append({
+      kind: "environment_revision",
+      window,
+      body: hostBody({
+        revision: revision.ref,
+        changes: revision.changes.map((change) => `${change.change} ${change.item.kind} ${change.item.name}`),
+      }),
+      refs: [revision.ref],
+    });
+    // A removal never changes a prompt, but a call into what it removed is
+    // refused with the ref of the change that removed it.
+    for (const change of revision.changes) {
+      if (change.change !== "removed" || change.item.kind !== "mcp") continue;
+      for (const fn of change.item.functions ?? []) this.removed.set(fn.name, revision.ref);
+    }
+    // The prefix is rebuilt at most every `snapshot.min_interval`, so a change
+    // reaches a window opened inside the same epoch as a delta in its first
+    // input, and the next epoch folds it into the system prompt
+    // (docs/windows.md#prompt-layout).
+    await this.refresh();
+    const delivered = await this.broadcastEnvironment(
+      await environment.delta(before),
+    );
+    return { revision: revision.ref, changes: revision.changes, delivered };
+  }
+
+  /** What changed since a window's epoch, for its first input. */
+  private async changesSince(epoch: PromptEpoch): Promise<Block[]> {
+    const environment = this.options.environment;
+    if (environment === undefined) return [];
+    const current = await environment.revision();
+    if (current === epoch.envRevision) return [];
+    const delta = await environment.delta(epoch.envRevision);
+    if (delta.items.length === 0) return [];
+    return [environmentDeltaBlock(delta, this.clock())];
   }
 
   /**
@@ -294,6 +543,10 @@ export class Arbor {
     if (this.started) return;
     this.started = true;
     this.refs = await RefAllocator.from(this.journal);
+    // A host restart starts every installed service again, the way the framework
+    // guarantees (docs/environment.md#services).
+    await this.options.environment?.resume();
+    await this.load();
     const board = await this.journal.list({ kinds: ["board_line", "board_expect"], limit: 200 });
     this.board.rebuild(board.items);
     const started = await this.journal.list({ kinds: ["window_start"], limit: 200 });
@@ -322,32 +575,38 @@ export class Arbor {
 
   /** Open a window for one task, at a model tier. */
   async open(task: TaskInput & { ref?: TaskRef }, tier?: string): Promise<WindowRecord> {
+    await this.load();
     const window = this.refs.nextWindow();
     // A dispatched task already carries its ref, so the window names the task it
     // was opened for rather than a second one.
     const taskRef = task.ref ?? this.refs.nextTask();
-    const reason = task.reason;
+    // A hook may change the task, or refuse the window altogether.
+    const start = await this.hooks.before("windowStart", { window, task });
+    const wanted = start.task;
+    const reason = wanted.reason;
     await this.journal.append({
       kind: "window_start",
       window,
-      body: hostBody({ task: taskRef, doing: reason, kind: task.kind }),
-      targets: [...task.targets],
+      body: hostBody({ task: taskRef, doing: reason, kind: wanted.kind }),
+      targets: [...wanted.targets],
       refs: [taskRef],
     });
-    const record = this.record(window, taskRef, reason, [...task.targets], tier);
+    const record = this.record(window, taskRef, reason, [...wanted.targets], tier);
     const epoch = await this.snapshots.epoch();
+    const changes = await this.changesSince(epoch);
     const firstInput = this.renderer.render(
       firstInputBlocks({
         task: {
           ref: taskRef,
-          kind: task.kind,
+          kind: wanted.kind,
           reason,
-          time: task.time,
-          targets: task.targets,
-          ...(task.source === undefined ? {} : { source: task.source }),
-          content: [...task.content],
+          time: wanted.time,
+          targets: wanted.targets,
+          ...(wanted.source === undefined ? {} : { source: wanted.source }),
+          content: [...wanted.content],
         },
-        boardLines: this.relatedLines(task.targets),
+        boardLines: this.relatedLines(wanted.targets),
+        ...(changes.length === 0 ? {} : { changes }),
       }),
     );
     // Opening a window starts its first turn; the host keeps watching it.
@@ -563,9 +822,20 @@ export class Arbor {
         const item = waiting.get(one.id);
         if (item === undefined) continue;
         removeFrom(record.inbox, item);
-        if (how === "steer") await record.session?.steer(item.delivery);
-        else if (how === "followUp") await record.session?.followUp(item.delivery);
-        else await this.redispatch(item);
+        if (how === "redispatch") {
+          await this.redispatch(item);
+          continue;
+        }
+        // A hook may change the delivery or drop it: a plugin that hides a note
+        // from some windows does it here, before the block is steered in. With
+        // no hook registered there is nothing to run, so the block goes in
+        // without an extra hop.
+        const allowed = this.hooks.empty
+          ? { window: record.window, delivery: item.delivery }
+          : await this.hooks.beforeDelivery({ window: record.window, delivery: item.delivery });
+        if (allowed === null) continue;
+        if (how === "steer") await record.session?.steer(allowed.delivery);
+        else await record.session?.followUp(allowed.delivery);
       }
     };
     await apply(plan.insert, "steer");
@@ -660,6 +930,12 @@ export class Arbor {
       if (record.session === undefined) continue;
       await record.session.end(undefined, "host_restart");
     }
+    // A service is resident, but it belongs to this host: the next one starts it
+    // again from the item it installed (docs/environment.md#services).
+    for (const item of this.view.items) {
+      if (item.kind !== "service") continue;
+      await this.options.supervisor?.stop(item.name).catch(() => {});
+    }
     this.windows.clear();
   }
 
@@ -671,7 +947,7 @@ export class Arbor {
     return {
       journal: this.journal,
       judge: this.judge,
-      settings: this.options.settings ?? {},
+      settings: this.current() ?? {},
       now: () => host.clock(),
       nextTask: () => host.refs.nextTask(),
       render: (blocks) => host.renderer.render(blocks),
@@ -743,15 +1019,26 @@ export class Arbor {
     input: { firstInput: string; epoch: PromptEpoch; limits: OpenWindowRequest["limits"]; continuation?: OpenWindowRequest["continuation"] },
   ): Promise<void> {
     let session: WindowSession;
+    // The prompt a window opens with goes through `beforeModelRequest`, so a
+    // plugin sees what the model will read before it reaches the backend. With
+    // no hook registered the window opens without an extra hop.
+    const asked = this.hooks.empty
+      ? { system: input.epoch.system, memory: input.epoch.memory, envRevision: input.epoch.envRevision }
+      : await this.modelRequest(record, input);
+    if (asked === null) {
+      await this.fail(record, arborError({
+        code: "refused",
+        rule: "model.request.refused",
+        message: "window: 一个插件拒绝了这个窗口的模型请求",
+        nextAction: "查看该插件的钩子记录，或换一个没有被拒绝的窗口。",
+      }));
+      return;
+    }
     try {
       session = await this.backend.open({
         window: record.window,
         task: record.task,
-        prompt: {
-          system: input.epoch.system,
-          memory: input.epoch.memory,
-          envRevision: input.epoch.envRevision,
-        },
+        prompt: asked,
         tools: this.catalog.tools(),
         modules: this.catalog.modules(),
         model: await this.modelFor(record.tier),
@@ -770,6 +1057,30 @@ export class Arbor {
     const outcome = await session.outcome();
     await watching;
     await this.settle(record, outcome.reason, outcome.handoff, outcome.usage);
+  }
+
+  /**
+   * The prompt one window opens with, after `beforeModelRequest`. `null` means a
+   * hook refused the request, so the window never reaches a model.
+   */
+  private async modelRequest(
+    record: WindowRecord,
+    input: { firstInput: string; epoch: PromptEpoch },
+  ): Promise<RenderedPrompt | null> {
+    try {
+      const asked = await this.hooks.before("beforeModelRequest", {
+        window: record.window,
+        prompt: {
+          system: input.epoch.system,
+          memory: input.epoch.memory,
+          envRevision: input.epoch.envRevision,
+        },
+        inputs: [dataBlock(input.firstInput)],
+      });
+      return asked.prompt;
+    } catch {
+      return null;
+    }
   }
 
   /** Read a session's events until the window ends. */
@@ -859,21 +1170,31 @@ export class Arbor {
     record.state = "ended";
     record.usage = usage;
     const targets = this.board.get(record.window)?.targets ?? [];
+    // A hook may change the handoff; a refusal is recorded with the end, and the
+    // window still ends, because the model asked for it.
+    const end = await this.hooks.windowEnd({ window: record.window, ...(handoff === undefined ? {} : { handoff }), reason });
+    const wanted = end.context.handoff ?? handoff;
     await this.journal.append({
       kind: "window_end",
       window: record.window,
-      body: hostBody({ reason, used: usage.used, ...(handoff === undefined ? {} : { handoff: true }) }),
+      body: hostBody({
+        reason,
+        used: usage.used,
+        ...(wanted === undefined ? {} : { handoff: true }),
+        ...(end.refused === undefined ? {} : { refused: end.refused.rule }),
+      }),
       targets,
-      ...(handoff === undefined ? {} : { refs: [...handoff.refs] }),
+      ...(wanted === undefined ? {} : { refs: [...wanted.refs] }),
     });
     this.board.close(record.window);
     this.windows.delete(record.window);
+    this.reads.delete(record.window);
     if (record.mount !== undefined) await record.mount.release().catch(() => {});
     const continues =
-      handoff !== undefined || reason === "hard_limit" || reason === "host_restart";
+      wanted !== undefined || reason === "hard_limit" || reason === "host_restart";
     if (!continues) return;
     await this.continueWindow(record.window, {
-      ...(handoff === undefined ? {} : { handoff }),
+      ...(wanted === undefined ? {} : { handoff: wanted }),
       midTaskReset: reason === "hard_limit",
       targets,
       ...(record.tier === undefined ? {} : { tier: record.tier }),
@@ -893,7 +1214,15 @@ export class Arbor {
     const window = this.refs.nextWindow();
     const taskRef = this.refs.nextTask();
     const reason = textOf(this.table, "continuation.reason", { window: previous });
+    // A hook may change the handoff, or refuse the continuation.
+    const continued = await this.hooks.before("windowContinue", {
+      window,
+      previous,
+      ...(options.handoff === undefined ? {} : { handoff: options.handoff }),
+      ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
+    });
     const epoch = await this.snapshots.epoch();
+    const changes = await this.changesSince(epoch);
     const effects = await this.eventsOfKind(previous, "send");
     const openTasks = await this.taskOf(previous);
     const firstInput = this.renderer.render(
@@ -908,11 +1237,12 @@ export class Arbor {
         },
         continuation: {
           previous,
-          ...(options.handoff === undefined ? {} : { handoff: options.handoff }),
+          ...(continued.handoff === undefined ? {} : { handoff: continued.handoff }),
           ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
           openTasks,
           effects,
         },
+        ...(changes.length === 0 ? {} : { changes }),
       }),
     );
     await this.journal.append({
@@ -929,7 +1259,7 @@ export class Arbor {
       limits: this.limits(),
       continuation: {
         previous,
-        ...(options.handoff === undefined ? {} : { handoff: options.handoff }),
+        ...(continued.handoff === undefined ? {} : { handoff: continued.handoff }),
         ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
       },
     });
@@ -980,6 +1310,29 @@ export class Arbor {
     });
   }
 
+  /**
+   * A service started, failed or stopped: recorded as an event with the service
+   * as its target, so it is dispatched like any outside input
+   * (docs/environment.md#services).
+   */
+  private async serviceState(status: ServiceStatus): Promise<void> {
+    const event = await this.journal.append({
+      kind: "service_state",
+      body: hostBody({
+        service: status.name,
+        state: status.state,
+        revision: status.revision,
+        restarts: status.restarts,
+        ...(status.lastError === undefined ? {} : { error: status.lastError.message }),
+      }),
+      targets: [`svc:${status.name}`],
+    });
+    // A failure is an input like any other: the windows that touched the service
+    // are told about it (docs/environment.md#services).
+    await this.coordinator.circulate(event);
+    await this.hooks.after("serviceStateChange", { service: status.name, status: { ...status, refs: [event.ref] } });
+  }
+
   // ---- the idle window ----------------------------------------------------
 
   /**
@@ -1014,6 +1367,8 @@ export class Arbor {
       journal: this.journal,
       ...(this.options.notes === undefined ? {} : { notes: this.options.notes }),
       ...(this.options.workspace === undefined ? {} : { workspace: this.options.workspace }),
+      ...(this.options.environment === undefined ? {} : { environment: this.options.environment }),
+      ...(this.options.supervisor === undefined ? {} : { supervisor: this.options.supervisor }),
 
       ensureWorkspace: async (window) => host.mountFor(window),
       endWindow: async (window, handoff) => host.endWindow(window, handoff),
@@ -1032,7 +1387,43 @@ export class Arbor {
       windowMessage: async (from, to, text, replyTo) => host.windowMessage(from, to, text, replyTo),
       broadcast: async (from, text) => host.broadcast(from, text),
       inbox: async (window) => host.inboxOf(window),
+
+      envPaths: () => {
+        const environment = this.options.environment;
+        return environment === undefined
+          ? undefined
+          : { prefix: environment.mount, directory: environment.directory };
+      },
+      envCatalog: () => host.view,
+      envItemAt: async (path) => host.itemAt(path),
+      envRead: (window, item) => host.noteRead(window, item),
+      reload: async (window, request) => host.reload(window, request),
+      callMcp: async (server, fn, args) => {
+        const environment = this.options.environment;
+        if (environment === undefined) {
+          throw arborError({
+            code: "unavailable",
+            rule: "env.absent",
+            message: "环境：本主机没有配置环境",
+            nextAction: "本主机没有配置环境。",
+          });
+        }
+        return environment.call(server, fn, args);
+      },
     };
+  }
+
+  /** The item a path under the mount belongs to, when it is one. */
+  private async itemAt(path: string): Promise<EnvItem | undefined> {
+    const mount = this.options.environment?.mount;
+    if (mount === undefined) return undefined;
+    const inside = path.startsWith(`${mount}/`) ? path.slice(mount.length + 1) : "";
+    // The settings are one file at the root, not a directory of their own.
+    if (inside === "settings.json") return this.view.items.find((item) => item.kind === "settings");
+    const [kind, name] = inside.split("/");
+    if (name === undefined) return undefined;
+    const wanted = kind === "skills" ? "skill" : kind === "mcp" ? "mcp" : kind === "services" ? "service" : "settings";
+    return this.view.items.find((item) => item.kind === wanted && (wanted === "settings" || item.name === name));
   }
 
   /** The window's own directory, created on first use. */
@@ -1089,7 +1480,14 @@ export class Arbor {
       });
     }
     const anchor: Anchor = { window, event: await this.lastEvent(window) };
-    const note = await notes.write({ ...input, anchor, refs: [...(input.refs ?? []), ...(await this.citedRefs(window))] });
+    // A hook may change what the write carries; a refusal answers with the rule.
+    const allowed = await this.hooks.before("beforeNoteWrite", { window, input });
+    const note = await notes.write({
+      ...allowed.input,
+      anchor,
+      refs: [...(input.refs ?? []), ...(await this.citedRefs(window))],
+    });
+    await this.hooks.after("afterNoteWrite", { window, input: allowed.input, revision: note.revision });
     // A revision is news about the note, so the windows working on it hear about
     // it (docs/coordination.md#notices).
     await this.circulateNewest("note_revision", note.id);
@@ -1286,8 +1684,23 @@ export class Arbor {
       ...(record === undefined ? {} : { task: record.task }),
       ...(mount === undefined ? {} : { workspace: mount }),
       ...(at === undefined ? {} : { call: at }),
+      ...(this.options.environment === undefined ? {} : { envRevision: await this.options.environment.revision() }),
     });
-    const result = await this.catalog.call(call, context);
+    // A hook may change the call or refuse it; a refusal answers in the core's
+    // error shape, exactly like any other rule the host enforces. With no hook
+    // registered the call runs without an extra hop.
+    const allowed: ToolCallContext | Error = this.hooks.empty
+      ? { window, call }
+      : await this.hooks
+          .before("beforeToolCall", { window, call })
+          .catch((error: unknown) => (error instanceof Error ? error : new Error(String(error))));
+    let result: ToolResult;
+    if (allowed instanceof Error) {
+      result = this.refusalOf(call, allowed);
+    } else {
+      result = await this.catalog.call(allowed.call, context).catch((error: unknown) => this.refusalOf(call, error));
+    }
+    if (!this.hooks.empty) await this.hooks.after("afterToolCall", { window, call, result });
     const changed = record?.mount ?? (await this.mountFor(window));
     let snapshot: SnapshotRef | null = null;
     if (changed !== undefined && record?.workspaceRef !== undefined && this.options.workspace !== undefined) {
@@ -1305,6 +1718,21 @@ export class Arbor {
     return result;
   };
 
+  /** One refusal, from a hook or from a call that threw, as a tool result. */
+  private refusalOf(call: ToolCall, error: unknown): ToolResult {
+    const info = error as { rule?: string; message?: string; nextAction?: string };
+    return {
+      callId: call.callId,
+      ok: false,
+      content: "",
+      error: {
+        rule: info.rule ?? "tool.failed",
+        message: info.message ?? (error instanceof Error ? error.message : String(error)),
+        ...(info.nextAction === undefined ? {} : { nextAction: info.nextAction }),
+      },
+    };
+  }
+
   /** True once the window should end after the current turn. */
   endRequested = (window: WindowRef): boolean => {
     return this.windows.get(window)?.ending === true;
@@ -1312,16 +1740,21 @@ export class Arbor {
 
   // ---- settings -----------------------------------------------------------
 
+  /** The settings the host runs with: the environment's, or the seed it opened with. */
+  private current(): Settings | undefined {
+    return this.settings ?? this.options.settings;
+  }
+
   private contextTokens(): number {
-    return this.options.settings?.window?.contextTokens ?? DEFAULT_CONTEXT_TOKENS;
+    return this.current()?.window?.contextTokens ?? DEFAULT_CONTEXT_TOKENS;
   }
 
   private reserveTokens(): number {
-    return this.options.settings?.window?.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
+    return this.current()?.window?.reserveTokens ?? DEFAULT_RESERVE_TOKENS;
   }
 
   private idleSeconds(): number {
-    return this.options.settings?.window?.idleSeconds ?? DEFAULT_IDLE_SECONDS;
+    return this.current()?.window?.idleSeconds ?? DEFAULT_IDLE_SECONDS;
   }
 
   private limits(): OpenWindowRequest["limits"] {
@@ -1340,8 +1773,8 @@ export class Arbor {
    * and the settings exist.
    */
   private async modelFor(tier?: string): Promise<string> {
-    const tiers = this.options.settings?.modelTiers ?? {};
-    for (const wanted of [tier, this.options.settings?.defaultTier]) {
+    const tiers = this.current()?.modelTiers ?? {};
+    for (const wanted of [tier, this.current()?.defaultTier]) {
       if (wanted === undefined) continue;
       const mapped = tiers[wanted];
       if (mapped !== undefined) return mapped;
@@ -1392,7 +1825,7 @@ export class Arbor {
       ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
       callEvents: new Map(),
       inbox: [],
-      protectionUntil: this.clock() + (this.options.settings?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,
+      protectionUntil: this.clock() + (this.current()?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,
       finalReminderSent: false,
     };
     this.windows.set(window, record);
@@ -1471,7 +1904,7 @@ function scrubRecord(record: DecisionRecord, scrub: (text: string) => string): D
   };
 }
 
-export { Board, type BoardEntry, EffectQueue, RefAllocator, SnapshotBuilder };
+export { Board, type BoardEntry, EffectQueue, HookRunner, HookedJournal, RefAllocator, SnapshotBuilder };
 export type { LiveWindow, PromptEpoch, SearchOutcome, ToolServices };
 
 /** What the host gives the backend about the window it is running. */

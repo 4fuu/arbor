@@ -11,6 +11,7 @@
 import type { Effect, EffectExecutor, EffectResult, EventRef, Ref, Target, WindowRef } from "@arbor/interfaces";
 import type { Journal } from "@arbor/interfaces";
 import type { Block } from "@arbor/interfaces";
+import type { HookRunner } from "./hooks.ts";
 
 /** What a `send` hands the queue. */
 export interface EffectInput {
@@ -30,18 +31,27 @@ export interface EffectOutcome {
   behind: number;
 }
 
+export interface EffectQueueOptions {
+  /** Hooks, from a plugin: an effect can be held for an approval or dropped. */
+  hooks?: HookRunner;
+}
+
 export class EffectQueue {
   private readonly journal: Journal;
   private executors: readonly EffectExecutor[];
+  private readonly hooks: HookRunner | undefined;
   private readonly queue: Effect[] = [];
   /** Effects no executor owns yet. They stay recorded and wait for a plugin. */
   private readonly unowned: Effect[] = [];
+  /** Effects a hook held for an approval, by the approval it named. */
+  private readonly held = new Map<string, Effect[]>();
   private readonly running = new Set<Target>();
   private draining = false;
 
-  constructor(journal: Journal, executors: readonly EffectExecutor[] = []) {
+  constructor(journal: Journal, executors: readonly EffectExecutor[] = [], options: EffectQueueOptions = {}) {
     this.journal = journal;
     this.executors = executors;
+    this.hooks = options.hooks;
   }
 
   /** Record one effect and queue it. The effect is not carried out yet. */
@@ -100,7 +110,54 @@ export class EffectQueue {
 
   /** How many effects are still waiting, including the ones nobody owns. */
   pending(): number {
-    return this.queue.length + this.unowned.length;
+    return this.queue.length + this.unowned.length + this.heldCount();
+  }
+
+  /** How many effects a hook is holding for an approval. */
+  heldCount(): number {
+    let total = 0;
+    for (const effects of this.held.values()) total += effects.length;
+    return total;
+  }
+
+  /**
+   * Release the effects an approval held. `approval` names what the hook held
+   * them for; without one, everything held is released.
+   */
+  async release(approval?: string): Promise<number> {
+    const keys = approval === undefined ? [...this.held.keys()] : [approval];
+    let released = 0;
+    for (const key of keys) {
+      const effects = this.held.get(key);
+      if (effects === undefined) continue;
+      this.held.delete(key);
+      this.queue.push(...effects);
+      released += effects.length;
+    }
+    if (released > 0) void this.drain();
+    return released;
+  }
+
+  /** Drop the effects an approval held, recording that they will not happen. */
+  async drop(approval: string | undefined, reason: string): Promise<number> {
+    const keys = approval === undefined ? [...this.held.keys()] : [approval];
+    let dropped = 0;
+    for (const key of keys) {
+      const effects = this.held.get(key);
+      if (effects === undefined) continue;
+      this.held.delete(key);
+      dropped += effects.length;
+      for (const effect of effects) {
+        await this.journal.append({
+          kind: "effect_result",
+          window: effect.madeBy,
+          body: `dropped ${reason}`,
+          targets: [effect.target],
+          refs: [effect.event],
+        });
+      }
+    }
+    return dropped;
   }
 
   /** Register an executor that arrived after the effects it owns were made. */
@@ -113,6 +170,24 @@ export class EffectQueue {
   }
 
   private async run(effect: Effect): Promise<void> {
+    const outcome = this.hooks === undefined ? { action: "release" as const } : await this.hooks.beforeEffect({ effect });
+    if (outcome.action === "hold") {
+      const key = outcome.approval ?? effect.event;
+      const held = this.held.get(key);
+      if (held === undefined) this.held.set(key, [effect]);
+      else held.push(effect);
+      return;
+    }
+    if (outcome.action === "drop") {
+      await this.journal.append({
+        kind: "effect_result",
+        window: effect.madeBy,
+        body: `dropped ${outcome.error.message}`,
+        targets: [effect.target],
+        refs: [effect.event],
+      });
+      return;
+    }
     const executor = this.executors.find((one) => one.can(effect));
     if (executor === undefined) {
       // No executor owns this effect yet: it stays recorded, and a plugin that
