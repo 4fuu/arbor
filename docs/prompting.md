@@ -20,7 +20,7 @@ a request is built, by fixed rules:
 - data blocks are marked as data ([below](#data-and-instructions));
 - the output is deterministic, so the same blocks always give the same bytes.
 
-The core defines the built-in kinds below. An adapter registers kinds of its
+The core defines the built-in kinds below. A plugin registers kinds of its
 own - its prompt section, its message shapes - as a kind with fields and a
 mapping, and hands the host blocks, never finished text. Changing how
 something reads is a change to one mapping or one table entry, in one place.
@@ -76,9 +76,9 @@ this order:
 5. `<env>` - skills, MCP servers and services, one line each: a name, a
    description and, for a skill, its path. The built-in skills are listed
    here like any other.
-6. One section per adapter that registered one
-   ([architecture.md](architecture.md#adapters)), rendered from its block in a
-   tag named after the adapter.
+6. One section per plugin that registered one
+   ([architecture.md](architecture.md#plugins)), rendered from its block in a
+   tag named after the plugin.
 
 A section with nothing to say is not rendered. The whole prompt is frozen
 with the snapshot epoch ([windows.md](windows.md#prompt-layout)).
@@ -104,7 +104,7 @@ target, its refs and its content:
 | Block | Fixed line |
 | --- | --- |
 | inserted task | none; the task renders as it would open a window |
-| conversation update | the conversation, then the new events in the adapter's block kinds |
+| conversation update | the conversation, then the new events in the plugin's block kinds |
 | notice | the event's opening words and its ref, from which window |
 | broadcast | it is a broadcast, needs no reply, and a reply when really needed goes to the sender as a window message |
 | window message | from which window, and its `reply_to` when it has one |
@@ -175,8 +175,8 @@ infer. Everything left out stays reachable from something shown.
 
 The framework fixes the envelope of an outside input: time, source channel,
 target, its ref, and first-appearance details. What goes inside - senders,
-quotes, images, a channel's own shapes - is blocks of the kinds its adapter
-registered ([architecture.md](architecture.md#adapters)); their mappings
+quotes, images, a channel's own shapes - is blocks of the kinds its plugin
+registered ([architecture.md](architecture.md#plugins)); their mappings
 follow the density rules above.
 
 ## Data and instructions

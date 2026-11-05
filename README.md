@@ -46,7 +46,7 @@ Status: design. No code yet.
 | Page | Contents |
 | --- | --- |
 | [docs/overview.md](docs/overview.md) | goals, concepts, principles, routes considered |
-| [docs/architecture.md](docs/architecture.md) | layers, interfaces, stack, models, adapters, hooks, data placement |
+| [docs/architecture.md](docs/architecture.md) | layers, interfaces, stack, models, plugins, hooks, data placement |
 | [docs/journal.md](docs/journal.md) | events and their order, targets, watermarks, external ids, refs, tracing, media, redaction |
 | [docs/windows.md](docs/windows.md) | window lifecycle, prompt layout, reminders, continuation |
 | [docs/dispatch.md](docs/dispatch.md) | task sources, judge decisions, insertion timing, backpressure, scheduled tasks |

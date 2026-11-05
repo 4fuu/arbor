@@ -5,7 +5,7 @@
 ```text
 ┌ entry points ─────────────────────────────────────────────────┐
 │ direct tools (the model) · code mode modules (the model)       │
-│ host API (operators, consoles, adapters)                       │
+│ host API (operators, consoles, plugins)                        │
 ├ service layer ─────────── the one implementation ─────────────┤
 │ journal · windows · dispatch · board · notes · workspaces      │
 │ effects · schedules · environment · services                   │
@@ -35,9 +35,9 @@ interface and registering it; nothing else changes.
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs) |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
-| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; adapters provide them |
+| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
-| `EffectExecutor` | carry out effects from the effect queue | none; adapters provide them |
+| `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
 | `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory on `Workspace` |
 | `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor |
@@ -52,8 +52,8 @@ Rules for every interface:
   interface; the core only sees its own shapes.
 - **Errors name the next action.** An implementation returns errors in the
   core's error shape, so the model always reads the same kind of refusal.
-- **Adapters add, they do not patch.** A domain (a chat bot, a coding agent)
-  is an adapter ([below](#adapters)). It does not change the core.
+- **Plugins add, they do not patch.** A domain (a chat bot, a coding agent)
+  is a plugin ([below](#plugins)). It does not change the core.
 
 ## Stack
 
@@ -83,26 +83,26 @@ Only models that take images are offered. The judge picks a tier for each new
 window ([dispatch.md](dispatch.md#model-tiers)), and settings map each tier
 to a model.
 
-## Adapters
+## Plugins
 
-An adapter is one plug-in that brings a domain to the host - a chat channel,
-a code host, a webhook source. It registers, all at once:
+A plugin is the one unit that extends the host. It bundles any of the parts
+below; every part is optional, so a plugin can be only a hook, only a skill,
+or a whole domain such as a chat channel or a code host:
 
 | Part | What it gives |
 | --- | --- |
-| channels | sources and sinks, with their native ids ([journal.md](journal.md#external-ids)) |
-| task sources | how its outside events become tasks, including batching |
-| effect executors | how its effects are carried out |
-| capabilities | MCP servers and skills, installed into `/env` as ordinary items under its name ([environment.md](environment.md)) |
-| prompt blocks | a system prompt section, and the block kinds its inputs use, given as typed blocks the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
-| judge questions | extra criteria or decisions for its own inputs |
+| adapters | connections to the outside world: channels with their native ids ([journal.md](journal.md#external-ids)), task sources with their batching, effect executors |
+| MCP servers | capabilities the model calls, installed into `/env` under the plugin's name ([environment.md](environment.md)) |
+| skills | procedures, installed into `/env` under the plugin's name |
 | hooks | any of the hooks below |
+| prompt blocks | a system prompt section, and the block kinds its inputs use, which the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
+| judge questions | extra criteria or decisions for its own inputs |
 
-- **Capabilities are MCP servers, not tools.** An adapter adds no direct
-  tool or module of its own; what the model can do with it is an MCP server
-  and skills in `/env`. The model reads, changes and reinstalls them with
-  `reload` like any item, so it can improve an adapter's abilities itself. An
-  adapter upgrade installs a new revision on top; the model's changes stay in
+- **Capabilities are MCP servers, not tools.** A plugin adds no direct tool
+  or module of its own; what the model can do with it is an MCP server and
+  skills in `/env`. The model reads, changes and reinstalls them with
+  `reload` like any item, so it can improve a plugin's abilities itself. A
+  plugin upgrade installs a new revision on top; the model's changes stay in
   the item's history.
 - **Plugging in** is an environment change: its items arrive in live windows
   as a delta, and its prompt section applies from the next epoch.
@@ -110,11 +110,11 @@ a code host, a webhook source. It registers, all at once:
   and catalog they were built with. A call into a removed capability is
   refused with the rule and the ref of the change that removed it, and live
   windows get the removal as a delta. The next epoch leaves it out. Events
-  the adapter recorded stay in the journal and their refs keep resolving.
+  the plugin recorded stay in the journal and their refs keep resolving.
 
 ## Hooks
 
-The framework sets no policy of its own. A deployment or an adapter adds it
+The framework sets no policy of its own. A deployment or a plugin adds it
 through hooks; each can observe, change or refuse, refusing in the core's
 error shape:
 
@@ -155,7 +155,7 @@ one `/env`, and every window can read all of it.
 
 For now one host runs on one machine. To leave room for more:
 
-- Tools and adapters reach the host only through the host API, never through
+- Tools and plugins reach the host only through the host API, never through
   local files or the database.
 - Ids and refs do not depend on a machine.
 - `Journal` and `NoteStore` are interfaces, not tied to SQLite.

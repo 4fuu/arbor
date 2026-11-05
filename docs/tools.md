@@ -3,7 +3,7 @@
 The model has two tiers of tools. **Decisions and plain commands are direct
 tools**, declared to the model and called in the turn. **Everything else is a
 module function**, called from a script in `code_exec`. There is no CLI.
-Operators, consoles and adapters use the host API, which calls the same
+Operators, consoles and plugins use the host API, which calls the same
 service layer ([architecture.md](architecture.md#layers)).
 
 ## Direct tools
@@ -18,8 +18,8 @@ service layer ([architecture.md](architecture.md#layers)).
 | `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
 
-Adapters add no tools; their abilities are MCP servers
-([architecture.md](architecture.md#adapters)). A deployment may move a
+Plugins add no tools; their abilities are MCP servers
+([architecture.md](architecture.md#plugins)). A deployment may move a
 function into or out of the direct set through configuration, guided by how
 often the logs show it used.
 
@@ -39,7 +39,7 @@ often the logs show it used.
 | `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
 
 A module whose backing feature is not configured is absent. Every MCP
-server - an adapter's or one the model installed - is a module of its own,
+server - a plugin's or one the model installed - is a module of its own,
 and arrives through an environment delta
 ([environment.md](environment.md#deltas-in-a-window)).
 
