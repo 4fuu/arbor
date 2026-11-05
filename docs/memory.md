@@ -10,8 +10,13 @@ window, written only through the note tools.
   body, paged.
 - **One copy, checked writes.** A write names the revision it read
   ([conflicts](#conflicts)).
+- **A replace that changes the body names a summary**, so a list never shows
+  yesterday's line on today's note. A replace that names no summary or
+  visibility keeps the ones the note has; a new note takes the opening of its
+  body as its summary.
 - **Revisions are append-only.** An anchor keeps working after the note is
-  edited, archived or deleted.
+  edited, archived or deleted. A delete leaves every revision and every ref to
+  them resolving, and no list, search or active set returns the note again.
 - **Budget:** a token budget on the active set, because the active set is
   part of every prefix. It refuses growth and never tidying. There is no cap
   on how many notes a window writes.
@@ -41,6 +46,29 @@ share and never outweighs the model's own use.
 
 Notes written since the snapshot reach later windows through their first
 input, and live windows through notices.
+
+### Snapshot epochs
+
+The active set is frozen with an epoch. At most every `snapshot.min_interval`
+(default 10 minutes), and only when a note was written since the last epoch or
+the budget changed, the host builds a new one. Every window opened in one epoch
+has the same prefix; what changed since reaches it as a delta.
+
+- `notes.snapshot()` returns the epoch's version, its time and the active notes
+  by summary, with the summaries the epoch froze. A note revised during the
+  epoch keeps its frozen summary; the current one is what a list shows.
+- `notes.delta(epoch)` returns what changed since one: every note written after
+  it, as `created`, `revised` or `deleted`.
+- `notes.score()` returns the candidates with their usage scores, which is the
+  state the judge's `active set` decision reads.
+- `notes.recordUse` is how the host feeds the uses the store cannot see - an
+  event that cited a note or held it as evidence. One event is recorded once.
+
+A note's score is its direct credit - what windows cite, use as evidence and
+read, decayed by age - or the share that reached it through evidence links up
+to three hops, whichever is larger. A deleted note earns nothing and passes
+nothing on. A note with no use is not picked: freshness reaches a window
+through the delta, not through the snapshot.
 
 ## Anchors
 

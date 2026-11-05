@@ -115,6 +115,14 @@ export type {
   NoteContext,
   NoteQuery,
   NoteConflictInfo,
+  ActiveSetBudget,
+  ActiveCandidate,
+  NoteUseKind,
+  NoteUseInput,
+  SnapshotOptions,
+  NotesSnapshot,
+  NoteDelta,
+  NoteDeltaItem,
   NoteStore,
 } from "./notes.ts";
 

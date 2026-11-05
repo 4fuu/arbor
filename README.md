@@ -68,5 +68,6 @@ check` typechecks and tests every package.
 | `packages/interfaces` | the interfaces layer: every replaceable interface, plus the core's own shapes. Types only. |
 | `packages/errors` | the error shape every refusal uses: the rule and the next action |
 | `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
+| `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/core` (later) | the service layer: one implementation of every operation |
 | `packages/tools` (later) | the entry points: direct tools, code mode modules, the host API |

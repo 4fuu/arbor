@@ -40,6 +40,25 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  packages/notes-sqlite:
+    dependencies:
+      '@arbor/errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@arbor/interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@arbor/journal-sqlite':
+        specifier: workspace:*
+        version: link:../journal-sqlite
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
 packages:
 
   '@types/node@26.6.6':

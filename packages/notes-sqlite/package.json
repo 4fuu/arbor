@@ -1,0 +1,26 @@
+{
+  "name": "@arbor/notes-sqlite",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The default NoteStore: one copy of every note, checked writes, revisions, anchors and the active set on SQLite beside the journal.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@arbor/errors": "workspace:*",
+    "@arbor/interfaces": "workspace:*"
+  },
+  "devDependencies": {
+    "@arbor/journal-sqlite": "workspace:*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}
