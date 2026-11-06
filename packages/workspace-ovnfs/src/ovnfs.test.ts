@@ -210,7 +210,7 @@ describe("ovnfs workspace", () => {
     const { workspace, source } = await fixture();
     const section = workspace.promptSection();
     assert.equal(section.tag, "workspace");
-    assert.equal(section.text?.["workspace.method.shared"], "共享文件夹 {source}：所有窗口都在这里读写，它可以放多个项目和多个 git 仓库。");
+    assert.equal(section.text?.["workspace.method.shared"], "共享文件夹 {source}：所有窗口都从这里读，bash 默认也在这里运行；它可以放多个项目和多个 git 仓库。");
     const content = await section.content();
     assert.equal(content[0]?.kind, "workspace_method");
     assert.equal(content[0]?.fields.source, source);

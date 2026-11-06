@@ -50,7 +50,7 @@ A checkout is frozen at open. To see what another window has applied since, read
 the shared folder or open a new checkout. In a git repository, open the checkout
 at the repository's own subfolder - not a parent folder - so it gets the private
 git directory `apply --branch` needs: commit inside the checkout, then
-`apply <name> --branch arbor/<window ref>` brings the commits back as a branch.
+`apply <name> --branch arbor/<name>` brings the commits back as a branch.
 Never commit in the shared folder.
 
 Path classes decide what a checkout captures: `source` paths are captured and

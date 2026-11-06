@@ -51,7 +51,7 @@ ovnfs apply <检出名>
 在 git 仓库里要在仓库自己的子目录开检出，它才有私有 git 目录。在检出里自由提交，然后：
 
 ```sh
-ovnfs apply <检出名> --branch arbor/<本窗口引用>
+ovnfs apply <检出名> --branch arbor/<检出名>
 ```
 
 把检出的提交取回共享文件夹的仓库，成为 `arbor/<引用>` 分支。绝不在共享文件夹里直接提交。

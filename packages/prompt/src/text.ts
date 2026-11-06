@@ -293,7 +293,7 @@ export const zhTextTable: TextTable = {
   "tool.send": "向一个目标发送内容，经过效果队列执行一次；能否送达取决于该目标的频道，结果只记录不等待。",
   "tool.end": "结束本窗口。有未完成的工作时必须带交接内容：当前话题、进展、待办、约定。",
   "tool.search": "用一个查询同时搜索记录、笔记和现场板。",
-  "tool.bash": "在本窗口的工作区中执行一条命令；超出等待时间的命令转为后台作业，用 bash_output 查询、bash_stop 停止，窗口不会收到完成通知。",
+  "tool.bash": "在工作区中执行一条命令（默认目录由工作区实现决定）；超出等待时间的命令转为后台作业，用 bash_output 查询、bash_stop 停止，窗口不会收到完成通知。",
   "tool.bash_output": "读取一个后台命令的新输出。",
   "tool.bash_stop": "停止一个后台命令。",
   "tool.read": "读取工作区中的一个文件，按行分页。",
@@ -341,7 +341,7 @@ export const zhTextTable: TextTable = {
   "module.channels": "查看已接入的外部频道：连接列表，以及按原生 ID 读取一条消息。",
   "module.tasks": "查看派发过的任务：最近的列表，以及一个任务批次里的外部事件。",
   "module.schedule": "查看、创建、修改和取消定时任务。",
-  "module.workspace": "在本窗口的目录中查找和匹配文件，以及按窗口查询其他窗口的工作区目录。",
+  "module.workspace": "在工作区中查找和匹配文件、按窗口查询其他窗口的工作区，以及工作区实现提供的其他函数。",
   "module.env": "查看环境中的技能、MCP 服务器、服务和设置，以及它们的修订历史。",
   "module.services": "查看常驻服务：列表、状态和日志。",
 
