@@ -76,7 +76,10 @@ the registry, and a version, published or staged, can never be reused. Fix
 the cause, then publish (or stage) each remaining package from its `dist`
 with `npm publish --access public` (or `npm stage publish`); running the
 script again stops at the first package already there. Check the result with
-`npm view @4fu/arbor-<name> version` for every package.
+`npm view @4fu/arbor-<name> version` for every package. A version npm reports
+as published can take ten minutes or more to appear on the registry, so wait
+for every package before you conclude one is missing, and do not publish it
+again.
 
 ## How a package is published
 
