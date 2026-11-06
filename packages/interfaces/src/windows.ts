@@ -63,6 +63,11 @@ export interface BoardLine {
   expects: readonly Expectation[];
   state: WindowState;
   usage: TokenUsage;
+  /**
+   * The work this window still has open in its workspace, each item as the
+   * model reads it (docs/workspaces.md#open-work). Empty when it has none.
+   */
+  openWork?: readonly string[];
 }
 
 /**

@@ -72,6 +72,19 @@ async function opened(backend: ScriptedBackend, count: number): Promise<void> {
   throw new Error(`only ${backend.opened.length} windows opened`);
 }
 
+/**
+ * Wait for something the host records while the window's own run is still
+ * draining: a reminder is appended after the usage report that crosses a tier,
+ * which the host's watcher handles behind the run that produced it.
+ */
+async function recorded(seen: () => Promise<boolean>): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (await seen()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error("the host never recorded it");
+}
+
 describe("the ovnfs workspace through the host", () => {
   it("opens a checkout through code_exec, blocks end until it is handed off, and lists it to the continuation", async () => {
     const { arbor, journal, backend } = await host();
@@ -107,6 +120,29 @@ describe("the ovnfs workspace through the host", () => {
     assert.equal(continuation.window, "c2");
     assert.ok((continuation.prompt.system ?? "").includes("共享文件夹"), "the ovnfs method reached the system prompt");
     assert.ok((continuation.firstInput ?? "").includes("c1-app"), "the continuation's first input listed the checkout");
+  });
+
+  it("names an unapplied checkout in the reminder and on the board", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([
+      { tool: "code_exec", args: { script: "return await workspace.checkout({ name: 'c1-app', dir: 'proj' })" } },
+      // One step crosses the first reminder tier, which names what is open.
+      { usage: { used: 30000, limit: 200000, reserve: 4000 } },
+      { text: "完成" },
+    ]);
+
+    await arbor.open(task);
+    await backend.finished();
+    await recorded(async () => (await journal.list({ kinds: ["reminder"] })).items.length > 0);
+
+    const reminders = await journal.list({ kinds: ["reminder"] });
+    const reminder = reminders.items.map((event) => event.body ?? "").find((body) => body.includes("未完成的工作"));
+    assert.ok(reminder !== undefined, "the reminder named the open work");
+    assert.match(reminder, /c1-app（未合回）/);
+    assert.match(reminder, /还没有进展笔记的话/, "the tier's own instruction is still there");
+
+    // The board shows the same open work on the window's own line.
+    assert.deepEqual(arbor.boardLines()[0]?.openWork, ["c1-app（未合回）"]);
   });
 
   it("lets a window end once its checkout is applied", async () => {

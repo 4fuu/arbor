@@ -33,6 +33,11 @@
  * implementation enforces. That is not a security boundary, and the docs say
  * so: real isolation comes from an implementation that owns its execution
  * environment.
+ *
+ * It reports no open work: a window works in place and its continuation keeps
+ * working in the same directory, so there is no step between the two where work
+ * could be left unapplied, and `Workspace.openWork` is left out rather than
+ * answered empty (docs/workspaces.md#open-work).
  */
 
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";

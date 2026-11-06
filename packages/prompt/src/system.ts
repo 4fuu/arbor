@@ -15,6 +15,7 @@ import type {
   Settings,
   TextTable,
 } from "@4fu/arbor-interfaces";
+import type { Block } from "@4fu/arbor-interfaces";
 import { Renderer } from "./render.ts";
 import { textOf } from "./text.ts";
 
@@ -27,6 +28,31 @@ export interface SystemPromptInput {
   env?: readonly EnvItem[];
   /** One section per plugin that registered one. */
   plugins?: readonly PromptSection[];
+}
+
+/**
+ * One plugin's prompt section, as one epoch rendered it.
+ *
+ * The `text` is what a later epoch diffs against, so a section that changes
+ * reaches a window that opened before the change as a delta of the changed
+ * lines (docs/prompting.md#plugin-sections-that-change).
+ */
+export interface RenderedPluginSection {
+  /** The XML tag it renders in, named after the plugin. */
+  tag: string;
+  /** The section's own text, without its tag. */
+  text: string;
+  /** The revision the plugin reported when this was rendered. */
+  revision: string;
+  /** True when it is material from outside the framework. */
+  outside: boolean;
+}
+
+/** One epoch's system prompt, with the sections it was built from. */
+export interface RenderedSystemPrompt {
+  system: string;
+  /** One entry per plugin that registered a section, in registration order. */
+  sections: readonly RenderedPluginSection[];
 }
 
 /**
@@ -52,16 +78,17 @@ interface Section {
 }
 
 /** The sections in their fixed order. Empty ones are dropped by the caller. */
-function sectionsOf(input: SystemPromptInput, table: TextTable): Section[] {
+function sectionsOf(input: SystemPromptInput, table: TextTable, outside: boolean): Section[] {
   const identity = input.settings?.identity?.trim() ?? "";
   const rules = input.settings?.generalRules ?? DEFAULT_GENERAL_RULES;
   const sections: Section[] = [];
 
   if (identity !== "") sections.push({ tag: "identity", lines: [identity] });
-  sections.push({
-    tag: "agent",
-    lines: rules.map((rule) => textOf(table, rule, undefined, rule)),
-  });
+  const agent = rules.map((rule) => textOf(table, rule, undefined, rule));
+  // The rule is only there when a plugin contributed a block from outside the
+  // framework: nothing is stated when there is nothing to say.
+  if (outside) agent.push(textOf(table, "system.agent.precedence"));
+  sections.push({ tag: "agent", lines: agent });
   if (input.tools.length > 0) {
     sections.push({
       tag: "tools",
@@ -106,30 +133,71 @@ function sectionsOf(input: SystemPromptInput, table: TextTable): Section[] {
   return sections;
 }
 
+/** The revision a plugin reported for its section, or nothing when it has none. */
+export async function sectionRevision(section: PromptSection): Promise<string> {
+  const revision = section.revision === undefined ? undefined : await section.revision();
+  return revision === undefined ? "" : String(revision);
+}
+
 /**
- * Build the frozen prefix. `plugins` are awaited last because their content is
- * produced per epoch, and their sections render in a tag named after the
- * plugin.
+ * A block from outside the framework: its content, marked as data and led by
+ * the line that says what it is. The host wraps a plugin's section in it when
+ * the plugin declared the section outside, so the mark is the framework's own
+ * and never the plugin's word.
+ */
+function outsideBlock(content: readonly Block[]): Block {
+  return { kind: "plugin_section", fields: { content: [...content] } };
+}
+
+/**
+ * One plugin's prompt section, rendered in its tag, with what it produced. The
+ * revision it reports is what a later call compares against, so an unchanged
+ * section is never rendered twice.
+ */
+export async function renderPluginSection(
+  section: PromptSection,
+  renderer: Renderer,
+): Promise<RenderedPluginSection> {
+  const content = await section.content();
+  return {
+    tag: section.tag,
+    text: renderer.render(section.outside === true ? [outsideBlock(content)] : content),
+    revision: await sectionRevision(section),
+    outside: section.outside === true,
+  };
+}
+
+/**
+ * Every plugin section, rendered once, in the order they registered. A section
+ * whose content renders to nothing is still listed - with empty text - so a
+ * later call can tell a section that stayed empty from one that appeared.
+ */
+export async function renderPluginSections(
+  plugins: readonly PromptSection[],
+  renderer: Renderer,
+): Promise<readonly RenderedPluginSection[]> {
+  const rendered: RenderedPluginSection[] = [];
+  for (const plugin of plugins) rendered.push(await renderPluginSection(plugin, renderer));
+  return rendered;
+}
+
+/**
+ * Build the frozen prefix. `plugins` are rendered first because their content
+ * is produced per epoch, their sections render in a tag named after the plugin,
+ * and one of them being outside is what puts the precedence rule into `<agent>`.
  */
 export async function renderSystemPrompt(
   input: SystemPromptInput,
   renderer: Renderer,
-): Promise<string> {
-  const table = rendererTable(renderer);
-  const sections: string[] = [];
-  for (const section of sectionsOf(input, table)) {
-    sections.push([`<${section.tag}>`, ...section.lines, `</${section.tag}>`].join("\n"));
+): Promise<RenderedSystemPrompt> {
+  const table = renderer.table;
+  const sections = await renderPluginSections(input.plugins ?? [], renderer);
+  const parts = sectionsOf(input, table, sections.some((section) => section.outside)).map((section) =>
+    [`<${section.tag}>`, ...section.lines, `</${section.tag}>`].join("\n"),
+  );
+  for (const section of sections) {
+    if (section.text === "") continue;
+    parts.push([`<${section.tag}>`, section.text, `</${section.tag}>`].join("\n"));
   }
-  for (const plugin of input.plugins ?? []) {
-    const content = await plugin.content();
-    const rendered = renderer.render(content);
-    if (rendered === "") continue;
-    sections.push([`<${plugin.tag}>`, rendered, `</${plugin.tag}>`].join("\n"));
-  }
-  return sections.join("\n\n");
-}
-
-/** The table a renderer was built with, for the lines that are not blocks. */
-function rendererTable(renderer: Renderer): TextTable {
-  return renderer.table;
+  return { system: parts.join("\n\n"), sections };
 }

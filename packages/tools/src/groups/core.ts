@@ -86,30 +86,15 @@ export class CoreToolGroup implements ToolGroup {
 
   /**
    * `end` with unfinished work needs a handoff: current topics, progress,
-   * pending items and agreements. The host knows whether work is open; the
+   * pending items and agreements. The host knows what is open and names it; the
    * tool does not guess.
    */
   private async end(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
     const handoff = handoffOf(request.args.handoff);
-    if (handoff === undefined && (await this.services.hasOpenWork(window))) {
-      // A checkout with unapplied changes is named, so the handoff the model
-      // writes - and the continuation that reads it - knows what is open
-      // (docs/workspaces.md).
-      const dirty = (await this.services.workspace?.checkouts?.(window) ?? []).filter((one) => one.dirty);
-      if (dirty.length > 0) {
-        return refused("end.handoff.required", table, "end.no_handoff.checkouts", {
-          checkouts: dirty.map((one) => one.name).join("、"),
-        });
-      }
-      return refused("end.handoff.required", table, "end.no_handoff");
-    }
     const result = await this.services.endWindow(window, handoff);
-    return {
-      ...result,
-      callId: request.callId,
-      content: textOf(table, "result.ended", { window }),
-    };
+    if (!result.ok) return { ...result, callId: request.callId };
+    return { ...result, callId: request.callId, content: textOf(table, "result.ended", { window }) };
   }
 
   private async search(request: ToolCall, window: WindowRef): Promise<ToolResult> {

@@ -19,7 +19,7 @@ import type {
   ToolResult,
   WorkspaceMount,
 } from "@4fu/arbor-interfaces";
-import { Renderer, dataBlock, zhTextTable } from "@4fu/arbor-prompt";
+import { Renderer, dataBlock, textOf, zhTextTable } from "@4fu/arbor-prompt";
 import { ToolCatalog } from "./catalog.ts";
 import type { LiveWindow, TaskSummary, ToolServices } from "./host.ts";
 import { handoffOf } from "./groups/core.ts";
@@ -121,10 +121,23 @@ async function harness(
       return mount;
     },
     endWindow: async (window, handoff) => {
+      // The host refuses an end with open work and no handoff, and names what is
+      // open, exactly as it does for a window that is behind on a target.
+      if (handoff === undefined) {
+        return {
+          callId: "",
+          ok: false,
+          content: "",
+          error: {
+            rule: "end.handoff.required",
+            message: textOf(zhTextTable, "refused.end.no_handoff.open", { openWork: "c1-app（未合回）" }),
+            nextAction: textOf(zhTextTable, "next.end.no_handoff"),
+          },
+        };
+      }
       ended.push({ window, handoff });
       return { callId: "", ok: true, content: "已结束" };
     },
-    hasOpenWork: async () => true,
     writeNote: async (window, input) => {
       written.push({ window, input });
       return {

@@ -14,7 +14,9 @@ typed block: a kind and its fields. One renderer turns blocks into text when
 a request is built, by fixed rules:
 
 - each kind maps to one shape, with its tag, field order and fixed lines
-  taken from the text table;
+  taken from the text table; a kind may also name the field its tag comes from,
+  for a block whose tag the caller chooses - a plugin prompt section's delta
+  renders in the tag the plugin named;
 - content inside a block is escaped, so outside text cannot close a tag or
   pose as host text;
 - data blocks are marked as data ([below](#data-and-instructions));
@@ -58,7 +60,8 @@ it instead of repeating it, because a fact stated twice drifts.
 | memory snapshot | the active notes, by summary | the active-set budget |
 | first input | the task; related board lines; for a continuation, the previous window's ref and handoff; changes since the epoch | data, plus one fixed note |
 | delivery | one block per inserted task, conversation update, notice, broadcast, window message or environment delta ([below](#deliveries)) | dense |
-| reminder | the head line saying it is a host reminder and not a request, the window's real numbers, the tier's own instruction, its place in the series, and from 80 % on the cost of ignoring it | a few sentences |
+| board line | one live window: what it is doing, its targets, its open work, its usage and what it expects | one line per part |
+| reminder | the head line saying it is a host reminder and not a request, the window's real numbers, the tier's own instruction, its place in the series, the window's open work, and from 80 % on the cost of ignoring it | a few sentences |
 | tool description | what one tool does and when to use it; side effects | 1 to 4 sentences |
 | parameter description | meaning, default or range, relation to other parameters | one sentence |
 | `tool_search` answer | one function's call instructions, or where a skill's procedure is | one block per name |
@@ -89,10 +92,29 @@ this order:
    one.
 6. One section per plugin that registered one
    ([architecture.md](architecture.md#plugins)), rendered from its block in a
-   tag named after the plugin.
+   tag named after the plugin. The tag is the plugin's own choice - `<dsh>` is
+   one plugin's name for its block, not a name the framework reserves. A
+   section a plugin declares outside - material from a third party, such as the
+   sections a DeepSeek Harness plugin contributes - is led by the line that
+   says what it is and marked as data
+   ([below](#data-and-instructions)), and `<agent>` states that the framework's
+   own prompt wins on conflict.
 
 A section with nothing to say is not rendered. The whole prompt is frozen
 with the snapshot epoch ([windows.md](windows.md#prompt-layout)).
+
+## Plugin sections that change
+
+A plugin's prompt section is rendered per epoch and its content can change
+while a window runs: a third party contributes a section, rewrites one, or
+takes one away. The section declares a `revision`, and the host asks for it once
+per step - one cheap call, so nothing is rendered for a section that did not
+move. When a revision moves, the section is rendered again and the window
+learns the change the way it learns an environment change: a delta at the next
+tool-call boundary, carrying only the lines that changed. Unchanged lines are
+never repeated, and a running window's system prompt is never rebuilt. A window
+that opens after the change is built with the new text in its prefix and gets no
+delta of its own opening.
 
 ## Fixed notes
 
@@ -120,6 +142,7 @@ target, its refs and its content:
 | broadcast | it is a broadcast, needs no reply, and a reply when really needed goes to the sender as a window message |
 | window message | from which window, and its `reply_to` when it has one |
 | environment delta | one line per item: `+`, `~` or `-`, kind, name, description |
+| prompt delta | the lines one plugin's prompt section changed, `+` and `-`, in the tag the plugin named |
 
 Every block carries its own time. A block that holds outside content says it
 is data where it is delivered ([below](#data-and-instructions)).
@@ -203,7 +226,10 @@ follow the density rules above.
 Content from outside the framework is data, never instructions, and is marked
 where it is delivered rather than in one warning far away: outside messages,
 notes, the journal, tool and `code_exec` output, MCP results, service events,
-broadcasts and window messages. Skills the model or a third party wrote are
+broadcasts and window messages. A plugin's prompt block that comes from outside
+the framework - the sections a third party contributes - is data the same way,
+and it is led by the line that says so; `<agent>` states that the framework's
+own prompt wins on conflict. Skills the model or a third party wrote are
 reference material. The handoff is labelled as the agent's own earlier note.
 This is how the prompt is written, not a permission system; a deployment that
 grants authority to some sources does it through hooks.

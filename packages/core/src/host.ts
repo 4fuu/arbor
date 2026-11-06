@@ -100,11 +100,16 @@ import {
   firstInputBlocks,
   nextReminderTier,
   outsideMessageBlock,
+  promptSectionDeltaBlock,
   reminderBlock,
+  renderPluginSection,
+  renderPluginSections,
+  sectionRevision,
   textOf,
   usedPercent,
   zhTextTable,
 } from "@4fu/arbor-prompt";
+import type { RenderedPluginSection } from "@4fu/arbor-prompt";
 import { Jev } from "@4fu/arbor-judge-jev";
 import type { JevDecisionLog } from "@4fu/arbor-judge-jev";
 import {
@@ -170,6 +175,14 @@ export interface WindowRecord {
   usage: TokenUsage;
   /** The tiers of the reminder series already sent. */
   remindersSent: number;
+  /**
+   * What each plugin prompt section held when this window opened, which the
+   * window's own copy of the epoch's sections. A section that reports a new
+   * revision is rendered again and the changed lines reach this window as a
+   * delta, so the copy is what the next diff is taken against
+   * (docs/prompting.md#plugin-sections-that-change).
+   */
+  promptSections: RenderedPluginSection[];
   /** The model asked to end; the host ends the run at the next boundary. */
   ending: boolean;
   handoff?: Handoff;
@@ -684,13 +697,75 @@ export class Arbor {
 
   /** What changed since a window's epoch, for its first input. */
   private async changesSince(epoch: PromptEpoch): Promise<Block[]> {
+    const blocks: Block[] = [];
     const environment = this.options.environment;
-    if (environment === undefined) return [];
-    const current = await environment.revision();
-    if (current === epoch.envRevision) return [];
-    const delta = await environment.delta(epoch.envRevision);
-    if (delta.items.length === 0) return [];
-    return [environmentDeltaBlock(delta, this.clock())];
+    if (environment !== undefined) {
+      const current = await environment.revision();
+      if (current !== epoch.envRevision) {
+        const delta = await environment.delta(epoch.envRevision);
+        if (delta.items.length > 0) blocks.push(environmentDeltaBlock(delta, this.clock()));
+      }
+    }
+    // A plugin's prompt section that moved since the epoch reaches a window
+    // opened in it as a delta, exactly as an environment change does.
+    blocks.push(...(await this.promptSectionDeltas(epoch.sections)));
+    return blocks;
+  }
+
+  /**
+   * The plugin prompt sections that changed since these were rendered, one
+   * delta block per section, carrying only the lines that changed
+   * (docs/prompting.md#plugin-sections-that-change). A section that renders to
+   * what it held gives nothing, so an unchanged prompt is never restated.
+   */
+  private async promptSectionDeltas(views: readonly RenderedPluginSection[]): Promise<Block[]> {
+    if (this.sections.length === 0) return [];
+    const current = await renderPluginSections(this.sections, this.renderer);
+    const blocks: Block[] = [];
+    for (const view of views) {
+      const section = current.find((one) => one.tag === view.tag);
+      if (section === undefined) continue;
+      const delta = promptSectionDeltaBlock(
+        { tag: view.tag, from: view.text, to: section.text, outside: view.outside },
+        this.clock(),
+      );
+      if (delta !== undefined) blocks.push(delta);
+    }
+    return blocks;
+  }
+
+  /**
+   * A plugin's prompt section that changed while this window runs reaches it
+   * the way an environment change does: as a delta at the next tool-call
+   * boundary. The revision is asked for once per step - one cheap call per
+   * section - and a section is rendered again only when its revision moved, so
+   * an unchanged prompt is never rebuilt for a running window.
+   */
+  private async deliverPromptSections(record: WindowRecord): Promise<void> {
+    if (record.promptSections.length === 0 || record.state === "ended") return;
+    const changed: Block[] = [];
+    for (const view of record.promptSections) {
+      const section = this.sections.find((one) => one.tag === view.tag);
+      if (section === undefined) continue;
+      const revision = await sectionRevision(section);
+      if (revision === view.revision) continue;
+      const from = view.text;
+      const rendered = await renderPluginSection(section, this.renderer);
+      view.text = rendered.text;
+      view.revision = rendered.revision;
+      const delta = promptSectionDeltaBlock(
+        { tag: view.tag, from, to: rendered.text, outside: view.outside },
+        this.clock(),
+      );
+      if (delta !== undefined) changed.push(delta);
+    }
+    if (changed.length === 0) return;
+    await this.deliver(record.window, {
+      kind: "prompt_delta",
+      refs: [],
+      time: this.clock(),
+      content: changed,
+    });
   }
 
   /**
@@ -843,7 +918,7 @@ export class Arbor {
           ...(wanted.source === undefined ? {} : { source: wanted.source }),
           content: [...wanted.content],
         },
-        boardLines: this.relatedLines(wanted.targets),
+        boardLines: await this.relatedLines(wanted.targets),
         ...(changes.length === 0 ? {} : { changes }),
       }),
     );
@@ -1123,8 +1198,12 @@ export class Arbor {
       targets: [...(options.targets ?? [])],
       priority: options.priority ?? 0,
       time: this.clock(),
-      // Environment deltas and conversation updates are never held back.
-      ...(delivery.kind === "environment_delta" || delivery.kind === "conversation_update"
+      // Environment deltas, prompt deltas and conversation updates are never
+      // held back: they say what the window can still call and what changed
+      // under it.
+      ...(delivery.kind === "environment_delta" ||
+      delivery.kind === "prompt_delta" ||
+      delivery.kind === "conversation_update"
         ? { unfiltered: true }
         : {}),
       delivery,
@@ -1403,6 +1482,10 @@ export class Arbor {
     record: WindowRecord,
     input: { firstInput: string; epoch: PromptEpoch; limits: OpenWindowRequest["limits"]; continuation?: OpenWindowRequest["continuation"] },
   ): void {
+    // The window's own copy of the epoch's plugin sections: what its prefix
+    // holds, which a section that changes is diffed against
+    // (docs/prompting.md#plugin-sections-that-change).
+    record.promptSections = input.epoch.sections.map((section) => ({ ...section }));
     const running = this.run(record, input);
     record.running = running;
     void running.catch(() => {});
@@ -1512,6 +1595,10 @@ export class Arbor {
           case "usage":
             record.usage = event.usage;
             this.board.update(record.window, { usage: event.usage, state: "running" });
+            // A plugin's prompt section that changed is learned the way an
+            // environment change is: the revision is asked for here, once per
+            // step, and the delta goes in at the next tool-call boundary.
+            await this.deliverPromptSections(record);
             await this.remind(record);
             break;
           case "steered":
@@ -1573,6 +1660,10 @@ export class Arbor {
     record.remindersSent = REMINDER_TIERS.indexOf(tier) + 1;
     if (tier.tier === "final") record.finalReminderSent = true;
     const time = this.clock();
+    // What the window still has open is named with the reminder, so the tier's
+    // own instruction - write it down, hand it over - has something to act on
+    // (docs/workspaces.md#open-work).
+    const openWork = await this.refreshOpenWork(record.window);
     const delivery: Delivery = {
       kind: "reminder",
       refs: [],
@@ -1586,6 +1677,7 @@ export class Arbor {
           limit: record.usage.limit,
           percent: usedPercent(record.usage),
           time,
+          openWork,
         }),
       ],
     };
@@ -1690,19 +1782,13 @@ export class Arbor {
     const changes = await this.changesSince(epoch);
     const effects = await this.eventsOfKind(previous, "send");
     const openTasks = await this.taskOf(previous);
-    // The predecessor chain's open checkouts, so a continuation sees them by name
-    // and can continue working in them or apply them (docs/workspaces.md).
-    const checkouts = await this.options.workspace?.checkouts?.(previous) ?? [];
-    const checkoutBlock =
-      checkouts.length === 0
+    // The work the predecessor chain left open, so a continuation picks it up by
+    // name and finishes or hands it over (docs/workspaces.md#open-work).
+    const openWork = await this.refreshOpenWork(previous);
+    const openWorkBlock =
+      openWork.length === 0
         ? []
-        : [
-            dataBlock(
-              textOf(this.table, "continuation.checkouts", {
-                checkouts: checkouts.map((one) => `${one.name}${one.dirty ? textOf(this.table, "continuation.checkout.dirty") : ""}`).join("、"),
-              }),
-            ),
-          ];
+        : [dataBlock(textOf(this.table, "continuation.open_work", { openWork: openWork.join("、") }))];
     // The persistent directories the chain created, so a continuation finds them
     // by name and keeps working in them (docs/workspaces.md#persistent-directories).
     // The wording is the implementation's own; an implementation that keeps none
@@ -1733,9 +1819,9 @@ export class Arbor {
           openTasks,
           effects,
         },
-        ...(changes.length === 0 && checkoutBlock.length === 0 && keepBlock.length === 0
+        ...(changes.length === 0 && openWorkBlock.length === 0 && keepBlock.length === 0
           ? {}
-          : { changes: [...changes, ...checkoutBlock, ...keepBlock] }),
+          : { changes: [...changes, ...openWorkBlock, ...keepBlock] }),
       }),
     );
     await this.journal.append({
@@ -1939,7 +2025,6 @@ export class Arbor {
 
       ensureWorkspace: async (window) => host.mountFor(window),
       endWindow: async (window, handoff) => host.endWindow(window, handoff),
-      hasOpenWork: async (window) => host.hasOpenWork(window),
       writeNote: async (window, input) => host.writeNote(window, input),
       search: async (window, query, scope) => host.searchFor(window, query, scope),
       send: async (window, request) => host.send(window, request),
@@ -2041,8 +2126,16 @@ export class Arbor {
   private async endWindow(window: WindowRef, handoff?: Handoff): Promise<ToolResult> {
     const record = this.windows.get(window);
     if (record === undefined) return this.refusal("window.not_found", "windows.notfound", { window });
-    if (handoff === undefined && (await this.hasOpenWork(window))) {
-      return this.refusal("end.handoff.required", "end.no_handoff");
+    if (handoff === undefined) {
+      // What is still open is named, so the handoff the model writes - and the
+      // continuation that reads it - knows what is unfinished
+      // (docs/workspaces.md#open-work).
+      const openWork = await this.refreshOpenWork(window);
+      if (openWork.length > 0) {
+        return this.refusal("end.handoff.required", "end.no_handoff.open", { openWork: openWork.join("、") });
+      }
+      const gaps = await this.journal.targetsBehind(window);
+      if (gaps.length > 0) return this.refusal("end.handoff.required", "end.no_handoff");
     }
     record.ending = true;
     record.handoff = handoff;
@@ -2052,14 +2145,6 @@ export class Arbor {
       await record.session.end(handoff, "model_ended");
     }
     return { callId: "", ok: true, content: textOf(this.table, "result.ended", { window }) };
-  }
-
-  /** True when the window is behind on a target it touched, or holds a checkout with changes not yet applied back. */
-  private async hasOpenWork(window: WindowRef): Promise<boolean> {
-    const gaps = await this.journal.targetsBehind(window);
-    if (gaps.length > 0) return true;
-    const checkouts = await this.options.workspace?.checkouts?.(window);
-    return checkouts?.some((checkout) => checkout.dirty) ?? false;
   }
 
   /**
@@ -2187,7 +2272,7 @@ export class Arbor {
   }
 
   private async boardPage(): Promise<Page<BoardLine>> {
-    const lines = this.boardLines();
+    const lines = await this.withOpenWork(this.board.lines());
     return { items: [...lines], total: lines.length, limit: lines.length, nextCall: "board.list()" };
   }
 
@@ -2453,9 +2538,43 @@ export class Arbor {
     return this.fallbackModel ?? "default";
   }
 
-  /** The board lines related to a task's targets. */
-  private relatedLines(targets: readonly string[]): readonly BoardLine[] {
-    return this.board.lines().filter((line) => line.targets.some((target) => targets.includes(target)));
+  /**
+   * The board lines related to a task's targets, with the open work each live
+   * window reports - so a window that shares a target sees who still has
+   * something unfinished (docs/workspaces.md#open-work).
+   */
+  private async relatedLines(targets: readonly string[]): Promise<readonly BoardLine[]> {
+    const lines = this.board
+      .lines()
+      .filter((line) => line.targets.some((target) => targets.includes(target)));
+    return this.withOpenWork(lines);
+  }
+
+  /** The board lines, each with the open work its window reports now. */
+  private async withOpenWork(lines: readonly BoardLine[]): Promise<readonly BoardLine[]> {
+    const out: BoardLine[] = [];
+    for (const line of lines) {
+      const openWork = await this.refreshOpenWork(line.window);
+      out.push({ ...line, ...(openWork.length === 0 ? {} : { openWork }) });
+    }
+    return out;
+  }
+
+  /**
+   * The work a window still has open, as the model reads it: the workspace's
+   * own report, each item named the way the workspace names it, with what the
+   * implementation says is open about it. It is kept on the window's board
+   * line, so the board shows it, and answered to the caller that asked - a
+   * reminder, a refusal, a continuation's first input
+   * (docs/workspaces.md#open-work). An implementation that keeps nothing open -
+   * or a deployment with no workspace at all - answers nothing.
+   */
+  private async refreshOpenWork(window: WindowRef): Promise<readonly string[]> {
+    const workspace = this.options.workspace;
+    const items = workspace?.openWork === undefined ? [] : await workspace.openWork(window).catch(() => []);
+    const names = items.map((item) => `${item.name}${item.detail ?? ""}`);
+    this.board.setOpenWork(window, names);
+    return names;
   }
 
   /** Open a window's record and its board line. */
@@ -2489,6 +2608,9 @@ export class Arbor {
       ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
       callEvents: new Map(),
       inbox: [],
+      // The plugin sections this window opens with, as its own copy: what a
+      // later change is diffed against (docs/prompting.md#plugin-sections-that-change).
+      promptSections: [],
       protectionUntil: this.clock() + (this.current()?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,
       finalReminderSent: false,
     };

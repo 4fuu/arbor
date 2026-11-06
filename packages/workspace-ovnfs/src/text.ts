@@ -27,6 +27,9 @@ export const ovnfsText: TextTable = {
   "workspace.method.classes": "检出里 node_modules 等缓存路径是实时的只读镜像，.env 等保密文件是本地的，都不进检出的快照，也不会被合回。",
   "workspace.method.cli": "模块函数只是方便，ovnfs 命令行同样好用；完整用法（命令、--json、冲突标记、explain、grep/glob、嵌套仓库）见内置技能：read /env/skills/ovnfs/SKILL.md。",
 
+  // ---- the open work this implementation reports --------------------------
+  "open.dirty": "（未合回）",
+
   // ---- the module functions this implementation adds --------------------
   "function.workspace.checkout": "给一个项目子目录开一个检出，检出名以本窗口引用开头；返回检出的路径，之后在里面改文件。",
   "function.workspace.list": "列出本窗口或指定窗口链的检出：名字、路径、是否有未合回的改动。",

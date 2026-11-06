@@ -171,7 +171,6 @@ async function harness(): Promise<Harness> {
       return mount;
     },
     endWindow: async () => ({ callId: "", ok: true, content: "已结束" }),
-    hasOpenWork: async () => false,
     writeNote: async () => ({}) as never,
     search: async () => ({ query: "", scope: [], hits: [], notes: [], windows: [], total: 0, nextCall: "" }),
     send: async () => ({ event: "r1", behind: 0 }),

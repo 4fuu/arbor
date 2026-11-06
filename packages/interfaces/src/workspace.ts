@@ -115,6 +115,20 @@ export interface WorkspaceKeep {
   path: string;
 }
 
+/**
+ * One piece of work a window still has open in its workspace: something it
+ * started and has not finished. The ovnfs workspace answers with its unapplied
+ * checkouts; an implementation whose work is finished in place - the plain
+ * directory workspace, which a continuation keeps working in - answers nothing
+ * (docs/workspaces.md#open-work).
+ */
+export interface OpenWorkItem {
+  /** The name the implementation knows it by, which is how a later window names it. */
+  name: string;
+  /** What is open about it, in the implementation's own words, when it has any. */
+  detail?: string;
+}
+
 export interface Workspace {
   /**
    * Create the window's own directory, on first use. A window that never
@@ -158,6 +172,17 @@ export interface Workspace {
    * for an implementation that keeps no checkouts of its own.
    */
   checkouts?(window: WindowRef): Promise<readonly WorkspaceCheckout[]>;
+
+  /**
+   * The work a window still has open: what it started and has not finished.
+   * The host asks for it where a window's own state is not enough - the
+   * reminder tiers name the open items, the board shows them, `end` refuses
+   * without a handoff while any are open, and a continuation's first input
+   * names the ones its predecessor left (docs/windows.md#usage-reminders,
+   * docs/workspaces.md#open-work). Absent for an implementation that keeps
+   * nothing open.
+   */
+  openWork?(window: WindowRef): Promise<readonly OpenWorkItem[]>;
 
   /**
    * The persistent directories a window's chain created, or every one of them

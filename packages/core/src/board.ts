@@ -20,6 +20,12 @@ export interface BoardEntry {
   expects: readonly Expectation[];
   state: WindowState;
   usage: TokenUsage;
+  /**
+   * The work this window still has open in its workspace, each item as the
+   * model reads it. The host fills it in from the workspace's own report
+   * (docs/workspaces.md#open-work).
+   */
+  openWork?: readonly string[];
   task?: Ref;
   startedAt: number;
 }
@@ -47,6 +53,17 @@ export class Board {
       ...(change.state === undefined ? {} : { state: change.state }),
       ...(change.doing === undefined ? {} : { doing: change.doing }),
     });
+  }
+
+  /**
+   * What the window still has open in its workspace, as the host last learned
+   * it. It is the workspace's own report, refreshed where a window's state is
+   * shown - the board, a reminder, an end (docs/workspaces.md#open-work).
+   */
+  setOpenWork(window: WindowRef, openWork: readonly string[]): void {
+    const entry = this.entries.get(window);
+    if (entry === undefined) return;
+    this.entries.set(window, { ...entry, openWork: [...openWork] });
   }
 
   get(window: WindowRef): BoardEntry | undefined {
@@ -94,6 +111,7 @@ export class Board {
       expects: entry.expects,
       state: entry.state,
       usage: entry.usage,
+      ...(entry.openWork === undefined || entry.openWork.length === 0 ? {} : { openWork: entry.openWork }),
     }));
   }
 

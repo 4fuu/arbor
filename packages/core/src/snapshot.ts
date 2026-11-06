@@ -19,7 +19,8 @@ import type {
   TextTable,
 } from "@4fu/arbor-interfaces";
 import type { NoteStore } from "@4fu/arbor-interfaces";
-import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@4fu/arbor-prompt";
+import { Renderer, renderMemorySnapshot, renderSystemPrompt, sectionRevision } from "@4fu/arbor-prompt";
+import type { RenderedPluginSection } from "@4fu/arbor-prompt";
 import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@4fu/arbor-interfaces";
 
 /** The default: the prefix is rebuilt at most every ten minutes. */
@@ -36,6 +37,13 @@ export interface PromptEpoch {
   system: string;
   memory: string;
   envRevision: EnvRef;
+  /**
+   * The plugin sections this prefix was built with, one per plugin that
+   * registered one. A window that opened in this epoch diffs its own copy
+   * against what a section says now, so a section that changed reaches it as a
+   * delta (docs/prompting.md#plugin-sections-that-change).
+   */
+  sections: readonly RenderedPluginSection[];
   /** The epoch's version, so a later window can ask what changed since. */
   version: number;
   /** When the epoch was built. */
@@ -107,31 +115,58 @@ export class SnapshotBuilder {
   async epoch(): Promise<PromptEpoch> {
     const now = this.options.now?.() ?? Date.now();
     const minInterval = this.options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
-    if (this.current !== undefined && now - this.current.time < minInterval) return this.current;
+    const plugins = this.options.plugins === undefined ? [] : this.options.plugins();
+    // A plugin section that moved since this epoch was built rebuilds it at
+    // once: a window opened now opens with what the section says now, rather
+    // than a stale prefix plus a delta of its own opening
+    // (docs/prompting.md#plugin-sections-that-change).
+    if (
+      this.current !== undefined &&
+      now - this.current.time < minInterval &&
+      !(await this.sectionsMoved(this.current, plugins))
+    ) {
+      return this.current;
+    }
     this.version += 1;
     const notes = await this.activeNotes();
     const env = this.options.env === undefined ? [] : await this.options.env();
     const envRevision =
       this.options.envRevision === undefined ? ("e0" as EnvRef) : await this.options.envRevision();
-    const plugins = this.options.plugins === undefined ? [] : this.options.plugins();
+    const { system, sections } = await renderSystemPrompt(
+      {
+        settings: this.settings(),
+        tools: this.options.tools === undefined ? [] : this.options.tools(),
+        modules: this.options.modules === undefined ? [] : this.options.modules(),
+        env,
+        plugins,
+      },
+      this.renderer,
+    );
     const epoch: PromptEpoch = {
-      system: await renderSystemPrompt(
-        {
-          settings: this.settings(),
-          tools: this.options.tools === undefined ? [] : this.options.tools(),
-          modules: this.options.modules === undefined ? [] : this.options.modules(),
-          env,
-          plugins,
-        },
-        this.renderer,
-      ),
+      system,
       memory: renderMemorySnapshot(notes, this.renderer),
       envRevision,
+      sections,
       version: this.version,
       time: now,
     };
     this.current = epoch;
     return epoch;
+  }
+
+  /**
+   * True when any plugin section reports a revision this epoch was not built
+   * with - the section's own content changed, or a section arrived or left. A
+   * section that declares no revision is taken as one that never moves, so the
+   * check is one cheap call per section and nothing is rendered.
+   */
+  private async sectionsMoved(epoch: PromptEpoch, plugins: readonly PromptSection[]): Promise<boolean> {
+    const built = new Map(epoch.sections.map((section) => [section.tag, section.revision]));
+    if (built.size !== plugins.length) return true;
+    for (const plugin of plugins) {
+      if (built.get(plugin.tag) !== (await sectionRevision(plugin))) return true;
+    }
+    return false;
   }
 
   /** The notes the memory snapshot carries, sorted by id. */

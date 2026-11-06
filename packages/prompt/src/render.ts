@@ -76,11 +76,13 @@ export class Renderer {
       else fields[at] = field;
     }
     const tag = spec.tag ?? base.tag;
+    const tagField = spec.tagField ?? base.tagField;
     const data = spec.data ?? base.data;
     const lines = [...(base.lines ?? []), ...(spec.lines ?? [])];
     return {
       kind: spec.kind,
       ...(tag === undefined ? {} : { tag }),
+      ...(tagField === undefined ? {} : { tagField }),
       fields,
       ...(spec.lines === undefined && base.lines === undefined ? {} : { lines }),
       ...(data === undefined ? {} : { data }),
@@ -90,6 +92,18 @@ export class Renderer {
   /** The kinds this renderer knows, in registration order. */
   knownKinds(): readonly string[] {
     return [...this.kinds.keys()];
+  }
+
+  /**
+   * The tag one block renders in: the kind's fixed one, or the value of the
+   * field the kind names, for a kind whose tag is chosen per instance. A field
+   * value is escaped like any other content, so a tag cannot close the block.
+   */
+  private tagOf(spec: BlockKindSpec | undefined, args: TextArgs): string | undefined {
+    if (spec === undefined) return undefined;
+    if (spec.tagField === undefined) return spec.tag;
+    const tag = args[spec.tagField];
+    return tag === undefined || tag === "" ? undefined : escapeText(String(tag));
   }
 
   /** One block kind's spec, when the renderer knows it. */
@@ -106,12 +120,14 @@ export class Renderer {
   }
 
   /**
-   * Blocks nested inside a data block. The outer mark already says they are
-   * data, so a nested block is not wrapped again.
+   * Blocks nested inside a block. A nested block is marked as data unless the
+   * block holding it is itself data, whose mark already says so - so an outside
+   * block inside a host block keeps its own mark
+   * (docs/prompting.md#blocks-and-the-renderer).
    */
-  private renderInside(blocks: readonly Block[]): string {
+  private renderInside(blocks: readonly Block[], insideData: boolean): string {
     return blocks
-      .map((block) => this.renderBlock(block, true))
+      .map((block) => this.renderBlock(block, insideData))
       .filter((text) => text !== "")
       .join("\n\n");
   }
@@ -121,6 +137,7 @@ export class Renderer {
     const spec = this.kinds.get(block.kind);
     const args = this.argsOf(block, spec?.fields ?? []);
     const lines: string[] = [];
+    const isData = spec === undefined || spec.data === true;
     if (spec === undefined) {
       lines.push(...this.fallbackLines(block, args));
     } else {
@@ -131,11 +148,13 @@ export class Renderer {
       }
       for (const field of spec.fields) {
         if (carried.has(field.name)) continue;
+        // A field that names the block's tag is written as the tag, not as text.
+        if (field.tag === true) continue;
         const value = block.fields[field.name];
         if (value === undefined) continue;
         if (field.type === "blocks") {
           if (!Array.isArray(value)) continue;
-          const nested = this.renderInside(value as readonly Block[]);
+          const nested = this.renderInside(value as readonly Block[], isData);
           if (nested !== "") lines.push(nested);
           continue;
         }
@@ -143,9 +162,8 @@ export class Renderer {
         if (text !== "") lines.push(text);
       }
     }
-    const tag = spec?.tag;
+    const tag = this.tagOf(spec, args);
     const body = tag === undefined ? lines : [`<${tag}>`, ...lines, `</${tag}>`];
-    const isData = spec === undefined || spec.data === true;
     if (!isData || insideData) return body.join("\n");
     const mark = this.lineOf("data.mark", args, new Set());
     return ["<data>", ...(mark === undefined ? [] : [mark]), ...body, "</data>"].join("\n");

@@ -51,6 +51,11 @@ in the journal ([journal.md](journal.md)).
   the first input.
 - The prefix never changes while a window is open. Rendering is
   deterministic: no timestamps or counters in the system prompt or snapshot.
+- **A plugin's prompt section can change under a running window.** It declares
+  a revision, the host asks for it once per step, and a section that moved
+  reaches the window as a delta of the changed lines at the next tool-call
+  boundary - never by rebuilding its prefix
+  ([prompting.md](prompting.md#plugin-sections-that-change)).
 - Anything that changes per input - its time, people or items seen for the
   first time in this window - goes into the input itself.
 - **The first input is the one thing a plugin may add to per window.**
@@ -92,10 +97,11 @@ window would need when there is no progress note yet; at 30 % change it when
 something changed; at 50 % write up to what a continuation needs; at 60 % say
 what the boundary is; at 70 % open no new large task; at 80 % rotate before new
 work; a final one at `window - 2 x reserve` rotates now. Each carries the real
-numbers, its place in the series and, from 80 % on, the cost of ignoring it.
-Only the highest crossed tier is sent; the lower ones it jumped over are
-recorded as sent with it, so a window that crosses several thresholds in one
-step hears every tier, in order.
+numbers, its place in the series, the window's open work named as the workspace
+reports it ([workspaces.md](workspaces.md#open-work)) and, from 80 % on, the
+cost of ignoring it. Only the highest crossed tier is sent; the lower ones it
+jumped over are recorded as sent with it, so a window that crosses several
+thresholds in one step hears every tier, in order.
 
 ## Ending and continuing
 
@@ -104,12 +110,17 @@ step hears every tier, in order.
   the host opens a continuation window whose first input carries the handoff
   and the previous window's ref. Details belong in notes and the journal.
   Unfinished work is what another window wrote on a target this one touched
-  after it opened: the task and the outside events the window was opened for,
-  and the window's own `window_start`, are not open work, so a window that has
-  done nothing ends cleanly.
+  after it opened, and what the workspace reports as still open in this window
+  ([workspaces.md](workspaces.md#open-work)) - the ovnfs workspace's unapplied
+  checkouts, for instance. The task and the outside events the window was
+  opened for, and the window's own `window_start`, are not open work, so a
+  window that has done nothing ends cleanly. A refusal names what is open, so
+  the handoff says what it has to carry.
 - A continuation forks the previous window's workspace
   ([workspaces.md](workspaces.md)) and keeps its watermarks and its
-  expectations ([coordination.md](coordination.md#expectations)).
+  expectations ([coordination.md](coordination.md#expectations)). Its first
+  input also names the work the chain left open, so the continuation picks it
+  up by name.
 
 ## Hard limit
 

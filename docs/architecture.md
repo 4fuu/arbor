@@ -93,7 +93,7 @@ or a whole domain such as a chat channel or a code host:
 | skills | procedures, installed into `/env` under the plugin's name |
 | direct tools | tools of the plugin's own, declared to the model and called in the turn ([tools.md](tools.md#external-tools)) |
 | hooks | any of the hooks below |
-| prompt blocks | a system prompt section, and the block kinds its inputs use, which the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
+| prompt blocks | a system prompt section - which may be material from outside the framework, and may change while a window runs - and the block kinds its inputs use, which the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
 | tool groups | direct tools and code mode modules of its own, registered through the host's `groups` option |
 | judge questions | extra criteria or decisions for its own inputs |
 
@@ -121,7 +121,10 @@ or a whole domain such as a chat channel or a code host:
   ([workspaces.md](workspaces.md#another-windows-directory)). The core knows
   no such capability of its own.
 - **Plugging in** is an environment change: its items arrive in live windows
-  as a delta, and its prompt section applies from the next epoch.
+  as a delta, and its prompt section applies from the next epoch. A prompt
+  section whose own content changes later reaches live windows as a delta of
+  the changed lines, without rebuilding any window's prefix
+  ([prompting.md](prompting.md#plugin-sections-that-change)).
 - **Unplugging never changes a prompt.** Open windows keep the system prompt
   and catalog they were built with. A call into a removed capability is
   refused with the rule and the ref of the change that removed it, and live

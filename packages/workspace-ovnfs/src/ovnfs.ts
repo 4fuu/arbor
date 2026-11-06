@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { arborError } from "@4fu/arbor-errors";
 import type {
   Journal,
+  OpenWorkItem,
   PromptSection,
   TextTable,
   ToolGroup,
@@ -31,6 +32,7 @@ import type {
   WorkspaceQuota,
   WorkspaceRef,
 } from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import { OvnfsCli } from "./cli.ts";
 import { OvnfsWorkspaceGroup } from "./groups.ts";
 import { ovnfsSection } from "./section.ts";
@@ -157,6 +159,19 @@ export class OvnfsWorkspace implements Workspace {
       found.push({ name: checkout.name, path: checkout.path, dirty: checkout.dirty });
     }
     return found;
+  }
+
+  /**
+   * The work this window still has open: its checkouts that hold changes not
+   * yet applied back (docs/workspaces.md#open-work). A checkout that is applied
+   * is finished work, so it is not open; the host asks `checkouts` for the ones
+   * that are merely still there.
+   */
+  async openWork(window: WindowRef): Promise<readonly OpenWorkItem[]> {
+    const checkouts = await this.checkouts(window);
+    return checkouts
+      .filter((checkout) => checkout.dirty)
+      .map((checkout) => ({ name: checkout.name, detail: textOf(ovnfsText, "open.dirty") }));
   }
 
   groups(table: TextTable): readonly ToolGroup[] {

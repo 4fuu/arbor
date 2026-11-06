@@ -112,9 +112,6 @@ export interface ToolServices {
   /** End the run, with a handoff when there is unfinished work. */
   endWindow(window: WindowRef, handoff?: Handoff): Promise<ToolResult>;
 
-  /** True when the window still has work the host can see. */
-  hasOpenWork(window: WindowRef): Promise<boolean>;
-
   /**
    * One note write, with the anchor the host fills in: the window, the event
    * and the evidence. The model never declares an anchor.

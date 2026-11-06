@@ -129,6 +129,7 @@ export type {
 export type {
   ExecResult,
   StagedFile,
+  OpenWorkItem,
   WorkspaceCheckout,
   WorkspaceKeep,
   WorkspaceMount,

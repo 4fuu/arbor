@@ -20,6 +20,7 @@ import type {
   WindowRef,
 } from "@4fu/arbor-interfaces";
 import type { Renderer } from "./render.ts";
+import { changedLines } from "./diff.ts";
 import { textOf } from "./text.ts";
 import { formatTime } from "./time.ts";
 
@@ -56,6 +57,8 @@ export function boardLineBlock(line: {
   used: number;
   limit: number;
   expects?: readonly string[];
+  /** The window's open work in its workspace, each item as the model reads it. */
+  openWork?: readonly string[];
 }): Block {
   return {
     kind: "board_line",
@@ -67,6 +70,7 @@ export function boardLineBlock(line: {
       used: line.used,
       limit: line.limit,
       ...(line.expects === undefined || line.expects.length === 0 ? {} : { expects: [...line.expects] }),
+      ...(line.openWork === undefined || line.openWork.length === 0 ? {} : { openWork: [...line.openWork] }),
     },
   };
 }
@@ -123,6 +127,8 @@ export function reminderBlock(reminder: {
   limit: number;
   percent: number;
   time: number;
+  /** The window's open work in its workspace, each item as the model reads it. */
+  openWork?: readonly string[];
 }): Block {
   return {
     kind: "reminder",
@@ -134,6 +140,9 @@ export function reminderBlock(reminder: {
       limit: reminder.limit,
       percent: reminder.percent,
       time: formatTime(reminder.time),
+      ...(reminder.openWork === undefined || reminder.openWork.length === 0
+        ? {}
+        : { openWork: [...reminder.openWork] }),
     },
   };
 }
@@ -337,6 +346,44 @@ export function continuationRecoveryBlock(previous: WindowRef): Block {
 /** The previous window's run was cut short by a model failure. */
 export function continuationInterruptedBlock(previous: WindowRef): Block {
   return { kind: "continuation_interrupted", fields: { previous } };
+}
+
+/**
+ * One plugin prompt section's change, for a window that opened before it
+ * (docs/prompting.md#plugin-sections-that-change).
+ *
+ * Only the lines that changed are carried: a line both texts hold is left out,
+ * so the delta never repeats unchanged text and never rebuilds the prompt.
+ * `undefined` when nothing moved, so a section whose content did not change
+ * emits no delta at all.
+ */
+export function promptSectionDeltaBlock(
+  section: {
+    /** The tag the section renders in, which is the plugin's own choice. */
+    tag: string;
+    /** What the window's prefix holds of the section. */
+    from: string;
+    /** What the section says now. */
+    to: string;
+    /** True when the section is material from outside the framework. */
+    outside?: boolean;
+  },
+  time: number,
+): Block | undefined {
+  const changes = changedLines(section.from, section.to);
+  if (changes.length === 0) return undefined;
+  const lines: Block[] = changes.map((change) => ({
+    kind: "prompt_line",
+    fields: { change: change.change, line: change.line },
+  }));
+  const tagged: Block = { kind: "prompt_section", fields: { tag: section.tag, items: lines } };
+  return {
+    kind: "prompt_delta",
+    fields: {
+      time: formatTime(time),
+      items: [section.outside === true ? { kind: "plugin_section", fields: { content: [tagged] } } : tagged],
+    },
+  };
 }
 
 /** One environment item's line, for `<env>` and `tool_search`. */

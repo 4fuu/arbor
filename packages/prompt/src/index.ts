@@ -10,10 +10,16 @@
  */
 
 export { BUILTIN_BLOCK_KINDS } from "./blocks.ts";
+export { changedLines, type LineChange } from "./diff.ts";
 export { Renderer, escapeText, type RendererOptions } from "./render.ts";
 export {
   DEFAULT_GENERAL_RULES,
+  renderPluginSection,
+  renderPluginSections,
   renderSystemPrompt,
+  sectionRevision,
+  type RenderedPluginSection,
+  type RenderedSystemPrompt,
   type SystemPromptInput,
 } from "./system.ts";
 export {
@@ -39,6 +45,7 @@ export {
   noteSummaryBlock,
   noticeBlock,
   outsideMessageBlock,
+  promptSectionDeltaBlock,
   reminderBlock,
   renderDelivery,
   taskBlock,

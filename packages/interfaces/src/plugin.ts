@@ -41,6 +41,23 @@ export interface PromptSection {
    * blocks carry data, and the table carries the words.
    */
   text?: TextTable;
+  /**
+   * The section's revision, which the plugin raises when its content changes.
+   * The host asks for it as a window runs - one cheap call per step - and
+   * renders the section again only when it moved, so a section that changes
+   * reaches a live window as a delta carrying the changed lines
+   * (docs/prompting.md#plugin-sections-that-change). Absent for a section that
+   * never changes once the host has rendered it.
+   */
+  revision?(): string | number | Promise<string | number>;
+  /**
+   * True when the section is material from outside the framework - a third
+   * party's prompt text, such as the sections a DeepSeek Harness plugin
+   * contributes. It is marked as data, carries a lead line saying what it is,
+   * and the `<agent>` rules state that the framework's own prompt wins on
+   * conflict (docs/prompting.md#data-and-instructions).
+   */
+  outside?: boolean;
 }
 
 export interface Plugin {

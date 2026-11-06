@@ -49,6 +49,9 @@ export const DELIVERY_PRIORITY: Record<Delivery["kind"], number> = {
   // would otherwise do next.
   conversation_update: 1,
   environment_delta: 1,
+  // A plugin's prompt section that changed says what the window's own prompt
+  // now holds, so it goes in with the environment's deltas.
+  prompt_delta: 1,
   // A direct answer to this window comes before anything that only informs it.
   window_message: 1,
   notice: 0,

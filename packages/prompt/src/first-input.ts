@@ -64,6 +64,7 @@ export function firstInputBlocks(input: FirstInputInput): Block[] {
         used: line.usage.used,
         limit: line.usage.limit,
         expects: line.expects.map((expectation) => expectation.description ?? expectation.ref),
+        ...(line.openWork === undefined ? {} : { openWork: line.openWork }),
       }),
     );
   }

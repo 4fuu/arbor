@@ -32,12 +32,13 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
   {
     kind: "board_line",
     tag: "board_line",
-    lines: ["board.line", "board.targets", "board.usage", "board.expects"],
+    lines: ["board.line", "board.targets", "board.open", "board.usage", "board.expects"],
     fields: [
       { name: "window", type: "ref" },
       { name: "state", type: "string" },
       { name: "doing", type: "string" },
       { name: "targets", type: "strings" },
+      { name: "openWork", type: "strings" },
       { name: "used", type: "number" },
       { name: "limit", type: "number" },
       { name: "expects", type: "strings" },
@@ -84,7 +85,7 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
   {
     kind: "reminder",
     tag: "reminder",
-    lines: ["reminder.head", "reminder.numbers", "reminder.series", "reminder.tier.{tier}", "reminder.cost.{tier}", "delivery.time"],
+    lines: ["reminder.head", "reminder.numbers", "reminder.series", "reminder.tier.{tier}", "reminder.open", "reminder.cost.{tier}", "delivery.time"],
     fields: [
       { name: "tier", type: "string" },
       { name: "index", type: "number" },
@@ -92,6 +93,7 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
       { name: "used", type: "number" },
       { name: "limit", type: "number" },
       { name: "percent", type: "number" },
+      { name: "openWork", type: "strings" },
       { name: "time", type: "string" },
     ],
   },
@@ -205,6 +207,39 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
       { name: "kind", type: "string" },
       { name: "name", type: "string" },
       { name: "description", type: "string" },
+    ],
+  },
+  {
+    kind: "plugin_section",
+    data: true,
+    lines: ["system.plugin.outside"],
+    fields: [{ name: "content", type: "blocks" }],
+  },
+  {
+    kind: "prompt_delta",
+    tag: "prompt_delta",
+    lines: ["delivery.prompt_delta", "delivery.time"],
+    fields: [
+      { name: "time", type: "string" },
+      { name: "items", type: "blocks" },
+    ],
+  },
+  {
+    kind: "prompt_section",
+    // The tag is the plugin's own choice, so it rides on the block
+    // (docs/prompting.md#plugin-sections-that-change).
+    tagField: "tag",
+    fields: [
+      { name: "tag", type: "string", tag: true },
+      { name: "items", type: "blocks" },
+    ],
+  },
+  {
+    kind: "prompt_line",
+    lines: ["delivery.prompt_line"],
+    fields: [
+      { name: "change", type: "string" },
+      { name: "line", type: "string" },
     ],
   },
   {

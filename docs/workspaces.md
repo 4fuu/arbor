@@ -41,11 +41,12 @@ ovnfs rm <name>                                           # remove the checkout
 ```
 
 The checkout is named after the window that opened it (`<window ref>-<short
-name>`), and that name is how the host binds a checkout to a window: `end`'s
-open-work check and reclaim both find a window's checkouts by the `<ref>-`
-prefix. The module functions `workspace.checkout`, `list`, `diff`, `apply`, `rm`
-and `path` are a convenience over the same operations; the plain CLI works just
-as well, and a command run in `bash` reaches the same daemon.
+name>`), and that name is how the host binds a checkout to a window: the
+open-work report ([below](#open-work)) and reclaim both find a window's
+checkouts by the `<ref>-` prefix. The module functions `workspace.checkout`,
+`list`, `diff`, `apply`, `rm` and `path` are a convenience over the same
+operations; the plain CLI works just as well, and a command run in `bash`
+reaches the same daemon.
 
 A checkout is frozen at open. To see what another window has applied since, read
 the shared folder or open a new checkout. In a git repository, open the checkout
@@ -86,6 +87,33 @@ is the environment's own file, which is why it is read-only and a change goes
 through the environment's draft and `reload`
 ([environment.md](environment.md#layout)). The prefix is a string rewrite, not a
 mount, so it is a convenience for reading and not a boundary.
+
+## Open work
+
+A window can start something in its workspace and not finish it. What that is
+differs per implementation, so each one reports it itself, through one optional
+method on `Workspace`:
+
+```ts
+openWork?(window: WindowRef): Promise<readonly OpenWorkItem[]>
+```
+
+The host asks for it where a window's own state is not enough: the reminder
+tiers name the open items, the board shows them on the window's line, `end`
+refuses without a handoff while any are open and names them in the refusal, and
+a continuation's first input names the ones its predecessor left
+([windows.md](windows.md#ending-and-continuing)). The host knows nothing about
+what is open in a workspace: an implementation that keeps nothing open answers
+nothing, and a host with no workspace at all asks nobody.
+
+The ovnfs workspace answers with the chain's checkouts that hold changes not
+yet applied back, each named the way `workspace.list` names it and carrying that
+implementation's own words for what is open about it. A checkout that is applied
+is finished work and is not reported; one that is merely still there is listed
+by `workspace.list` and `workspace.path` and not by this report. The
+plain-directory workspace answers nothing: a window works in place, its
+continuation keeps working in the same directory, and there is no step between
+the two where work could be left unapplied.
 
 ## The plain directory workspace
 

@@ -46,6 +46,12 @@ export interface BlockFieldSpec {
   name: string;
   type: "string" | "strings" | "number" | "boolean" | "ref" | "refs" | "blocks";
   required?: boolean;
+  /**
+   * True when the field names the block's own XML tag rather than content: the
+   * renderer writes it as the tag and never as a line of its own
+   * (docs/prompting.md#blocks-and-the-renderer).
+   */
+  tag?: boolean;
 }
 
 /**
@@ -65,6 +71,12 @@ export interface BlockKindSpec {
   extends?: string;
   /** XML tag the renderer wraps one block in; omitted for an untagged block. */
   tag?: string;
+  /**
+   * The field whose value is this block's XML tag, for a kind whose tag is
+   * chosen per instance - a plugin prompt section's delta, which renders in the
+   * tag the plugin named. Omitted for a kind whose tag is fixed.
+   */
+  tagField?: string;
   fields: readonly BlockFieldSpec[];
   /** Fixed lines written before the fields, by key into the text table. */
   lines?: readonly string[];

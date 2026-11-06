@@ -97,6 +97,12 @@ export interface Delivery {
     | "broadcast"
     | "window_message"
     | "environment_delta"
+    /**
+     * A plugin's prompt section changed since this window's prefix was built:
+     * the lines that changed, and nothing that did not
+     * (docs/prompting.md#plugin-sections-that-change).
+     */
+    | "prompt_delta"
     /** A host usage reminder, appended to an input (docs/windows.md#usage-reminders). */
     | "reminder";
   /** The window it comes from, for a notice, a broadcast or a window message. */
