@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-workspace-ovnfs",
-  "version": "2026.1106.0",
+  "version": "2026.1106.1",
   "private": true,
   "type": "module",
   "description": "The ovnfs Workspace: one shared folder every window reads, with per-window copy-on-write checkouts the model opens, works in and applies back (docs/workspaces.md).",

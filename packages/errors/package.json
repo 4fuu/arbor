@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-errors",
-  "version": "2026.1106.0",
+  "version": "2026.1106.1",
   "private": true,
   "type": "module",
   "description": "The core error shape every arbor refusal uses: errors name the rule and the next action.",

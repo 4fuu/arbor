@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-workspace-dir",
-  "version": "2026.1106.0",
+  "version": "2026.1106.1",
   "private": true,
   "type": "module",
   "description": "The plain-directory Workspace: one directory per window, with a continuation working in its predecessor's directory in place, plus the persistent directories a window asks to keep.",

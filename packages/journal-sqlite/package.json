@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-journal-sqlite",
-  "version": "2026.1106.0",
+  "version": "2026.1106.1",
   "private": true,
   "type": "module",
   "description": "The default Journal: append-only events with a global sequence, targets, native ids, refs, blobs and lexical search on SQLite.",
