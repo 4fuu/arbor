@@ -30,7 +30,7 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers; declare the tools the harness around it registered ([tools.md](tools.md#external-tools)) ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@4fu/arbor-workspace-dir](../packages/workspace-dir)) |
@@ -91,17 +91,28 @@ or a whole domain such as a chat channel or a code host:
 | adapters | connections to the outside world: channels with their native ids ([journal.md](journal.md#external-ids)), task sources with their batching ([dispatch.md](dispatch.md#tasks)), effect executors |
 | MCP servers | capabilities the model calls, installed into `/env` under the plugin's name ([environment.md](environment.md)) |
 | skills | procedures, installed into `/env` under the plugin's name |
+| direct tools | tools of the plugin's own, declared to the model and called in the turn ([tools.md](tools.md#external-tools)) |
 | hooks | any of the hooks below |
 | prompt blocks | a system prompt section, and the block kinds its inputs use, which the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
 | tool groups | direct tools and code mode modules of its own, registered through the host's `groups` option |
 | judge questions | extra criteria or decisions for its own inputs |
 
 - **Capabilities are MCP servers, not tools.** What the model can do with a
-  plugin is an MCP server and skills in `/env`, not a direct tool or module of
-  the plugin's own. The model reads, changes and reinstalls them with `reload`
-  like any item, so it can improve a plugin's abilities itself. A plugin
-  upgrade installs a new revision on top; the model's changes stay in the
-  item's history.
+  plugin is an MCP server and skills in `/env`, not a module of the plugin's
+  own. The model reads, changes and reinstalls them with `reload` like any
+  item, so it can improve a plugin's abilities itself. A plugin upgrade
+  installs a new revision on top; the model's changes stay in the item's
+  history.
+- **A tool of its own is the exception.** A plugin whose behaviour is code
+  rather than an item in `/env` - a tool the harness around arbor registered,
+  for instance - declares it as an `ExternalTool`: a name, a description, a
+  schema and its `execute`. A backend injects the same shape through
+  `AgentBackend.externalTools()`, so a plugin and a backend share one path and
+  not two. Both are ordinary direct tools from registration on: same hooks,
+  same journaling, same scrub, same result cut, and the tools list says where
+  each one comes from ([tools.md](tools.md#external-tools)). A name the model
+  already has is not registered; the collision is recorded with
+  `tool.name_taken` rather than thrown.
 - **An implementation may still add its own.** A `Workspace` implementation
   that can do something the core does not name - showing another window's
   directory, for instance - declares its own module function or tool and its

@@ -18,10 +18,48 @@ service layer ([architecture.md](architecture.md#layers)).
 | `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
 
-Plugins add no tools; their abilities are MCP servers
+Plugins add no module of their own; their abilities are MCP servers
 ([architecture.md](architecture.md#plugins)). A deployment may move a
 function into or out of the direct set through configuration, guided by how
 often the logs show it used.
+
+## External tools
+
+A **plugin or a backend may declare direct tools of its own** - a name, a
+description, a JSON schema and the `execute` that runs the call. Both take one
+shape, `ExternalTool`, so a plugin and a backend share one path rather than two:
+a plugin lists them in its `tools`, and a backend answers `externalTools()` with
+them, which is how a host embedded in another harness - DeepSeek Harness, for
+instance - hands in the tools that harness's own plugins registered. They are
+called under their original names.
+
+Nothing about them is special after registration. The host registers them as a
+group like any other, and from then on a call is an ordinary direct tool: the
+same `beforeToolCall` and `afterToolCall` hooks, the same journaling, the same
+secret scrub, the same one result cut at `ToolCatalog.call`, and the same
+`tool_result` block the renderer writes. The core knows nothing about what they
+do.
+
+- **The model is told whose a tool is.** The `<tools>` list writes a tool
+  declared from outside the core with its source - the plugin's name, or the
+  backend's - after its description, and `tool_search` answers with the same
+  line. `tool_search` finds them like any direct tool: an exact name first, then
+  a prefix, then a description.
+- **A core tool always wins.** A name the model already has - a core tool's, or
+  a module's - is not registered for an external tool, and neither is a name
+  another external tool took first. The collision is **recorded, not thrown**:
+  one `tool_registration` event per tool that was left out, carrying the source,
+  the tool and the rule `tool.name_taken`, so an operator sees which tool of
+  which plugin the model will not get. The colliding plugin tool simply does not
+  exist for the model, and the window keeps working.
+- **A script may call one.** The guard in `code_exec` refuses a script that
+  names one of arbor's own direct tools, because a decision or a plain command
+  belongs in the turn, where the prompt and the record see it as the model's own
+  call. A tool declared from outside the core is not one of those: it is a
+  capability of its own, like a module function, so a script reaches it as a
+  global of the same name and it runs through the same path. Called from a
+  script it is recorded as part of the one `code_exec` call, exactly as a module
+  function is.
 
 ## Modules
 
@@ -51,8 +89,10 @@ it.
 ## Rules
 
 - **Decisions stay direct.** Anything that speaks, ends a window, writes
-  memory or changes the environment is a direct call. A script that names one
-  is refused with the rule and never reaches the host.
+  memory or changes the environment is a direct call. A script that names one of
+  arbor's own direct tools is refused with the rule and never reaches the host. A
+  tool a plugin or a backend declared is not one of arbor's, so a script may call
+  it ([above](#external-tools)).
 - **A plain command is a direct call, a chain is a script.**
 - **One behaviour per tool.** A command that outlives `bash`'s wait window is
   followed with `bash_output` and stopped with `bash_stop`.
@@ -71,7 +111,9 @@ it.
   it left matches out.
 - **The prompt names modules, not functions.** The system prompt lists the
   direct tools one per line and the modules one per line; a module's line
-  describes what it can do and never names a function.
+  describes what it can do and never names a function. A tool declared from
+  outside the core carries its source on its line
+  ([above](#external-tools)).
 - **Low noise, layered, closed loop.** How every description, result and
   error is written is in [prompting.md](prompting.md).
 - **Errors name the next action.** Every refusal states the rule that refused

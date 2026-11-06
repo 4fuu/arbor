@@ -10,6 +10,7 @@
  */
 
 import type { Block } from "./blocks.ts";
+import type { ExternalTool } from "./tools.ts";
 import type { TaskRef, Ref, WindowRef } from "./refs.ts";
 import type { Handoff, TokenUsage, WindowState } from "./windows.ts";
 import type { RateLimitState } from "./scheduler.ts";
@@ -198,6 +199,15 @@ export interface AgentBackend {
    */
   rateLimits?(): Promise<RateLimitState> | RateLimitState;
 
+  /**
+   * Direct tools the backend injects from outside arbor: the tools an outside
+   * harness registered, which a host embedded in that harness hands in here
+   * (docs/tools.md#external-tools). They are declared to the model and called
+   * in the turn like any other direct tool. Read once, before the first window
+   * opens.
+   */
+  externalTools?(): readonly ExternalTool[] | Promise<readonly ExternalTool[]>;
+
   /** Open one window and start its first turn. */
   open(request: OpenWindowRequest): Promise<WindowSession>;
 }
@@ -208,6 +218,12 @@ export interface DirectToolSpec {
   /** What it does and when to use it; side effects. 1 to 4 sentences. */
   description: string;
   parameters: Record<string, ParameterSpec>;
+  /**
+   * Who declares it, when it is not the core's own: a plugin's name, or a
+   * backend's. The tools list says where such a tool comes from, so the model
+   * knows whose it is (docs/tools.md#external-tools).
+   */
+  source?: string;
 }
 
 /** Called from a script in `code_exec` (docs/tools.md#modules). */

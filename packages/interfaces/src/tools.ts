@@ -4,8 +4,9 @@
  *
  * Decisions and plain commands are direct tools, declared to the model and
  * called in the turn. Everything else is a module function, called from a
- * script in `code_exec`. Plugins add no tools of their own; what the model can
- * do with a plugin is an MCP server and skills in `/env`.
+ * script in `code_exec`. A plugin declares its own direct tools as
+ * `ExternalTool`s, which the host registers as a group of their own; what the
+ * model can otherwise do with a plugin is an MCP server and skills in `/env`.
  */
 
 import type { DirectToolSpec, FunctionSpec, ModuleSpec, ParameterSpec, ToolCall, ToolResult } from "./agent.ts";
@@ -38,3 +39,23 @@ export interface ToolGroup {
 }
 
 export type { DirectToolSpec, FunctionSpec, ModuleSpec, ParameterSpec, ToolCall, ToolResult };
+
+/**
+ * One direct tool declared from outside the core: a plugin's own, or a
+ * backend's injection of the tools an outside harness registered
+ * (docs/tools.md#external-tools).
+ *
+ * One shape for both, so a plugin and a backend share one path instead of two:
+ * the host registers what it is handed, and from there the tool is a direct
+ * tool like any other - declared to the model under its own name, and called
+ * through the same hooks, journaling, scrub and result cut as the core's own.
+ * Nothing about it is special-cased after registration.
+ */
+export interface ExternalTool {
+  readonly name: string;
+  /** What it does and when to use it; side effects. 1 to 4 sentences. */
+  readonly description: string;
+  readonly parameters: Record<string, ParameterSpec>;
+  /** Run one call. The same path a core tool takes. */
+  execute(request: ToolCall, context: CallContext): Promise<ToolResult>;
+}

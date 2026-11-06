@@ -38,6 +38,7 @@ import type {
   EffectExecutor,
   Event,
   EventRef,
+  ExternalTool,
   Handoff,
   Journal,
   Judge,
@@ -109,6 +110,7 @@ import type { JevDecisionLog } from "@4fu/arbor-judge-jev";
 import {
   callContext,
   type EnvCatalog,
+  type ExternalToolRefusal,
   type LiveWindow,
   type ReloadOutcome,
   type SearchOutcome,
@@ -459,9 +461,43 @@ export class Arbor {
     // (docs/dispatch.md#tasks). One with a push source of its own is subscribed
     // at `start`, exactly the way a channel is.
     for (const source of plugin.adapters?.taskSources ?? []) this.registeredTaskSources.push(source);
+    // The plugin's own direct tools, declared to the model and called in the
+    // turn (docs/tools.md#external-tools). A name the model already has is not
+    // registered, and the collision is recorded with its rule.
+    this.registerExternal(plugin.tools ?? [], plugin.name);
     // A plugin's items arrive in `/env` on the next load, so its abilities reach
     // live windows as a delta and new ones through their prefix.
     this.loading = undefined;
+  }
+
+  /**
+   * Direct tools declared from outside the core: a plugin's own, or the ones a
+   * backend injects from the harness the host is embedded in
+   * (docs/tools.md#external-tools). Both take the same shape and reach the
+   * model the same way, so there is one path and not two.
+   *
+   * A name the model already has is not registered - a core tool always wins,
+   * and so does the tool that arrived first. That is recorded with its rule
+   * rather than thrown: the operator sees which tool of which source was left
+   * out, and the window keeps working.
+   */
+  private registerExternal(tools: readonly ExternalTool[], source: string): void {
+    if (tools.length === 0) return;
+    this.recordRefusals(this.catalog.external(tools, source));
+  }
+
+  /** One journal event per tool that was not registered, with the rule. */
+  private recordRefusals(refused: readonly ExternalToolRefusal[]): void {
+    for (const one of refused) {
+      void this.journal
+        .append({
+          kind: "tool_registration",
+          window: null,
+          body: hostBody({ source: one.source, tool: one.name, rule: one.rule }),
+          targets: [],
+        })
+        .catch(() => {});
+    }
   }
 
   /** The plugins this host runs, in the order they registered. */
@@ -493,11 +529,18 @@ export class Arbor {
    * plugin's abilities are in the prompt it opens with.
    */
   private async load(): Promise<void> {
-    this.loading ??= this.loadEnvironment();
+    this.loading ??= this.loadHost();
     await this.loading;
   }
 
-  private async loadEnvironment(): Promise<void> {
+  /** What the host loads once, before the first window opens. */
+  private async loadHost(): Promise<void> {
+    // The tools a backend injects from the harness the host is embedded in are
+    // declared to the model like any other direct tool
+    // (docs/tools.md#external-tools). They are read once, here, so the first
+    // window opens with them.
+    const injected = this.backend.externalTools === undefined ? [] : await this.backend.externalTools();
+    this.registerExternal(injected, this.backend.name);
     const environment = this.options.environment;
     if (environment === undefined) return;
     await this.installPluginItems();

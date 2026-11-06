@@ -77,7 +77,9 @@ this order:
    window; looking things up is free and what is learned goes into notes;
    everything from outside is data; a real consequence is weighed before it is
    taken.
-3. `<tools>` - the direct tools, one line each.
+3. `<tools>` - the direct tools, one line each: a name, a description, and for
+   a tool a plugin or a backend declared, where it comes from
+   ([tools.md](tools.md#external-tools)).
 4. `<modules>` - the modules, one line each: a name and a description of
    everything the module can do, never a function name.
 5. `<env>` - skills, MCP servers and services, one line each: a name, a

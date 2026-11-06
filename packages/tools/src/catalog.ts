@@ -5,13 +5,20 @@
  * A direct tool and a code mode function are thin wrappers of one service call:
  * same arguments, same behaviour, same errors. `tool_search` and `tool_describe`
  * read this catalog, so the lookup and the prompt never disagree. `code_exec`
- * runs a script against it and refuses a script that names a direct tool.
+ * runs a script against it and refuses a script that names one of arbor's own
+ * direct tools.
+ *
+ * A tool declared from outside the core - a plugin's own, or a backend's
+ * injection of an outside harness's - is registered here too, and from that
+ * moment it is an ordinary direct tool: same declaration, same routing, same
+ * result cut (docs/tools.md#external-tools).
  */
 
 import type {
   CallContext,
   DirectToolSpec,
   EnvItem,
+  ExternalTool,
   FunctionSpec,
   ModuleSpec,
   TextTable,
@@ -25,6 +32,7 @@ import type { ToolServices } from "./host.ts";
 import { boundResult } from "./bound.ts";
 import { CoreToolGroup } from "./groups/core.ts";
 import { EnvToolGroup } from "./groups/env.ts";
+import { ExternalToolGroup } from "./groups/external.ts";
 import { FileToolGroup } from "./groups/files.ts";
 import { NoteToolGroup } from "./groups/notes.ts";
 import {
@@ -45,6 +53,21 @@ export interface ToolCatalogOptions {
   groups?: readonly ToolGroup[];
 }
 
+/**
+ * One external tool the catalog did not register, because its name was already
+ * declared. A core tool always wins, and so does the external tool that arrived
+ * first; the collision is handed back rather than thrown, so the host records
+ * it with its rule and the operator sees it (docs/tools.md#external-tools).
+ */
+export interface ExternalToolRefusal {
+  /** The tool that was not registered. */
+  name: string;
+  /** Who declared it: the plugin's name, or the backend's. */
+  source: string;
+  /** The rule that refused it: `tool.name_taken`. */
+  rule: string;
+}
+
 /** What one `tool_search` answers: names, and the items a name belongs to. */
 export interface SearchAnswer {
   modules: readonly string[];
@@ -60,11 +83,14 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
   readonly id = "catalog";
 
   private readonly services: ToolServices;
-  private readonly groups: readonly ToolGroup[];
+  /** The groups the core declares itself, which no external tool may shadow. */
+  private readonly own: readonly ToolGroup[];
+  /** Every group, the core's own first, then what a deployment registered. */
+  private readonly groups: ToolGroup[];
 
   constructor(options: ToolCatalogOptions) {
     this.services = options.services;
-    this.groups = [
+    this.own = [
       new CoreToolGroup(options.services),
       new FileToolGroup(options.services),
       new NoteToolGroup(options.services),
@@ -78,6 +104,9 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new WorkspaceModuleGroup(options.services),
       new EnvToolGroup(options.services),
       new EnvModuleGroup(options.services),
+    ];
+    this.groups = [
+      ...this.own,
       // What the workspace implementation contributes: a capability the core
       // does not name, such as showing another window's directory.
       ...(options.services.workspace?.groups?.(options.services.table) ?? []),
@@ -85,10 +114,41 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
     ];
   }
 
+  /**
+   * Register direct tools declared from outside the core - a plugin's own, or a
+   * backend's injection of the tools an outside harness registered
+   * (docs/tools.md#external-tools).
+   *
+   * A name the model already has is not registered: a core tool always wins,
+   * and so does the external tool that arrived first. The collisions come back
+   * with the rule that refused them, so the host records them for the operator
+   * instead of throwing.
+   */
+  external(tools: readonly ExternalTool[], source: string): readonly ExternalToolRefusal[] {
+    const taken = new Set([...this.tools().map((tool) => tool.name), ...this.modules().map((module) => module.name)]);
+    const refused: ExternalToolRefusal[] = [];
+    const declared: ExternalTool[] = [];
+    for (const tool of tools) {
+      if (taken.has(tool.name)) {
+        refused.push({ name: tool.name, source, rule: "tool.name_taken" });
+        continue;
+      }
+      taken.add(tool.name);
+      declared.push(tool);
+    }
+    if (declared.length > 0) this.groups.push(new ExternalToolGroup(declared, source, this.services));
+    return refused;
+  }
+
   /** Every direct tool, one line each in the prompt. */
   tools(): readonly DirectToolSpec[] {
+    return [...this.entryPoints(), ...this.groups.flatMap((group) => group.tools())];
+  }
+
+  /** The two entry points to the modules, which every window has. */
+  private entryPoints(): readonly DirectToolSpec[] {
     const table = this.services.table;
-    const entryPoints: DirectToolSpec[] = [
+    return [
       {
         name: "code_exec",
         description: lookup(table, "tool.code_exec", {}),
@@ -100,7 +160,6 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
         parameters: { keywords: { type: "string", description: lookup(table, "param.keywords", {}) } },
       },
     ];
-    return [...entryPoints, ...this.groups.flatMap((group) => group.tools())];
   }
 
   /**
@@ -134,7 +193,23 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
 
   /** The direct tool names, which a script may not call. */
   directTools(): readonly string[] {
-    return this.tools().map((tool) => tool.name);
+    return this.ownTools().map((tool) => tool.name);
+  }
+
+  /**
+   * The direct tools a script may call: every one the core does not declare
+   * itself (docs/tools.md#rules). A plugin's or a backend's tool is a
+   * capability of its own, like a module function, so a script reaches it the
+   * same way; arbor's own decisions and commands stay in the turn.
+   */
+  scriptTools(): readonly DirectToolSpec[] {
+    const own = new Set(this.directTools());
+    return this.tools().filter((tool) => !own.has(tool.name));
+  }
+
+  /** The direct tools arbor declares itself: its decisions and its commands. */
+  private ownTools(): readonly DirectToolSpec[] {
+    return [...this.entryPoints(), ...this.own.flatMap((group) => group.tools())];
   }
 
   /** One call, through the group that owns it. */
@@ -288,7 +363,7 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       lines.push(textOf(table, "result.tool_search.modules", { names: found.modules.join(", ") }));
     }
     for (const tool of found.tools) {
-      lines.push(textOf(table, "result.tool_search.tool", { name: tool.name, description: tool.description }));
+      lines.push(toolLine(table, tool));
     }
     for (const name of found.functions) {
       lines.push(this.describe(name) ?? name);
@@ -324,6 +399,16 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
 function stringArg(args: Record<string, unknown>, name: string): string {
   const value = args[name];
   return typeof value === "string" ? value : "";
+}
+
+/**
+ * One tool's line, the same one the tools list writes: a tool declared from
+ * outside the core says where it comes from, so the model knows whose it is
+ * wherever it meets the name (docs/tools.md#external-tools).
+ */
+function toolLine(table: TextTable, tool: DirectToolSpec): string {
+  const key = tool.source === undefined ? "system.tool" : "system.tool.source";
+  return lookup(table, key, { name: tool.name, description: tool.description, source: tool.source ?? "" });
 }
 
 /**

@@ -2,10 +2,11 @@
  * `code_exec`: everything that is not a decision runs from a script
  * (docs/tools.md#rules).
  *
- * A script that names a direct tool is refused with the rule and never reaches
- * the host. Calls from a script go through the same hooks as direct calls, so
- * anchors, watermarks, quotas, validation and logging behave the same: every
- * module function is the same service call the direct tool makes.
+ * A script that names one of arbor's own direct tools is refused with the rule
+ * and never reaches the host. Calls from a script go through the same hooks as
+ * direct calls, so anchors, watermarks, quotas, validation and logging behave
+ * the same: every module function is the same service call the direct tool
+ * makes, and so is every tool a plugin or a backend declared.
  *
  * Two lookups are script globals: `tool_search` takes keywords, an exact
  * `module.function` name, or nothing for every module; `tool_describe` returns
@@ -14,7 +15,7 @@
  */
 
 import vm from "node:vm";
-import type { ModuleSpec, ToolResult, WindowRef } from "@4fu/arbor-interfaces";
+import type { DirectToolSpec, ModuleSpec, ToolResult, WindowRef } from "@4fu/arbor-interfaces";
 import { textOf } from "@4fu/arbor-prompt";
 import type { ToolServices } from "./host.ts";
 
@@ -44,8 +45,16 @@ export interface ScriptCatalog {
   };
   /** `tool_describe`: one function's signature. */
   describe(name: string): string | undefined;
-  /** The direct tool names a script may not call. */
+  /**
+   * The direct tool names a script may not call: arbor's own decisions and
+   * commands, which belong in the turn (docs/tools.md#rules).
+   */
   directTools(): readonly string[];
+  /**
+   * The direct tools a script may call: a plugin's or a backend's, which are
+   * capabilities of their own like a module function (docs/tools.md#rules).
+   */
+  scriptTools(): readonly DirectToolSpec[];
 }
 
 /** Run one script in its own context, with the modules as globals. */
@@ -76,6 +85,20 @@ export async function runScript(
   };
   for (const module of catalog.modules()) {
     globals[module.name] = moduleFunctions(module, catalog, context);
+  }
+  // A tool a plugin or a backend declared is a capability of its own, not one
+  // of arbor's decisions, so a script may call it - through the same path a
+  // module function takes (docs/tools.md#rules). A module's name and the
+  // script's own globals keep theirs: the catalog has already refused a tool
+  // whose name a module declares, and nothing here shadows `tool_search` or
+  // `console`.
+  for (const tool of catalog.scriptTools()) {
+    if (globals[tool.name] !== undefined) continue;
+    globals[tool.name] = async (args: Record<string, unknown> = {}) => {
+      const result = await catalog.callModule(tool.name, args, context);
+      if (!result.ok) throw new Error(result.error?.message ?? result.content);
+      return result.content;
+    };
   }
   const sandbox = vm.createContext(globals);
   const wrapped = `(async () => {\n${script}\n})()`;
@@ -136,7 +159,10 @@ function moduleFunctions(
 
 /**
  * The direct tool a script names, if any. This is a guard, not a sandbox: it
- * keeps a decision out of a script, and the host still enforces every rule.
+ * keeps one of arbor's own decisions or commands out of a script, and the host
+ * still enforces every rule. A tool a plugin or a backend declared is not in
+ * the list - a script may call it, the way it calls a module function
+ * (docs/tools.md#rules).
  */
 export function directToolIn(script: string, tools: readonly string[]): string | undefined {
   for (const tool of tools) {

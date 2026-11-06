@@ -5,10 +5,10 @@
  * below; every part is optional, so a plugin can be only a hook, only a skill,
  * or a whole domain such as a chat channel or a code host.
  *
- * Capabilities are MCP servers, not tools: a plugin adds no direct tool or
- * module of its own. What the model can do with it is an MCP server and skills
- * in `/env`, which the model reads, changes and reinstalls with `reload` like
- * any item.
+ * Capabilities the model reads, changes and reinstalls itself are MCP servers
+ * and skills in `/env`. A tool whose behaviour is the plugin's own code rather
+ * than an item in `/env` is declared as an `ExternalTool` and reaches the model
+ * under its own name (docs/tools.md#external-tools).
  */
 
 import type { Block, BlockKindSpec, TextTable } from "./blocks.ts";
@@ -18,6 +18,7 @@ import type { EnvDraft } from "./environment.ts";
 import type { JudgeCriteria } from "./judge.ts";
 import type { Hooks } from "./hooks.ts";
 import type { TaskSource } from "./task.ts";
+import type { ExternalTool } from "./tools.ts";
 
 /** Connections to the outside world. */
 export interface PluginAdapters {
@@ -52,6 +53,14 @@ export interface Plugin {
 
   /** Skills, installed into `/env/skills` under the plugin's name. */
   skills?: readonly EnvDraft[];
+
+  /**
+   * Direct tools of its own: declared to the model under the names it gives
+   * them, and called in the turn through the same path a core tool takes
+   * (docs/tools.md#external-tools). A name a core tool or a module already
+   * declares is not registered; the host records the collision with its rule.
+   */
+  tools?: readonly ExternalTool[];
 
   hooks?: Hooks;
 

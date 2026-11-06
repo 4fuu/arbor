@@ -11,7 +11,7 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 | `id` | the event's ref, `r902`; its number is the event's place in the one global order |
 | `window` | the window that wrote it, `c41`; empty for an outside event not yet dispatched |
 | `time` | when it was written |
-| `kind` | input, tool call, tool result, send, note revision, window start or end, ... |
+| `kind` | input, tool call, tool result, send, note revision, window start or end, tool registration, ... |
 | `targets` | what it touches (below) |
 | `refs` | the refs it names: what it answers, cites, continues or quotes |
 | `external` | the native id of an outside message, with a short channel prefix |
@@ -26,6 +26,12 @@ on the window. Nothing but `send` reaches the outside, so the record is the one
 place a window's own words stand - `windows.show` replays them, and a
 continuation reads what its predecessor said
 ([windows.md](windows.md#prompt-layout)).
+
+The host writes events of its own with no window: an environment revision, a
+service state change, and a `tool_registration` for every direct tool a plugin
+or a backend declared that was not registered, which carries the source, the
+tool and the rule that left it out
+([tools.md](tools.md#external-tools)).
 
 ## Targets
 

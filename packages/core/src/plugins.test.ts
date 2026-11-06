@@ -22,6 +22,7 @@ import type {
   BlockKindSpec,
   DispatchContext,
   Effect,
+  ExternalTool,
   Judge,
   JudgeAnswer,
   JudgeContext,
@@ -29,6 +30,7 @@ import type {
   ModelRequestContext,
   Note,
   Plugin,
+  Settings,
   StreamEvent,
   TextTable,
   ToolCallContext,
@@ -150,10 +152,39 @@ interface Harness {
   timers: ManualTimers;
 }
 
-async function host(options: { plugins?: readonly Plugin[]; judge?: Judge } = {}): Promise<Harness> {
+/**
+ * A backend that injects the tools an outside harness registered, the way a
+ * host embedded in one hands them in
+ * (docs/tools.md#external-tools). Same shape a plugin declares, one path.
+ */
+class InjectingBackend extends ScriptedBackend {
+  private readonly injected: readonly ExternalTool[];
+
+  constructor(injected: readonly ExternalTool[] = []) {
+    super();
+    this.injected = injected;
+  }
+
+  externalTools(): readonly ExternalTool[] {
+    return this.injected;
+  }
+}
+
+async function host(
+  options: {
+    plugins?: readonly Plugin[];
+    judge?: Judge;
+    /** The settings the host runs with, secrets included. */
+    settings?: Settings;
+    /** Where a named secret's value comes from. */
+    secretOf?: (name: string) => string | undefined;
+    /** The tools the backend injects, from the harness around the host. */
+    injected?: readonly ExternalTool[];
+  } = {},
+): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-plugin-"));
-  const backend = new ScriptedBackend();
+  const backend = new InjectingBackend(options.injected ?? []);
   const timers = new ManualTimers();
   const arbor = new Arbor({
     journal,
@@ -163,6 +194,8 @@ async function host(options: { plugins?: readonly Plugin[]; judge?: Judge } = {}
     workspace: new DirectoryWorkspace({ root }),
     plugins: options.plugins,
     ...(options.judge === undefined ? {} : { judge: options.judge }),
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
+    ...(options.secretOf === undefined ? {} : { secretOf: options.secretOf }),
   });
   backend.attach(arbor.windowControl());
   return { arbor, journal, backend, timers };
@@ -601,5 +634,165 @@ describe("the hooks the core runs", () => {
     const opened = backend.opened[0];
     assert.ok(opened?.firstInput?.includes("CI 红了"), "the input the host built is still there");
     assert.ok(opened?.firstInput?.includes("注入的一行"), "what the hook added is rendered into it");
+  });
+});
+
+describe("direct tools a plugin or a backend declares", () => {
+  /** The secret's value. The settings name it; only this test holds it. */
+  const TOKEN = "dsh-value-9182";
+
+  /** One plugin's tool and one the backend injects, recording the calls they take. */
+  function declaredTools(calls: { tool: string; args: Record<string, unknown> }[]): {
+    plugin: ExternalTool;
+    injected: ExternalTool;
+  } {
+    const answering = (name: string, description: string, content: string): ExternalTool => ({
+      name,
+      description,
+      parameters: { text: { type: "string", description: "内容", required: true } },
+      execute: async (request) => {
+        calls.push({ tool: request.name, args: request.args });
+        return { callId: request.callId, ok: true, content };
+      },
+    });
+    return {
+      // The plugin's tool answers with the secret's value, so the scrub is on
+      // the path the result leaves by.
+      plugin: answering("dsh_review", "评审一段改动。", `评审完成，令牌 ${TOKEN}`),
+      injected: answering("dsh_search", "检索知识库。", "检索完成"),
+    };
+  }
+
+  it("declares them to the model with where they come from, and calls them like any direct tool", async () => {
+    const calls: { tool: string; args: Record<string, unknown> }[] = [];
+    const { plugin, injected } = declaredTools(calls);
+    const seen: string[] = [];
+    const watcher: Plugin = {
+      name: "lint",
+      tools: [plugin],
+      hooks: {
+        beforeToolCall: (context) => {
+          seen.push(`before ${context.call.name}`);
+          return { allow: true };
+        },
+        afterToolCall: (context) => {
+          seen.push(`after ${context.call.name}`);
+        },
+      },
+    };
+    const { arbor, journal, backend } = await host({
+      plugins: [watcher],
+      injected: [injected],
+      settings: { secrets: ["dsh_token"] },
+      secretOf: (name) => (name === "dsh_token" ? TOKEN : undefined),
+    });
+    backend.script([
+      { tool: "dsh_review", args: { text: "src/app.ts" } },
+      { tool: "dsh_search", args: { text: "部署" } },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+
+    // Both are declared to the model, under their own names, and the tools list
+    // says where each one comes from.
+    const declared = (backend.opened[0]?.tools ?? []).map((tool) => `${tool.name}${tool.source === undefined ? "" : `（${tool.source}）`}`);
+    assert.deepEqual(declared.filter((one) => one.startsWith("dsh_")), ["dsh_review（lint）", "dsh_search（scripted）"]);
+    const prompt = backend.opened[0]?.prompt.system ?? "";
+    const tools = prompt.slice(prompt.indexOf("<tools>"), prompt.indexOf("</tools>"));
+    assert.ok(tools.includes("dsh_review：评审一段改动。（来自lint）"));
+    assert.ok(tools.includes("dsh_search：检索知识库。（来自scripted）"));
+
+    // Each call ran its own execute, was seen by both hooks, and is recorded.
+    assert.deepEqual(calls, [
+      { tool: "dsh_review", args: { text: "src/app.ts" } },
+      { tool: "dsh_search", args: { text: "部署" } },
+    ]);
+    assert.deepEqual(seen, ["before dsh_review", "after dsh_review", "before dsh_search", "after dsh_search"]);
+    const recorded = await journal.list({ kinds: ["tool_call", "tool_result"] });
+    assert.deepEqual(
+      recorded.items.map((event) => event.kind),
+      ["tool_call", "tool_result", "tool_call", "tool_result"],
+    );
+    assert.ok((recorded.items[0]?.body ?? "").includes("dsh_review"));
+    // The secret in the plugin tool's answer never reaches the record.
+    assert.ok((recorded.items[1]?.body ?? "").includes("评审完成，令牌 [hidden:dsh_token]"));
+    assert.ok(!(recorded.items[1]?.body ?? "").includes(TOKEN));
+    assert.equal(recorded.items[3]?.body, "检索完成");
+    // The window ran to its end all the same.
+    assert.equal(arbor.live()[0]?.state, "idle");
+  });
+
+  it("leaves a name the model already has to the core, and records the collision with its rule", async () => {
+    const calls: string[] = [];
+    const shadow: ExternalTool = {
+      name: "send",
+      description: "另一个发送。",
+      parameters: {},
+      execute: async (request) => {
+        calls.push("shadow");
+        return { callId: request.callId, ok: true, content: "不应该到达" };
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [{ name: "lint", tools: [shadow] }] });
+    backend.script([{ tool: "send", args: { to: "qq:group:1", content: "已修好" } }, { text: "完成" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await settle();
+
+    // The colliding tool is not declared to the model: the core's own is.
+    const prompt = backend.opened[0]?.prompt.system ?? "";
+    assert.ok(prompt.includes("send："));
+    assert.ok(!prompt.includes("另一个发送"));
+    // And it never runs: the core tool answers instead.
+    const results = await journal.list({ kinds: ["tool_result"] });
+    assert.ok((results.items[0]?.body ?? "").includes("已记录"));
+    assert.deepEqual(calls, []);
+    // The collision is recorded, not thrown: one event naming the source, the
+    // tool and the rule, so an operator sees what the model will not get.
+    const refused = await journal.list({ kinds: ["tool_registration"] });
+    assert.equal(refused.items.length, 1);
+    assert.deepEqual(JSON.parse(refused.items[0]?.body ?? "{}"), {
+      source: "lint",
+      tool: "send",
+      rule: "tool.name_taken",
+    });
+  });
+
+  it("lets a script call a plugin tool, and keeps arbor's own tools out of a script", async () => {
+    const calls: string[] = [];
+    const lint: ExternalTool = {
+      name: "dsh_lint",
+      description: "检查一段配置是否合法。",
+      parameters: { text: { type: "string", description: "配置内容", required: true } },
+      execute: async (request) => {
+        calls.push(String(request.args.text));
+        return { callId: request.callId, ok: true, content: `检查完成 ${String(request.args.text)}` };
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [{ name: "lint", tools: [lint] }] });
+    backend.script([
+      { tool: "code_exec", args: { script: "return await dsh_lint({ text: 'a: 1' })" } },
+      { text: "完成" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    // The script reached the plugin's tool as a global of its own name, and the
+    // answer is the tool's.
+    assert.deepEqual(calls, ["a: 1"]);
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.ok((results.items[0]?.body ?? "").includes("检查完成 a: 1"));
+
+    // A script that names one of arbor's own is still refused with the rule.
+    backend.script([
+      { tool: "code_exec", args: { script: "send('qq:group:1', 'hi')" } },
+      { text: "完成" },
+    ]);
+    await arbor.open({ ...task, reason: "再看一次 CI" });
+    await backend.finished();
+    const refused = await journal.list({ kinds: ["tool_result"] });
+    assert.ok((refused.items[1]?.body ?? "").includes("script.decision_tool"));
+    assert.ok((refused.items[1]?.body ?? "").includes("直接工具只在本回合内直接调用"));
   });
 });

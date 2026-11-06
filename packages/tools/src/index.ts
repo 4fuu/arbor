@@ -8,7 +8,7 @@
  * service layer.
  */
 
-export { ToolCatalog, type ToolCatalogOptions } from "./catalog.ts";
+export { ToolCatalog, type ExternalToolRefusal, type ToolCatalogOptions } from "./catalog.ts";
 export {
   SCRIPT_TIMEOUT_MS,
   directToolIn,
@@ -33,6 +33,7 @@ export {
   type ToolServices,
 } from "./host.ts";
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
+export { ExternalToolGroup } from "./groups/external.ts";
 export { bashEnvironment } from "./groups/files.ts";
 export { EnvToolGroup } from "./groups/env.ts";
 export { NoteToolGroup } from "./groups/notes.ts";

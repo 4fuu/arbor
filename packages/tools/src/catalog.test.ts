@@ -9,6 +9,7 @@ import type {
   CallContext,
   Channel,
   Event,
+  ExternalTool,
   NoteStore,
   NoteWriteInput,
   ScheduledTask,
@@ -41,9 +42,13 @@ interface Harness {
   batched: Map<string, Event[]>;
   /** The workspace ref the window's first file call created. */
   refOf(window: string): string;
+  /** The external tools the catalog did not register, with the rule. */
+  refused: readonly { name: string; source: string; rule: string }[];
 }
 
-async function harness(options: { notes?: boolean; channels?: boolean; workspace?: boolean } = {}): Promise<Harness> {
+async function harness(
+  options: { notes?: boolean; channels?: boolean; workspace?: boolean; external?: readonly ExternalTool[] } = {},
+): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-tools-"));
   const workspace = new DirectoryWorkspace({ root });
@@ -228,6 +233,7 @@ async function harness(options: { notes?: boolean; channels?: boolean; workspace
 
   const catalog = new ToolCatalog({ services });
   const refs = new Map<string, string>();
+  const refused = catalog.external(options.external ?? [], "dsh");
   return {
     catalog,
     journal,
@@ -241,6 +247,7 @@ async function harness(options: { notes?: boolean; channels?: boolean; workspace
     cancelled,
     batched,
     refOf: (window: string) => refs.get(window) ?? "",
+    refused,
   };
 }
 
@@ -489,6 +496,147 @@ describe("tool catalog", () => {
     assert.equal(result.error?.rule, "script.decision_tool");
     assert.ok(result.error?.message.includes("send"));
     assert.equal(sent.length, 0);
+  });
+
+  it("declares a plugin's or a backend's tool beside the core's own, and calls it through the same path", async () => {
+    const calls: { name: string; args: Record<string, unknown>; context: CallContext }[] = [];
+    const lint: ExternalTool = {
+      name: "dsh_lint",
+      description: "检查一段配置是否合法。",
+      parameters: { text: { type: "string", description: "配置内容", required: true } },
+      execute: async (request, context) => {
+        calls.push({ name: request.name, args: request.args, context });
+        return { callId: request.callId, ok: true, content: "检查完成" };
+      },
+    };
+    const { catalog, refused } = await harness({ external: [lint] });
+    assert.deepEqual(refused, []);
+    // It is declared to the model like any direct tool, with where it comes from.
+    const declared = catalog.tools().find((tool) => tool.name === "dsh_lint");
+    assert.equal(declared?.source, "dsh");
+    assert.equal(declared?.description, "检查一段配置是否合法。");
+    assert.deepEqual(Object.keys(declared?.parameters ?? {}), ["text"]);
+
+    // The call runs the tool's own execute, with the context the service layer
+    // fills for every tool - the same one a core tool is handed.
+    const at = "r7" as const;
+    const result = await run(catalog, "dsh_lint", { text: "a: 1" }, at);
+    assert.equal(result.ok, true);
+    assert.equal(result.content, "检查完成");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.name, "dsh_lint");
+    assert.deepEqual(calls[0]?.args, { text: "a: 1" });
+    assert.equal(calls[0]?.context.window, "c1");
+    assert.equal(calls[0]?.context.call, at);
+
+    // The one result cut is the catalog's, and it is the only one: an answer
+    // longer than the limit comes back cut, with the marker.
+    const long: ExternalTool = {
+      name: "dsh_long",
+      description: "返回很长的一段输出。",
+      parameters: {},
+      execute: async (request) => ({ callId: request.callId, ok: true, content: "x".repeat(30000) }),
+    };
+    const { catalog: cutting } = await harness({ external: [long] });
+    const cut = await run(cutting, "dsh_long", {});
+    assert.ok(cut.content.includes("输出已截断"));
+    assert.ok(cut.content.length < 25000);
+  });
+
+  it("lets a script call a plugin tool, and still refuses one that names arbor's own", async () => {
+    const calls: string[] = [];
+    const lint: ExternalTool = {
+      name: "dsh_lint",
+      description: "检查一段配置是否合法。",
+      parameters: { text: { type: "string", description: "配置内容", required: true } },
+      execute: async (request) => {
+        calls.push(String(request.args.text));
+        return { callId: request.callId, ok: true, content: `检查完成 ${String(request.args.text)}` };
+      },
+    };
+    const { catalog, sent } = await harness({ external: [lint] });
+    // A tool declared from outside the core is a capability of its own, like a
+    // module function: a script reaches it as a global of the same name.
+    const scripted = await run(catalog, "code_exec", { script: "return await dsh_lint({ text: 'a: 1' })" });
+    assert.equal(scripted.ok, true);
+    assert.ok(scripted.content.includes("检查完成 a: 1"));
+    assert.deepEqual(calls, ["a: 1"]);
+    // A refusal from it reaches the script as an error, the way a module
+    // function's does.
+    const failing: ExternalTool = {
+      name: "dsh_fail",
+      description: "总是失败。",
+      parameters: {},
+      execute: async (request) => ({
+        callId: request.callId,
+        ok: false,
+        content: "",
+        error: { rule: "dsh.refused", message: "本部署禁止检查" },
+      }),
+    };
+    const { catalog: refusedCatalog } = await harness({ external: [failing] });
+    const failed = await run(refusedCatalog, "code_exec", { script: "return await dsh_fail()" });
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error?.rule, "script.failed");
+    assert.ok(failed.error?.message.includes("本部署禁止检查"));
+
+    // The guard still keeps arbor's own decisions and commands out of a script.
+    const decision = await run(catalog, "code_exec", { script: "send('qq:1', 'hi')" });
+    assert.equal(decision.error?.rule, "script.decision_tool");
+    assert.equal(sent.length, 0);
+    const command = await run(catalog, "code_exec", { script: "return read({ path: 'a.txt' })" });
+    assert.equal(command.error?.rule, "script.decision_tool");
+  });
+
+  it("does not register an external tool whose name the model already has", async () => {
+    const colliding: ExternalTool = {
+      name: "send",
+      description: "另一个发送。",
+      parameters: {},
+      execute: async (request) => ({ callId: request.callId, ok: true, content: "不应该到达" }),
+    };
+    const moduleName: ExternalTool = {
+      name: "journal",
+      description: "另一个记录模块。",
+      parameters: {},
+      execute: async (request) => ({ callId: request.callId, ok: true, content: "不应该到达" }),
+    };
+    const { catalog, refused, sent } = await harness({ external: [colliding, moduleName] });
+    // Neither is registered: the core tool and the module keep their names.
+    assert.ok(!catalog.tools().some((tool) => tool.name === "send" && tool.source === "dsh"));
+    assert.equal(catalog.tools().find((tool) => tool.name === "send")?.source, undefined);
+    assert.ok(!catalog.modules().some((module) => module.name === "journal" && module.description === "另一个记录模块。"));
+    // Both collisions come back with the rule, so the host records them.
+    assert.deepEqual(refused, [
+      { name: "send", source: "dsh", rule: "tool.name_taken" },
+      { name: "journal", source: "dsh", rule: "tool.name_taken" },
+    ]);
+    // The core tool still answers, and the plugin's never runs.
+    const sent_ = await run(catalog, "send", { to: "qq:group:123", content: "已完成" });
+    assert.equal(sent_.ok, true);
+    assert.deepEqual(sent, [{ to: "qq:group:123", content: "已完成" }]);
+  });
+
+  it("answers tool_search about an external tool, and says where it comes from", async () => {
+    const lint: ExternalTool = {
+      name: "dsh_lint",
+      description: "检查一段配置是否合法。",
+      parameters: {},
+      execute: async (request) => ({ callId: request.callId, ok: true, content: "" }),
+    };
+    const { catalog } = await harness({ external: [lint] });
+    // An exact name first.
+    const exact = await run(catalog, "tool_search", { keywords: "dsh_lint" });
+    assert.ok(exact.content.includes("dsh_lint：检查一段配置是否合法。（来自dsh）"));
+    // Then a prefix, then a description.
+    const prefix = await run(catalog, "tool_search", { keywords: "dsh_" });
+    assert.ok(prefix.content.includes("dsh_lint"));
+    const described = await run(catalog, "tool_search", { keywords: "配置是否合法" });
+    assert.ok(described.content.includes("dsh_lint"));
+    // The tools list writes the same line, so the model reads one fact twice at
+    // most.
+    const listed = catalog.tools().find((tool) => tool.name === "dsh_lint");
+    assert.equal(listed?.source, "dsh");
   });
 
   it("runs a script that chains module calls and bounds its output", async () => {

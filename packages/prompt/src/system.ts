@@ -65,8 +65,12 @@ function sectionsOf(input: SystemPromptInput, table: TextTable): Section[] {
   if (input.tools.length > 0) {
     sections.push({
       tag: "tools",
+      // A tool a plugin or a backend declared says where it comes from, so the
+      // model knows whose it is (docs/tools.md#external-tools).
       lines: input.tools.map((tool) =>
-        textOf(table, "system.tool", { name: tool.name, description: tool.description }),
+        tool.source === undefined
+          ? textOf(table, "system.tool", { name: tool.name, description: tool.description })
+          : textOf(table, "system.tool.source", { name: tool.name, description: tool.description, source: tool.source }),
       ),
     });
   }

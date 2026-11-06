@@ -181,7 +181,7 @@ export type { TaskKind, TaskInput, Task, TaskSource } from "./task.ts";
 
 export type { EffectKind, Effect, EffectResult, EffectExecutor } from "./effects.ts";
 
-export type { CallContext, ToolGroup } from "./tools.ts";
+export type { CallContext, ToolGroup, ExternalTool } from "./tools.ts";
 
 export type {
   EnvItemKind,
