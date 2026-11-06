@@ -9,23 +9,6 @@ it serves. The framework guarantees what an agent cannot guarantee for itself -
 the record, isolation, exactly-once effects, the checks, dispatch - and leaves
 everything that takes judgment, such as git, merges and conflicts, to the agent.
 
-## Status
-
-Stage 7. Many windows run at once: dispatch decides for every task whether a
-live window takes it or a new one opens, the judge (Jev by default) answers
-what the rules leave open, and parallel windows stay current with each other
-through the board, notices, broadcasts and window messages. The host also runs
-the environment the model changes itself: `/env` with skills, MCP servers,
-services and the settings, `reload` as one revision broadcast to every live
-window, the services under a supervisor, and plugins as the one unit of
-extension - hooks, prompt blocks, skills and MCP servers. One plugin runs the
-whole host end to end: the HTTP test channel takes a webhook in, carries a
-window's sends out, and serves the page a person drives it from. The host API
-comes next.
-
-No release is published yet. Releases use calendar versions under the `@4fu`
-scope ([docs/release.md](docs/release.md)).
-
 ## Core ideas
 
 - **No sessions to manage.** Work runs in disposable context windows. Any
