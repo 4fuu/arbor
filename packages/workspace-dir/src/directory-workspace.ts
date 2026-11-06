@@ -9,11 +9,17 @@
  * <root>/ws3/                    the window's own directory
  * ```
  *
- * A fork and a snapshot are copies in an implementation that has no metadata to
- * lean on, so this one takes neither: a window's directory is its own, and a
- * continuation works in the directory of the window it continues, in place.
- * Read-only views are the one thing a plain directory cannot enforce on its
- * own, so this implementation offers none.
+ * A new window gets a directory of its own, created on first use. A
+ * continuation works in its predecessor's directory in place, under the same
+ * ref: no copy, no link, no fork. Only one window in a chain is live at a time,
+ * so in place is safe, and the chain is in the journal, so a restart recovers
+ * which directory a continuation uses.
+ *
+ * It isolates by directory only. Another window's directory is a path on this
+ * host, which a command may name and a read may open; `write` and `edit` refuse
+ * a path outside the window's own directory, and nothing here stops `bash`.
+ * That is not a security boundary, and the docs say so: real isolation comes
+ * from an implementation that owns its execution environment.
  */
 
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
@@ -33,10 +39,28 @@ export class DirectoryWorkspace implements Workspace {
     this.root = options.root;
   }
 
+  /**
+   * The directory a window works in, created on first use. Idempotent: the
+   * window that already has one gets the same ref back, which is how a
+   * continuation - which asks for the window that opened its chain - lands in
+   * its predecessor's directory, in place, under the same ref.
+   */
   async create(window: WindowRef): Promise<WorkspaceRef> {
     const ref = await this.allocate(window);
     await mkdir(this.workspacePath(ref), { recursive: true });
     return ref;
+  }
+
+  /**
+   * The directory a window's workspace has, or `undefined` when the window
+   * never touched files. Another window's directory is a path on this host,
+   * which is what a window reads it by.
+   */
+  async pathOfWindow(window: WindowRef): Promise<string | undefined> {
+    const wanted = windowNumber(window);
+    if (wanted <= 0) return undefined;
+    const path = this.workspacePath(`ws${wanted}` as WorkspaceRef);
+    return (await isDirectory(path)) ? path : undefined;
   }
 
   async mount(ref: WorkspaceRef): Promise<WorkspaceMount> {
@@ -45,7 +69,10 @@ export class DirectoryWorkspace implements Workspace {
       ref,
       path: resolved,
       readFile: async (path: string) => {
-        const target = this.inside(resolved, path);
+        // A relative path is inside this workspace. An absolute one is read
+        // where it is on this host, which is how another window's directory is
+        // read (docs/workspaces.md).
+        const target = this.inside(resolved, path) ?? (isAbsolute(path) ? normalize(path) : undefined);
         if (target === undefined) return null;
         return readFile(target, "utf8").catch(() => null);
       },
@@ -94,9 +121,15 @@ export class DirectoryWorkspace implements Workspace {
     return join(this.root, ref);
   }
 
-  /** The next workspace number, from the directories that already exist. */
+  /**
+   * The ref a window's directory has: the one it already has, or the next
+   * number nothing has taken. A window's number only grows, so a directory is
+   * never handed to a second window.
+   */
   private async allocate(window: WindowRef): Promise<WorkspaceRef> {
     const wanted = windowNumber(window);
+    const own = wanted > 0 ? (`ws${wanted}` as WorkspaceRef) : undefined;
+    if (own !== undefined && (await isDirectory(this.workspacePath(own)))) return own;
     let entries: string[] = [];
     try {
       entries = await readdir(this.root);
@@ -125,6 +158,14 @@ export class DirectoryWorkspace implements Workspace {
     const path = this.workspacePath(ref);
     await assertDirectory(path, ref);
     return path;
+  }
+}
+
+async function isDirectory(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isDirectory();
+  } catch {
+    return false;
   }
 }
 

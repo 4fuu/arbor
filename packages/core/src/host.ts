@@ -1661,18 +1661,38 @@ export class Arbor {
   }
 
   /**
-   * The window's own directory, created on first use
-   * (docs/workspaces.md#what-the-framework-guarantees).
+   * The window's own directory, created on first use. A continuation works in
+   * its predecessor's directory in place, under the same ref, so the mount is
+   * the chain's (docs/workspaces.md#what-the-framework-guarantees).
    */
   private async mountFor(window: WindowRef): Promise<WorkspaceMount | undefined> {
     const workspace = this.options.workspace;
     if (workspace === undefined) return undefined;
     const record = this.windows.get(window);
     if (record?.mount !== undefined) return record.mount;
-    const ref = await workspace.create(window);
+    const ref = await workspace.create(await this.chainRoot(window));
     const mount = await workspace.mount(ref);
     if (record !== undefined) record.mount = mount;
     return mount;
+  }
+
+  /**
+   * The window whose directory a window works in: its own, or the one its
+   * chain started from. Every continuation records the window it continues, so
+   * the chain is in the journal and a restart recovers which directory a
+   * continuation uses (docs/windows.md#restart).
+   */
+  private async chainRoot(window: WindowRef): Promise<WindowRef> {
+    let current = window;
+    // A window's number only grows, so the walk cannot cycle; the bound only
+    // stops a corrupt journal from walking for ever.
+    for (let depth = 0; depth < 1000; depth += 1) {
+      const page = await this.journal.list({ window: current, kinds: ["window_start"], limit: 1 });
+      const previous = continuedWindow(page.items[0]?.body);
+      if (previous === undefined) return current;
+      current = previous;
+    }
+    return current;
   }
 
   /** `end`: the model ends the run, with a handoff when work is unfinished. */
@@ -2058,6 +2078,18 @@ export class Arbor {
     this.board.open(entry);
     for (const target of targets) this.board.touch(window, target);
     return record;
+  }
+}
+
+/** The window a `window_start` event continues, when it continues one. */
+function continuedWindow(body: string | null | undefined): WindowRef | undefined {
+  if (body === undefined || body === null) return undefined;
+  try {
+    const parsed = JSON.parse(body) as { continuation?: unknown };
+    const previous = parsed.continuation;
+    return typeof previous === "string" && /^c\d+$/.test(previous) ? (previous as WindowRef) : undefined;
+  } catch {
+    return undefined;
   }
 }
 

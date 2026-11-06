@@ -21,8 +21,13 @@ The default `Workspace` is a plain directory
 lives under one root the host names, `bash` runs on the host in it, and a
 background job runs there too, through the host's own process API, so a
 command that outlives `bash`'s wait window keeps running after the call that
-started it. Nothing is mounted and nothing is containerised, so it works
-unchanged on Windows, Linux and macOS, and a disk quota is the size the
+started it. A new window gets a directory of its own, created on first use; a
+continuation keeps working in its predecessor's directory in place, under the
+same ref - no copy, no link, no fork. Only one window in a chain is live at a
+time, so in place is safe, and the chain is in the journal, so a restart
+recovers which directory a continuation uses. Nothing is mounted and nothing
+is containerised, and no symlink or POSIX-only call is on the path, so it works
+unchanged on Windows, Linux and macOS; a disk quota is the size the
 implementation reports against a workspace's directory.
 
 A deployment that wants real isolation - a sandbox, a container per window -

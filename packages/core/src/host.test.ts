@@ -194,6 +194,60 @@ describe("one window end to end", () => {
     assert.notEqual(before, after);
   });
 
+  it("continues in the predecessor's directory, in place, so the work carries over", async () => {
+    const { arbor, journal, backend, root } = await host();
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "完成" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    // The model ends with a handoff, so the host opens a continuation.
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
+    await arbor.services.endWindow(record.window, {
+      topics: ["CI"],
+      progress: ["已写下结论"],
+      pending: ["重跑"],
+      agreements: ["先修测试"],
+      refs: ["r1"],
+    });
+    await backend.finished();
+
+    // The continuation reads what the window before it wrote.
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.equal(read.total, 1);
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+
+    // It worked in the same directory, in place: no second directory was made,
+    // and the chain's directory holds the file the first window wrote.
+    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
+    assert.deepEqual(await readdir(root), ["ws1"]);
+  });
+
+  it("gives two unrelated windows directories that do not see each other", async () => {
+    const { arbor, journal, backend, root } = await host();
+    backend.script([{ tool: "write", args: { path: "a.txt", text: "first" } }, { text: "完成" }]);
+    const first = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(first.window);
+    await backend.finished();
+
+    backend.script([{ tool: "read", args: { path: "a.txt" } }, { text: "读不到" }]);
+    const second = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(second.window);
+    await backend.finished();
+
+    const read = await journal.list({ window: second.window, kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("file.not_found"));
+    assert.deepEqual((await readdir(root)).sort(), ["ws1", "ws2"]);
+    assert.equal(await readFile(join(root, "ws1", "a.txt"), "utf8"), "first");
+  });
+
   it("makes no directory for a call that changes no file", async () => {
     const { arbor, journal, backend, root } = await host();
     backend.script([
@@ -288,7 +342,7 @@ describe("one window end to end", () => {
   });
 
   it("stops the windows on close without opening a continuation, and the next start continues the work", async () => {
-    const { arbor, journal, backend, root, probe } = await host();
+    const { arbor, journal, backend, root } = await host();
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "第一轮" },
@@ -309,17 +363,20 @@ describe("one window end to end", () => {
     assert.equal(arbor.live().length, 0);
 
     // The next start on the same journal continues the stopped window, the way
-    // the restart section describes.
+    // the restart section describes: in the directory it worked in, which the
+    // window chain in the journal names.
     const reopened = new Arbor({
       journal,
       backend,
       timers: new ManualTimers(),
       now: () => 1700000000000,
       workspace: new DirectoryWorkspace({ root }),
-      groups: [probe],
     });
     backend.attach(reopened.windowControl());
-    backend.script([{ tool: "probe", args: { text: "第二轮" } }, { text: "读到了" }]);
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
     await reopened.start();
     await backend.finished();
     const continued = await journal.list({ kinds: ["window_start"] });
@@ -329,8 +386,10 @@ describe("one window end to end", () => {
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.continuation?.midTaskReset === true);
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
-    const probed = await journal.list({ window: "c2", kinds: ["tool_result"] });
-    assert.ok(probed.items[0]?.body?.includes("探测完成"));
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
+    assert.deepEqual(await readdir(root), ["ws1"]);
   });
 
   it("runs a module call from a script through the same service call", async () => {
@@ -462,7 +521,7 @@ describe("one window end to end", () => {
   });
 
   it("rebuilds a running window from the journal after a restart", async () => {
-    const { arbor, journal, backend, root, probe } = await host();
+    const { arbor, journal, backend, root } = await host();
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "第一轮" },
@@ -477,11 +536,15 @@ describe("one window end to end", () => {
       timers,
       now: () => 1700000000000,
       workspace: new DirectoryWorkspace({ root }),
-      groups: [probe],
     });
     // A restart is a new host, so the backend takes its control, the way pi does.
     backend.attach(reopened.windowControl());
-    backend.script([{ tool: "probe", args: { text: "第二轮" } }, { text: "读到了" }]);
+    // The continued window works in the directory the stopped one worked in,
+    // which the window chain in the journal names.
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
     await reopened.start();
     await backend.finished();
     const started = await journal.list({ kinds: ["window_start"] });
@@ -491,8 +554,10 @@ describe("one window end to end", () => {
     assert.ok(opened?.continuation?.midTaskReset === true);
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
     assert.equal(record.state, "idle");
-    const probed = await journal.list({ window: "c2", kinds: ["tool_result"] });
-    assert.ok(probed.items[0]?.body?.includes("探测完成"));
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
+    assert.deepEqual(await readdir(root), ["ws1"]);
   });
 
   it("records a send as an effect and never repeats it in the continuation", async () => {

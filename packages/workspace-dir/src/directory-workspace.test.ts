@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -50,6 +50,30 @@ describe("directory workspace", () => {
       assert.equal(error.rule, "file.outside_workspace");
       return true;
     });
+    await mount.release();
+  });
+
+  it("continues in the predecessor's directory, in place, under the same ref", async () => {
+    const { root, workspace } = await fixture();
+    const first = await workspace.create("c1");
+    await write(root, first, "src/app.ts", "export const a = 1");
+    // A continuation asks for the window that opened its chain and gets the
+    // same directory back: no copy, no link, no fork.
+    const again = await workspace.create("c1");
+    assert.equal(again, first);
+    assert.equal(await readFile(join(root, first, "src/app.ts"), "utf8"), "export const a = 1");
+    assert.deepEqual(await readdir(root), [first]);
+  });
+
+  it("reads another window's directory through the mount, by its absolute path", async () => {
+    const { root, workspace } = await fixture();
+    const first = await workspace.create("c1");
+    await write(root, first, "notes.txt", "work in progress");
+    const second = await workspace.create("c2");
+    const mount = await workspace.mount(second);
+    assert.equal(await mount.readFile?.(join(root, first, "notes.txt")), "work in progress");
+    // A relative path still names this window's own directory.
+    assert.equal(await mount.readFile?.("notes.txt"), null);
     await mount.release();
   });
 
