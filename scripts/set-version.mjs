@@ -21,7 +21,11 @@ import { workspacePackages } from "./workspace.mjs";
 
 const PATTERN = /^(\d{4})\.(\d{3,4})\.(\d+)$/;
 
+/** The form the first release used, `0.1.0`, before the calendar versions. */
+const PLAIN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+
 function validate(version) {
+  if (PLAIN.test(version) && !/^\d{4}\./.test(version)) return;
   const match = PATTERN.exec(version);
   if (match === null) throw new Error("version must use YYYY.MDD.REVISION, for example 2026.1106.0");
   const [year, monthDay] = [match[1], match[2]];
