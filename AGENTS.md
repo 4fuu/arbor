@@ -3,11 +3,16 @@
 ## Commands
 
 ```sh
-pnpm check     # typecheck and test every package; run this before committing
+pnpm check     # typecheck and test every package, on the sources; the gate
+pnpm build     # emit dist for every package, for publishing
+pnpm pack      # what each published tarball would contain
 ```
 
-Node runs the TypeScript sources directly, so there is no build step and no
-`dist`. `pnpm check` is the whole gate.
+Node runs the TypeScript sources directly and every package's `exports` points
+at them, so `pnpm check` needs no build and there is no `dist` in the way of
+the work. `dist` exists for publishing alone: Node refuses to strip types
+inside `node_modules`, so a published package ships built JavaScript and
+declarations instead of the sources. `docs/release.md` is the process.
 
 ## Conventions
 
