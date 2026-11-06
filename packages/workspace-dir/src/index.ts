@@ -8,3 +8,4 @@
  */
 
 export { DirectoryWorkspace, type DirectoryWorkspaceOptions } from "./directory-workspace.ts";
+export { WorkspacePathGroup } from "./path-module.ts";

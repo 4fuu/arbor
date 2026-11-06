@@ -79,7 +79,7 @@ check` typechecks and tests every package.
 | `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
-| `packages/workspace-dir` | the default `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
+| `packages/workspace-dir` | the default `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place, and the lookup of another window's directory it contributes to the catalog |
 | `packages/environment-dir` | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
 | `packages/supervisor-process` | the default `Supervisor`: one host process per service, restart with backoff, logs |
 | `packages/plugin-http` | the HTTP test channel: a webhook in, sends out, a page that drives the whole host |

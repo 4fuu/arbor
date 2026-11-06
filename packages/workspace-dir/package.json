@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "@arbor/errors": "workspace:*",
-    "@arbor/interfaces": "workspace:*"
+    "@arbor/interfaces": "workspace:*",
+    "@arbor/prompt": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

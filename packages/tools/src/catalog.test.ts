@@ -43,7 +43,7 @@ interface Harness {
   refOf(window: string): string;
 }
 
-async function harness(options: { notes?: boolean; channels?: boolean } = {}): Promise<Harness> {
+async function harness(options: { notes?: boolean; channels?: boolean; workspace?: boolean } = {}): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-tools-"));
   const workspace = new DirectoryWorkspace({ root });
@@ -105,7 +105,7 @@ async function harness(options: { notes?: boolean; channels?: boolean } = {}): P
     table: zhTextTable,
     journal,
     ...(options.notes === false ? {} : { notes: notesStore() }),
-    workspace,
+    ...(options.workspace === false ? {} : { workspace }),
     ensureWorkspace: async (window) => {
       const found = mounts.get(window);
       if (found !== undefined) return found;
@@ -276,6 +276,41 @@ describe("tool catalog", () => {
     assert.ok(!withoutNotes.catalog.modules().some((module) => module.name === "notes"));
     const notes = await harness();
     assert.ok(notes.catalog.modules().some((module) => module.name === "notes"));
+  });
+
+  it("omits the workspace module when no workspace is configured", async () => {
+    const { catalog } = await harness({ workspace: false });
+    assert.ok(!catalog.modules().some((module) => module.name === "workspace"));
+    const listed = await run(catalog, "workspace.ls", {});
+    assert.equal(listed.ok, false);
+    assert.equal(listed.error?.rule, "tool.unknown");
+  });
+
+  it("answers another window's directory by its window, and a window reads what is in it", async () => {
+    const { catalog, root } = await harness();
+    await run(catalog, "write", { path: "notes.txt", text: "work in progress" });
+    const found = await run(catalog, "workspace.path", { window: "c1" });
+    assert.equal(found.ok, true);
+    assert.ok(found.content.includes(join(root, "ws1")));
+    // The answer says whose directory it is, and that it is not to be changed.
+    assert.ok(found.content.includes("只读"));
+    // The module lists the lookup beside the lookups the core declares.
+    assert.deepEqual(
+      catalog.modules().find((module) => module.name === "workspace")?.functions.map((fn) => fn.name),
+      ["workspace.grep", "workspace.find", "workspace.ls", "workspace.path"],
+    );
+
+    // Another window reads the directory the answer names, by its path.
+    const read = await catalog.call(
+      { name: "read", args: { path: join(root, "ws1", "notes.txt") }, callId: "call_1" },
+      context("c2"),
+    );
+    assert.ok(read.content.includes("work in progress"));
+
+    const unknown = await run(catalog, "workspace.path", { window: "c9" });
+    assert.equal(unknown.ok, false);
+    assert.equal(unknown.error?.rule, "workspace.not_found");
+    assert.ok((unknown.error?.nextAction ?? "").includes("windows.list"));
   });
 
   it("omits the channels module when no channel is registered", async () => {

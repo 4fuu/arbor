@@ -30,10 +30,35 @@ is containerised, and no symlink or POSIX-only call is on the path, so it works
 unchanged on Windows, Linux and macOS; a disk quota is the size the
 implementation reports against a workspace's directory.
 
-A deployment that wants real isolation - a sandbox, a container per window -
-implements `Workspace` itself and registers it; the core knows nothing about
-what an implementation does beyond the interface
+## Another window's directory
+
+The built-in workspace isolates by directory only, and it is not a security
+boundary: another window's directory is a path on the same host, which a
+command may name and a read may open. `write` and `edit` refuse a path outside
+the window's own directory, and nothing stops `bash`. Real isolation comes from
+an implementation that owns its execution environment - a sandbox, a container
+per window - which implements `Workspace` itself and registers it; the core
+knows nothing about what an implementation does beyond the interface
 ([architecture.md](architecture.md#interfaces)).
+
+Within that limit, the built-in workspace answers the question directly.
+`workspace.path(window)` names the directory a window's workspace has, and its
+description and its result both say the directory belongs to another window and
+must not be modified:
+
+```text
+workspace.path("c41")
+/data/workspaces/ws41（窗口 c41 的工作区，属于其他窗口：只读，不要修改）
+```
+
+The window then reads it with `read`, by that path. A window that never touched
+files has no directory, and the call says so.
+
+The capability belongs to the implementation, not to the core: an
+implementation that can show other workspaces registers its own module function
+or tool and its own prompt text, and one that cannot shows the model nothing
+about it ([architecture.md](architecture.md#plugins)). The core offers no view
+of its own.
 
 The shared environment reaches a command the same way. The environment is one
 shared directory on the host and a window's workspace is a directory on that

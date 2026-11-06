@@ -93,14 +93,22 @@ or a whole domain such as a chat channel or a code host:
 | skills | procedures, installed into `/env` under the plugin's name |
 | hooks | any of the hooks below |
 | prompt blocks | a system prompt section, and the block kinds its inputs use, which the renderer maps to text ([prompting.md](prompting.md#blocks-and-the-renderer)) |
+| tool groups | direct tools and code mode modules of its own, registered through the host's `groups` option |
 | judge questions | extra criteria or decisions for its own inputs |
 
-- **Capabilities are MCP servers, not tools.** A plugin adds no direct tool
-  or module of its own; what the model can do with it is an MCP server and
-  skills in `/env`. The model reads, changes and reinstalls them with
-  `reload` like any item, so it can improve a plugin's abilities itself. A
-  plugin upgrade installs a new revision on top; the model's changes stay in
-  the item's history.
+- **Capabilities are MCP servers, not tools.** What the model can do with a
+  plugin is an MCP server and skills in `/env`, not a direct tool or module of
+  the plugin's own. The model reads, changes and reinstalls them with `reload`
+  like any item, so it can improve a plugin's abilities itself. A plugin
+  upgrade installs a new revision on top; the model's changes stay in the
+  item's history.
+- **An implementation may still add its own.** A `Workspace` implementation
+  that can do something the core does not name - showing another window's
+  directory, for instance - declares its own module function or tool and its
+  own prompt text through `groups`, and a host whose implementation declares
+  nothing shows the model nothing about it
+  ([workspaces.md](workspaces.md#another-windows-directory)). The core knows
+  no such capability of its own.
 - **Plugging in** is an environment change: its items arrive in live windows
   as a delta, and its prompt section applies from the next epoch.
 - **Unplugging never changes a prompt.** Open windows keep the system prompt

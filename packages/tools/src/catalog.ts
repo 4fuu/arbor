@@ -66,6 +66,9 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new WorkspaceModuleGroup(options.services),
       new EnvToolGroup(options.services),
       new EnvModuleGroup(options.services),
+      // What the workspace implementation contributes: a capability the core
+      // does not name, such as showing another window's directory.
+      ...(options.services.workspace?.groups?.(options.services.table) ?? []),
       ...(options.groups ?? []),
     ];
   }
@@ -89,18 +92,27 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
   }
 
   /**
-   * Every module, one line each in the prompt. A name is declared once: an MCP
-   * server named after a built-in module does not add a second line for it.
+   * Every module, one line each in the prompt. A name is declared once: every
+   * group that declares it lists its functions together, so a group that adds a
+   * function to a module the core already declares - an implementation's own
+   * capability, or an MCP server named after a built-in module - adds no second
+   * line for it.
    */
   modules(): readonly ModuleSpec[] {
-    const seen = new Set<string>();
-    const modules: ModuleSpec[] = [];
+    const merged = new Map<string, ModuleSpec>();
     for (const module of this.groups.flatMap((group) => group.modules())) {
-      if (seen.has(module.name)) continue;
-      seen.add(module.name);
-      modules.push(module);
+      const found = merged.get(module.name);
+      if (found === undefined) {
+        merged.set(module.name, module);
+        continue;
+      }
+      const declared = new Set(found.functions.map((fn) => fn.name));
+      merged.set(module.name, {
+        ...found,
+        functions: [...found.functions, ...module.functions.filter((fn) => !declared.has(fn.name))],
+      });
     }
-    return modules;
+    return [...merged.values()];
   }
 
   /** Every function the modules declare. */

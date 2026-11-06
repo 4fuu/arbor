@@ -7,7 +7,9 @@
  * already have and runs the same way on Windows, Linux and macOS.
  */
 
+import type { TextTable } from "./blocks.ts";
 import type { WindowRef, WorkspaceRef } from "./refs.ts";
+import type { ToolGroup } from "./tools.ts";
 
 /** The result of one command run in a mounted workspace. */
 export interface ExecResult {
@@ -98,4 +100,16 @@ export interface Workspace {
 
   /** Reclaim the workspace after the retention period. */
   reclaim(workspace: WorkspaceRef): Promise<void>;
+
+  /**
+   * What this implementation adds to the catalog: tool groups built from the
+   * table the host renders with.
+   *
+   * A capability the core does not name arrives here. An implementation that
+   * can show another window's workspace declares its own module function or
+   * tool and its own prompt text this way, so the core knows nothing about it;
+   * a host whose implementation contributes nothing shows the model nothing
+   * about it (docs/workspaces.md, docs/architecture.md#plugins).
+   */
+  groups?: (table: TextTable) => readonly ToolGroup[];
 }

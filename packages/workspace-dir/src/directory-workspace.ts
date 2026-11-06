@@ -25,7 +25,16 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import { arborError } from "@arbor/errors";
-import type { WindowRef, Workspace, WorkspaceMount, WorkspaceQuota, WorkspaceRef } from "@arbor/interfaces";
+import type {
+  TextTable,
+  ToolGroup,
+  WindowRef,
+  Workspace,
+  WorkspaceMount,
+  WorkspaceQuota,
+  WorkspaceRef,
+} from "@arbor/interfaces";
+import { WorkspacePathGroup } from "./path-module.ts";
 
 export interface DirectoryWorkspaceOptions {
   /** The root every workspace lives under. */
@@ -108,6 +117,15 @@ export class DirectoryWorkspace implements Workspace {
   /** The directory a window works in, for the file tools. */
   pathOf(ref: WorkspaceRef): string {
     return this.workspacePath(ref);
+  }
+
+  /**
+   * What this implementation adds to the catalog: another window's directory,
+   * by its window. The core declares no such capability of its own
+   * (docs/workspaces.md).
+   */
+  groups(table: TextTable): readonly ToolGroup[] {
+    return [new WorkspacePathGroup(this, table)];
   }
 
   /** A path inside a directory, or `undefined` when it escapes it. */

@@ -292,6 +292,9 @@ importers:
       '@arbor/interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@arbor/prompt':
+        specifier: workspace:*
+        version: link:../prompt
     devDependencies:
       '@types/node':
         specifier: ^26.0.0
