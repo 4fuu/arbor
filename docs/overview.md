@@ -29,7 +29,7 @@
 | **Task** | A unit of input to dispatch: a batch of outside events or a scheduled firing ([dispatch.md](dispatch.md)). |
 | **Board** | The host's live view of which windows are running and what they touch ([coordination.md](coordination.md)). |
 | **Note** | Shared, versioned long-term memory; one copy for everything ([memory.md](memory.md)). |
-| **Workspace** | A window's own directory, with forks and snapshots ([workspaces.md](workspaces.md)). |
+| **Workspace** | A window's own directory ([workspaces.md](workspaces.md)). |
 | **Environment** | The skills, MCP servers and resident services, changed by the model with `reload` and broadcast to every window ([environment.md](environment.md)). |
 | **Broadcast** | A delivery to every live window ([coordination.md](coordination.md#broadcasts)). |
 | **Effect** | An action on the outside world, such as a send. |
@@ -103,4 +103,4 @@ sources:
 What is new: many windows at once, dispatch by a judge, the board, notices
 and broadcasts between windows, steering new messages into the windows that
 are in a conversation, a self-changing environment, and a directory per
-window on LayerFS.
+window.

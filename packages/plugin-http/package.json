@@ -29,7 +29,6 @@
     "@arbor/notes-sqlite": "workspace:*",
     "@arbor/supervisor-process": "workspace:*",
     "@arbor/workspace-dir": "workspace:*",
-    "@arbor/workspace-layerfs": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

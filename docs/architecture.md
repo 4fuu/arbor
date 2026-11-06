@@ -14,7 +14,7 @@
 │ Channel · TaskSource · EffectExecutor · ToolGroup · Scheduler  │
 │ Environment · Supervisor                                       │
 ├ defaults ─────────────────────────────────────────────────────┤
-│ pi · SQLite · LayerFS · Jev · simple scheduler                 │
+│ pi · SQLite · a directory · Jev · simple scheduler             │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -33,7 +33,7 @@ interface and registering it; nothing else changes.
 | `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
-| `Workspace` | a directory per window: create, fork, snapshot, mount read-only, reclaim | [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs); a plain directory where LayerFS cannot run |
+| `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@arbor/workspace-dir](../packages/workspace-dir)) |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@arbor/plugin-http](../packages/plugin-http)) |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
@@ -48,8 +48,8 @@ a module ([below](#hooks)).
 
 Rules for every interface:
 
-- **No backend leaks.** No pi type, LayerFS id or SQL row crosses an
-  interface; the core only sees its own shapes.
+- **No backend leaks.** No pi type or SQL row crosses an interface; the core
+  only sees its own shapes.
 - **Errors name the next action.** An implementation returns errors in the
   core's error shape, so the model always reads the same kind of refusal.
 - **Plugins add, they do not patch.** A domain (a chat bot, a coding agent)
@@ -60,39 +60,16 @@ Rules for every interface:
 - **TypeScript on Node.js**, one host process. pi-agent-core runs every
   window in process, so steering, tool hooks and code mode are direct calls.
 - **SQLite** for the journal, notes and host data.
-- **LayerFS** for workspaces. Its core is Rust; TypeScript reaches it through
-  its JavaScript packages (`@layerfs/agent`, `@layerfs/backend`,
-  `@layerfs/runtime`) and a native binding, and `bash` runs in workspaces its
-  daemon mounts over FUSE. That shapes the deployment:
-  - Linux with `/dev/fuse`; macOS and Windows only through a Linux VM.
-  - A Docker Engine speaking Engine API 1.48 (Docker Engine 28.0) or newer,
-    because LayerFS's client refuses an older one before it sends a request.
-    Podman's Docker-compatible socket is not enough: its compatibility API
-    stops at 1.44, so `capabilities()` reports it unavailable with the
-    version as the reason. The image a Sandbox runs is built from the pinned
-    LayerFS commit with
-    [`packages/workspace-layerfs/sandbox.Dockerfile`](packages/workspace-layerfs/sandbox.Dockerfile)
-    and named by digest, never a tag.
-  - Its Store is one SQLite file on ext4, xfs or btrfs - its own allowlist,
-    because the locks that guard it live in the filesystem - and it runs
-    without crash or power-loss durability, so the journal never depends on
-    it: a lost snapshot loses a view of files, never a record.
-  - It is young and its JavaScript API broke between 1.0 and 1.1, so its
-    version is pinned behind `Workspace`.
-  - pi already has a LayerFS extension, `pi-layerfs`, that backs pi's file
-    and bash tools with LayerFS; it is a reference for the integration, not
-    a dependency.
-- A host composes its stack with LayerFS where the machine can run it and a
-  plain directory where it cannot, reading `capabilities()` once
-  ([workspaces.md](workspaces.md#what-the-framework-guarantees)). The reason
-  the check gives is logged, never thrown: the work environment degrades, the
-  framework does not fail.
-- **The toolchain** is project-local: `mise.toml` pins Node, pnpm and the
-  Rust the LayerFS engine builds with, installed under `~/.local/share/mise`
-  and never into `~/.cargo`. `.agents/setup` prepares a machine either that
-  way (mise, for hosts without apt) or from system packages and rustup (apt).
-  The rest of the build - a C compiler, pkg-config, fuse3 - stays a system
-  package on both paths.
+- **A directory** for workspaces: one per window, under one root, on the host's
+  own filesystem. Nothing is mounted and nothing is containerised, so the
+  default runs the same way on Windows, Linux and macOS; a deployment that
+  wants real isolation - a sandbox, a container per window - implements
+  `Workspace` itself and registers it
+  ([workspaces.md](workspaces.md#what-the-framework-guarantees)).
+- **The toolchain** is project-local: `mise.toml` pins Node and pnpm, installed
+  under `~/.local/share/mise`. `.agents/setup` prepares a machine from it; a
+  machine without mise is expected to carry Node 24 or newer and pnpm 12
+  already.
 
 ## Models
 
@@ -200,6 +177,4 @@ For now one host runs on one machine. To leave room for more:
 - Ids and refs do not depend on a machine.
 - `Journal` and `NoteStore` are interfaces, not tied to SQLite.
 
-How one host spreads over several machines is open. It depends among other
-things on how far a LayerFS Store can be shared across machines, which is not
-yet verified.
+How one host spreads over several machines is open.

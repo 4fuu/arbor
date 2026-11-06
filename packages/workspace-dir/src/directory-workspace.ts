@@ -11,7 +11,6 @@
  * <root>/snapshots/ws3/latest/   the newest snapshot taken without an event
  * ```
  *
- * Where LayerFS gives cheap forks and snapshots, a plain directory copies.
  * A fork and a snapshot are therefore a recursive copy, and a snapshot is
  * taken whole: it is the directory's state at that event, so a later in-place
  * edit by `bash` cannot reach back into it.

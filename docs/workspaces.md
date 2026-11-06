@@ -23,35 +23,26 @@ snapshots, and the agent does the rest.
    registries), network access within the egress rules, background jobs for
    long commands, and a disk quota per workspace.
 
-The default `Workspace` is [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs),
-used only for cheap forks, snapshots and mounts
-([architecture.md](architecture.md#stack) lists what it requires). In that
-implementation a workspace is a LayerFS Branch and a snapshot is one of its
-Commits, and `bash` runs inside the Sandbox LayerFS mounts the Branch in, so a
-mount's path is that Sandbox's own directory. A background job runs there too,
-through LayerFS's own daemon process API, so a command that outlives `bash`'s
-wait window keeps running after the call that started it; a command that ends
-inside the window answers from the job it ran as, with its output and its exit
-code, exactly as one that ran to completion does. Two consequences come
-from LayerFS itself: its Store has no per-Branch delete, so reclaiming a
-workspace drops the refs that resolved it and leaves its history in the Store
-until the project is removed; and its storage is deduplicated across the whole
-Store, so a disk quota is a limit the deployment sets against a workspace's
-logical size, not one LayerFS enforces.
+The default `Workspace` is a plain directory
+([@arbor/workspace-dir](../packages/workspace-dir)): every window's directory
+lives under one root the host names, `bash` runs on the host in it, and a
+background job runs there too, through the host's own process API, so a
+command that outlives `bash`'s wait window keeps running after the call that
+started it. Nothing is mounted and nothing is containerised, so it works
+unchanged on Windows, Linux and macOS, and a disk quota is the size the
+implementation reports against a workspace's directory.
 
-A host that cannot run LayerFS - no `/dev/fuse`, no Docker Engine at the API
-version LayerFS speaks, no Store on its filesystem allowlist, or no Linux at
-all - falls back to a plain directory and logs the reason its capability check
-gave. The interface is the same: forks and snapshots are copies instead of
-metadata, and background jobs stay on the host. The work environment degrades,
-the framework does not fail.
+A deployment that wants real isolation - a sandbox, a container per window -
+implements `Workspace` itself and registers it; the core knows nothing about
+what an implementation does beyond the interface
+([architecture.md](architecture.md#interfaces)).
 
-The shared environment reaches a command the same way in both. A Sandbox
-cannot mount a host directory - its only volume is the project's Store - so
-the files are staged into it beside the mount, in the container's own writable
-layer, and the prefix `/env` is rewritten onto where they landed. What is
-staged sits outside the workspace's tree, so no snapshot holds it, no fork
-copies it and no read-only view shows it
+The shared environment reaches a command the same way. The environment is one
+shared directory on the host and a window's workspace is a directory on that
+same host, so `read` and `bash` resolve the prefix `/env` onto the directory
+itself. Nothing is staged and nothing is copied: what a command reads at `/env`
+is the environment's own file, which is why it is read-only and a change goes
+through the environment's draft and `reload`
 ([environment.md](environment.md#layout)).
 
 ## What the agent does
@@ -79,4 +70,4 @@ dispatching ([coordination.md](coordination.md#the-board)).
   them; whether the history underneath is erased too is the implementation's,
   and the default one keeps it until the project is removed.
 
-A deployment that never works with files needs no workspace and no LayerFS.
+A deployment that never works with files needs no workspace.

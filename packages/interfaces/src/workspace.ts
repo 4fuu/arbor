@@ -4,7 +4,8 @@
  *
  * A workspace is a plain directory, not bound to any repository: the framework
  * gives isolation, continuity and snapshots, and the agent does the rest. The
- * default is LayerFS, used only for cheap forks, snapshots and mounts.
+ * default is a plain directory under one root, which needs nothing a host does
+ * not already have.
  */
 
 import type { Page } from "./events.ts";
@@ -92,9 +93,8 @@ export interface StagedFile {
  *
  * `path` is where the workspace's files are. It is a host path for an
  * implementation that mounts a directory on the host, and the mounted
- * directory of an implementation that owns its own execution environment -
- * LayerFS mounts a Workspace inside its Sandbox, so a command runs there
- * through `exec`, not on the host.
+ * directory of an implementation that owns its own execution environment, so a
+ * command runs there through `exec`, not on the host.
  */
 export interface WorkspaceMount {
   ref: WorkspaceRef | SnapshotRef;

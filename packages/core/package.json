@@ -20,8 +20,7 @@
     "@arbor/judge-jev": "workspace:*",
     "@arbor/prompt": "workspace:*",
     "@arbor/tools": "workspace:*",
-    "@arbor/workspace-dir": "workspace:*",
-    "@arbor/workspace-layerfs": "workspace:*"
+    "@arbor/workspace-dir": "workspace:*"
   },
   "devDependencies": {
     "@arbor/agent-pi": "workspace:*",

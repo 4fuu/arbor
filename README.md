@@ -20,10 +20,9 @@ and every window can find everything that was ever done.
   guarantees what an agent cannot guarantee for itself - the record, isolation,
   exactly-once effects, the checks, dispatch. Everything that takes judgment,
   such as git, merges and conflicts, is the agent's.
-- **A directory per window.** Each window gets its own directory on
-  [LayerFS](https://github.com/Ephemeral-AI-Lab/layerfs), with forks for
-  continuations and snapshots for every change. It is not bound to a
-  repository; the agent clones and pushes what it needs.
+- **A directory per window.** Each window gets its own directory, and a
+  continuation keeps working in its predecessor's directory in place. It is not
+  bound to a repository; the agent clones and pushes what it needs.
 - **A self-changing environment.** The model adds and changes skills, MCP
   servers and resident services itself; a `reload` validates the change and
   broadcasts it to every live window as a delta of names and descriptions.
@@ -63,7 +62,7 @@ comes next.
 | [docs/coordination.md](docs/coordination.md) | the board, expectations, deliveries and broadcasts, staying current, effects |
 | [docs/environment.md](docs/environment.md) | skills, MCP servers and services: using, changing, reload, built-in skills, deltas |
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
-| [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, forks, snapshots, what the agent does |
+| [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, continuity, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |
 | [docs/prompting.md](docs/prompting.md) | how every model-facing text is written: layers, notes, deliveries, errors, judge questions, terms |
 
@@ -79,9 +78,8 @@ check` typechecks and tests every package.
 | `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
 | `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
-| `packages/workspace-layerfs` | the default `Workspace` on LayerFS: a directory per window, forks, snapshots, read-only mounts, background commands |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
-| `packages/workspace-dir` | a plain-directory `Workspace`, for a deployment that never works with files or one that runs where LayerFS cannot |
+| `packages/workspace-dir` | the default `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
 | `packages/environment-dir` | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
 | `packages/supervisor-process` | the default `Supervisor`: one host process per service, restart with backoff, logs |
 | `packages/plugin-http` | the HTTP test channel: a webhook in, sends out, a page that drives the whole host |
@@ -90,9 +88,6 @@ check` typechecks and tests every package.
 | `packages/tools` | the entry points: direct tools, code mode modules, the host API |
 | `packages/core` | the service layer: one implementation of every operation - the window lifecycle, dispatch, coordination, the board, notes access, workspaces, effects, schedules and the snapshot epochs |
 
-`mise.toml` pins the toolchain - Node, pnpm and the Rust the LayerFS engine
-builds with - installed under `~/.local/share/mise`, and `.agents/setup`
-prepares a machine from it, or from system packages and rustup on an apt host.
-`packages/workspace-layerfs/sandbox.Dockerfile` builds the image a LayerFS
-Sandbox runs, from the pinned LayerFS commit, on the machine that has the
-Docker Engine.
+`mise.toml` pins the toolchain - Node and pnpm - installed under
+`~/.local/share/mise`, and `.agents/setup` prepares a machine from it. A machine
+without mise is expected to carry Node 24 or newer and pnpm 12 already.

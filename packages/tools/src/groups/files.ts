@@ -9,14 +9,14 @@
  * Everything reaches the workspace through the `Workspace` interface, never the
  * host filesystem directly: a capability the implementation owns - `exec`,
  * `jobs`, `readFile`, `writeFile` - is used when it is present, and the host
- * path in `mount.path` when it is not. LayerFS mounts a workspace inside its
- * own sandbox, so its `path` is not a host path and its `exec` is the only way
- * to run a command there; a plain-directory workspace owns no execution
- * environment, so the caller runs the command itself. Where an implementation
- * can also run a command that outlives the call, `bash` hands it to
- * `bash_output` and `bash_stop` after its wait window - and a command that ends
- * inside the window answers from the job it ran as, with its output and its
- * exit code, exactly as one that ran to completion does.
+ * path in `mount.path` when it is not. An implementation that owns its
+ * execution environment has a `path` that is not a host path and an `exec` that
+ * is the only way to run a command there; a plain-directory workspace owns no
+ * execution environment, so the caller runs the command itself. Where an
+ * implementation can also run a command that outlives the call, `bash` hands it
+ * to `bash_output` and `bash_stop` after its wait window - and a command that
+ * ends inside the window answers from the job it ran as, with its output and
+ * its exit code, exactly as one that ran to completion does.
  */
 
 import { spawn } from "node:child_process";

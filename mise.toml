@@ -1,32 +1,9 @@
-# The project-local toolchain: Node runs the TypeScript sources directly and
-# LayerFS's engine is Rust, so the tools this repository needs are Node, pnpm
-# and Rust. mise installs all three under ~/.local/share/mise (never ~/.cargo),
-# which is why this file exists instead of a rustup or a system package.
+# The project-local toolchain: Node runs the TypeScript sources directly, so the
+# tools this repository needs are Node and pnpm. mise installs both under
+# ~/.local/share/mise, which is why this file exists instead of a system
+# package.
 #
-# Versions: Node 24 or newer and pnpm 12, per .agents/setup; Rust 1.85.1, the
-# toolchain the pinned LayerFS commit builds with (its Cargo.toml sets
-# rust-version 1.85).
+# Versions: Node 24 or newer and pnpm 12, per .agents/setup.
 [tools]
 node = "26"
 pnpm = "12"
-rust = "1.85.1"
-
-# The LayerFS deployment this checkout runs against, mapped onto the SDK's own
-# LAYERFS_ names (packages/workspace-layerfs/src/options.ts). A setting never
-# holds a secret: it names one. LAYERFS_IMAGE is a placeholder until the
-# Sandbox image is built and pulled by digest - see the Dockerfile in
-# packages/workspace-layerfs.
-#
-# The Engine is rootless Docker: its socket is in XDG_RUNTIME_DIR and its
-# volumes live under the rootless data root (~/.local/share/docker), which on
-# this machine is the btrfs home - inside the Store's ext4/xfs/btrfs allowlist
-# - and owned by sifu, so nothing needs a chown. The system docker.service
-# stays stopped.
-[env]
-LAYERFS_HOME = "{{config_root}}/.layerfs/home"
-LAYERFS_STORE_PATH = "{{env.HOME}}/.local/share/docker/volumes/arbor-store/_data/global/store.sqlite"
-LAYERFS_IMAGE = "sha256:b49db0421d08a87f250b28099ac12f1a7a9d6e919d6a4bf4187d96082b7c5cb2"
-LAYERFS_DAEMON = "{{config_root}}/.layerfs/target/release/layerfs-daemon"
-LAYERFS_DOCKER = "{{env.XDG_RUNTIME_DIR}}/docker.sock"
-LAYERFS_VOLUME = "arbor-store"
-LAYERFS_CONTAINER_PREFIX = "arbor-"

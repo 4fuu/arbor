@@ -28,7 +28,7 @@ Node runs the TypeScript sources directly, so there is no build step and no
 shapes; it is types only. `packages/errors` holds the error shape every refusal
 uses. Everything else is a default implementation of an interface.
 
-No pi type, LayerFS id or SQL row crosses an interface. Errors name the rule
+No pi type or SQL row crosses an interface. Errors name the rule
 that refused the call and the next action.
 
 ## Layout of the design

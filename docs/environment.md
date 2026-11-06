@@ -35,17 +35,11 @@ and `read` and `bash` resolve that prefix onto it. A deployment whose workspace
 can mount it for real does, and a window without a workspace still reads `/env`
 through `read`; changing it needs a workspace.
 
-A workspace that owns its execution environment cannot mount a host directory:
-LayerFS's Sandbox has the project's Store as its only volume, and its command
-identity is an unprivileged user that cannot write at the container's root. So
-the files are staged into the Sandbox beside the mount, in its own writable
-layer, and `bash` and `workspace.ls` rewrite the prefix onto where they landed.
-What is staged is not the workspace's own: it sits outside its tree, so no
-snapshot holds it, no fork copies it, and no diff or read-only view shows it.
-It is read-only once staged, because a change goes through the environment's
-own draft and `reload`. Staging is per mount and per revision: a `reload` lands
-as a new revision, and the next command stages it again before it runs, so a
-live window always reads what the environment holds now.
+The environment is one shared directory on the host and a window's workspace is
+a directory on that same host, so `read` and `bash` resolve the prefix onto the
+directory itself. Nothing is staged and nothing is copied: what a command reads
+at `/env` is the environment's own file, which is why it is read-only and a
+change goes through the environment's own draft and `reload`.
 
 Each item - one skill, one server, one service, the settings - has its own
 revision, so changes to different items never conflict. A window without a

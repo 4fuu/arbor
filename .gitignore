@@ -6,6 +6,3 @@ coverage/
 .env.*
 .DS_Store
 setup
-
-# The pinned LayerFS checkout .agents/setup builds the workspace backend from.
-.layerfs/

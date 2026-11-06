@@ -5,34 +5,15 @@
 # setup is installing the workspace dependencies and running the checks once, so
 # a broken environment fails here instead of in a later stage.
 #
-# Stage 6 adds LayerFS, the default Workspace's backend. Its core is Rust and
-# its JavaScript packages are not published, so a checkout is pinned here and
-# built: the native addon the SDK loads, and the daemon a Sandbox runs. The
-# build needs a Rust toolchain and the SQLite headers; mounting a workspace
-# additionally needs /dev/fuse, a Docker Engine and the image a Sandbox runs,
-# which this orb does not provide, so the integration tests that mount skip
-# here and run where a deployment configured them.
-#
-# The toolchain has two paths. A machine with mise - Arch and friends, which
-# have no apt - takes Node, pnpm and Rust from the repository's mise.toml,
-# which installs them under ~/.local/share/mise and never into ~/.cargo; the C
-# toolchain, pkg-config and fuse3 stay system packages there. An apt machine
-# takes the system route: packages for the build, rustup for Rust. The image a
-# Sandbox runs is built separately, with the Dockerfile in
-# packages/workspace-layerfs, on the machine that has the Engine.
+# The toolchain has two paths. A machine with mise takes Node and pnpm from the
+# repository's mise.toml, which installs them under ~/.local/share/mise; that is
+# the path for Arch and other hosts without apt. A machine without mise is
+# expected to carry Node 24 or newer and pnpm 12 already.
 
 set -eu
 
-# The LayerFS pin: one commit, the tree its JavaScript packages and engine
-# crates live in. The v1.1.0 tag's own tree holds no engine, so the pin is a
-# commit on main.
-LAYERFS_COMMIT=67310175ebba2b84efefb4df76f875a43487cf50
-LAYERFS_DIR="$(pwd)/.layerfs"
-
-# The toolchain: Node, pnpm and Rust, from mise when this machine has it,
-# otherwise from apt and rustup.
 if command -v mise >/dev/null 2>&1; then
-  echo "toolchain: mise provides Node, pnpm and Rust from mise.toml"
+  echo "toolchain: mise provides Node and pnpm from mise.toml"
   mise install
   # Every command below needs that toolchain on PATH. A shell that activated
   # mise (mise activate) already has it; any other shell gets it by running
@@ -41,38 +22,10 @@ if command -v mise >/dev/null 2>&1; then
     echo "toolchain: re-running setup through mise so its tools are on PATH"
     exec mise x -- "$0" "$@"
   fi
-  # What remains is the system's on a machine without apt: a C toolchain and
-  # pkg-config for the build, fuse3 for a mount. They are packages here too,
-  # so nothing is installed for them.
-  if ! command -v cc >/dev/null 2>&1 || ! command -v pkg-config >/dev/null 2>&1; then
-    echo "setup: the build needs a C compiler and pkg-config; install them first" >&2
-    exit 1
-  fi
-elif command -v apt-get >/dev/null 2>&1; then
-  install_packages() {
-    if [ "$(id -u)" = "0" ]; then
-      apt-get install -y --no-install-recommends "$@"
-    else
-      sudo -n apt-get install -y --no-install-recommends "$@"
-    fi
-  }
+fi
 
-  # A C toolchain and pkg-config are the build's, fuse3 is the daemon's and
-  # the addon's. The SQLite headers are here for a macOS-side build: on Linux
-  # rusqlite is bundled, so the engine compiles SQLite from source.
-  install_packages build-essential pkg-config libsqlite3-dev fuse3
-
-  if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$HOME/.cargo/bin/cargo" ]; then
-    echo "layerfs: installing the Rust toolchain the engine builds with"
-    curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.85.1 --no-modify-path
-  fi
-
-  # shellcheck disable=SC1091
-  if [ -f "$HOME/.cargo/env" ]; then
-    . "$HOME/.cargo/env"
-  fi
-else
-  echo "setup: no mise and no apt-get: install Node 24 or newer, pnpm 12, Rust 1.85.1, a C toolchain, pkg-config and fuse3 first" >&2
+if ! command -v node >/dev/null 2>&1 || ! command -v pnpm >/dev/null 2>&1; then
+  echo "setup: install Node 24 or newer and pnpm 12 first" >&2
   exit 1
 fi
 
@@ -81,29 +34,5 @@ echo "pnpm $(pnpm --version)"
 
 # arbor needs pnpm 12 and Node 24 or newer.
 pnpm install --frozen-lockfile
-
-if [ ! -d "$LAYERFS_DIR/.git" ]; then
-  echo "layerfs: cloning $LAYERFS_COMMIT into .layerfs"
-  git clone --quiet https://github.com/Ephemeral-AI-Lab/layerfs.git "$LAYERFS_DIR"
-  git -C "$LAYERFS_DIR" checkout --quiet "$LAYERFS_COMMIT"
-fi
-
-# The SDK's JavaScript packages. @layerfs/agent resolves its own imports, but
-# @layerfs/backend - which the workspace package calls to run a background
-# command in a mounted Workspace - imports @layerfs/agent by name, so the
-# checkout's packages must be linked. `npm install` there links them and
-# downloads nothing, which is why it runs offline: a pinned checkout needs no
-# registry. The checkout's own .gitignore keeps node_modules out of its tree.
-echo "layerfs: linking the SDK's JavaScript packages"
-npm install --prefix "$LAYERFS_DIR/api" --offline
-
-echo "layerfs: building the native addon and the daemon (this takes a few minutes)"
-CARGO_TARGET_DIR="$LAYERFS_DIR/target" cargo build \
-  --manifest-path "$LAYERFS_DIR/Cargo.toml" \
-  --locked --release -p layerfs-node -p layerfs-daemon
-
-cp "$LAYERFS_DIR/target/release/liblayerfs_node.so" \
-  "$LAYERFS_DIR/engine/crates/layerfs-node/layerfs.node"
-echo "layerfs: addon and daemon built"
 
 pnpm check

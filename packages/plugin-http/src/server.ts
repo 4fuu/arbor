@@ -89,9 +89,9 @@ async function main(): Promise<void> {
   await writeFile(settingsPath, JSON.stringify(SETTINGS, null, 2), "utf8");
   await environment.install([{ kind: "settings", name: "settings", path: settingsPath }]);
 
-  // The workspace: LayerFS where this machine can mount it, a plain directory
-  // where it cannot. The reason is logged either way (docs/workspaces.md).
-  const { workspace, reason } = await openWorkspace({ root: join(DATA_DIR, "workspaces") });
+  // The workspace: one directory per window, under the data directory. It needs
+  // nothing a host does not already have, so it runs on any platform.
+  const workspace = await openWorkspace({ root: join(DATA_DIR, "workspaces") });
 
   // The channel is created before the host and reads the board from it, so the
   // plugin holds no reference to the host and the deployment supplies one.
@@ -119,7 +119,7 @@ async function main(): Promise<void> {
   const models = await arbor.models();
   console.log(`arbor: HTTP test channel on ${address}`);
   console.log(`arbor: journal ${join(DATA_DIR, "journal.sqlite")}, model ${SETTINGS.modelTiers?.[TIER]}`);
-  console.log(`arbor: workspace ${reason === null ? "LayerFS" : `plain directory (${reason})`}`);
+  console.log(`arbor: workspace ${join(DATA_DIR, "workspaces")}`);
   console.log(`arbor: ${models.length} models in the catalog, ${arbor.channels().length} channel plugged in`);
   console.log(`arbor: open ${address} in a browser, or POST a message to ${address}/webhook`);
 

@@ -123,10 +123,10 @@ is data where it is delivered ([below](#data-and-instructions)).
   prompt or a description in advance. The host enforces it, and the model
   learns it from the error when it meets it.
 - **Every error closes the loop.** It names the rule and the next action that
-  reaches the goal with what the model has now. Errors from LayerFS, a
-  provider, an MCP server or a service pass through a host wrapper that adds
-  the same; a raw upstream error never reaches the model alone. A refusal
-  with no useful next action means the rule belongs elsewhere.
+  reaches the goal with what the model has now. Errors from a workspace
+  implementation, a provider, an MCP server or a service pass through a host
+  wrapper that adds the same; a raw upstream error never reaches the model
+  alone. A refusal with no useful next action means the rule belongs elsewhere.
 - An error about the environment names the section of the built-in skill
   that covers it.
 - A rule moves into a description only when the logs show the model hitting

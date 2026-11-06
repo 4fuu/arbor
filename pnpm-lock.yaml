@@ -53,9 +53,6 @@ importers:
       '@arbor/workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
-      '@arbor/workspace-layerfs':
-        specifier: workspace:*
-        version: link:../workspace-layerfs
     devDependencies:
       '@arbor/agent-pi':
         specifier: workspace:*
@@ -207,9 +204,6 @@ importers:
       '@arbor/workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
-      '@arbor/workspace-layerfs':
-        specifier: workspace:*
-        version: link:../workspace-layerfs
       '@types/node':
         specifier: ^26.0.0
         version: 26.6.6
@@ -291,22 +285,6 @@ importers:
         version: 5.9.3
 
   packages/workspace-dir:
-    dependencies:
-      '@arbor/errors':
-        specifier: workspace:*
-        version: link:../errors
-      '@arbor/interfaces':
-        specifier: workspace:*
-        version: link:../interfaces
-    devDependencies:
-      '@types/node':
-        specifier: ^26.0.0
-        version: 26.6.6
-      typescript:
-        specifier: ^5.9.2
-        version: 5.9.3
-
-  packages/workspace-layerfs:
     dependencies:
       '@arbor/errors':
         specifier: workspace:*

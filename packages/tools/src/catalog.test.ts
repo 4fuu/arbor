@@ -819,7 +819,7 @@ describe("tool catalog", () => {
         return { exitCode: 0, stdout: "quick\n", stderr: "", truncated: false };
       },
       jobs: {
-        // LayerFS refuses a start it cannot observe: the command ended before
+        // An implementation refuses a start it cannot observe: the command ended
         // the engine read the process it started, which is what happens to
         // every quick command whose process is not held open. The refusal must
         // never reach the model, so the command runs to completion instead.

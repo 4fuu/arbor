@@ -1,7 +1,7 @@
 /**
  * @arbor/interfaces - every replaceable interface, and the core's own shapes.
  *
- * No pi type, LayerFS id or SQL row crosses an interface; the core only sees
+ * No pi type or SQL row crosses an interface; the core only sees
  * its own shapes (docs/architecture.md#interfaces). Each interface ships with
  * a default; replacing a module means implementing its interface and
  * registering it, and nothing else changes.
