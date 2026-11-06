@@ -506,9 +506,9 @@ describe("one window end to end", () => {
     assert.ok(body.includes("已用 130000/200000 tokens（65%）"));
     assert.ok(body.includes("第 4/7 条提醒"));
     assert.ok(body.includes("这是系统提醒，不是用户请求"));
-    assert.ok(body.includes("说明什么是边界"));
+    assert.ok(body.includes("写明边界"));
     // 80 % has not been crossed, so the cost of ignoring it is not said yet.
-    assert.ok(!body.includes("忽略本条"));
+    assert.ok(!body.includes("如果不照做"));
   });
 
   it("sends every tier in order when the window crosses several thresholds", async () => {
@@ -526,15 +526,15 @@ describe("one window end to end", () => {
     const bodies = reminders.items.map((item) => item.body ?? "");
     assert.equal(bodies.length, 4);
     assert.ok(bodies[0]?.includes("第 1/7 条提醒"));
-    assert.ok(bodies[0]?.includes("把后续窗口需要的内容写进记录"));
+    assert.ok(bodies[0]?.includes("还没有进展笔记的话"));
     assert.ok(bodies[1]?.includes("第 2/7 条提醒"));
-    assert.ok(bodies[1]?.includes("有变化时修改记录里的进展和待办"));
+    assert.ok(bodies[1]?.includes("更新进展笔记"));
     assert.ok(bodies[2]?.includes("第 4/7 条提醒"));
-    assert.ok(bodies[2]?.includes("说明什么是边界"));
+    assert.ok(bodies[2]?.includes("写明边界"));
     // From 80 % on, the reminder also says what ignoring it costs.
     assert.ok(bodies[3]?.includes("第 6/7 条提醒"));
     assert.ok(bodies[3]?.includes("再开新工作前先轮换"));
-    assert.ok(bodies[3]?.includes("忽略本条"));
+    assert.ok(bodies[3]?.includes("如果不照做"));
   });
 
   it("keeps an ended run open for a related input, then ends it when quiet", async () => {
