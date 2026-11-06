@@ -476,7 +476,8 @@ describe("tool catalog", () => {
     // before a description that merely holds it.
     const end = await run(catalog, "tool_search", { keywords: "end" });
     const lines = end.content.split("\n");
-    assert.equal(lines[lines.length - 2]?.startsWith("end："), true);
+    // The first line after the lead is the exact match.
+    assert.equal(lines[1]?.startsWith("end："), true);
     const note = await run(catalog, "tool_search", { keywords: "note" });
     assert.ok(note.content.includes("note_write"));
     assert.ok(note.content.includes("note_replace"));
