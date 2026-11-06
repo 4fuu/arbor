@@ -8,22 +8,19 @@
  *
  * Everything reaches the workspace through the `Workspace` interface, never the
  * host filesystem directly: a capability the implementation owns - `exec`,
- * `jobs`, `readFile`, `writeFile` - is used when it is present, and the host
- * path in `mount.path` when it is not. An implementation that owns its
- * execution environment has a `path` that is not a host path and an `exec` that
- * is the only way to run a command there; a plain-directory workspace owns no
- * execution environment, so the caller runs the command itself. Where an
- * implementation can also run a command that outlives the call, `bash` hands it
- * to `bash_output` and `bash_stop` after its wait window - and a command that
- * ends inside the window answers from the job it ran as, with its output and
- * its exit code, exactly as one that ran to completion does.
+ * `readFile`, `writeFile` - is used when it is present, and the host path in
+ * `mount.path` when it is not. An implementation that owns its execution
+ * environment has a `path` that is not a host path and an `exec` that is the
+ * only way to run a command there; a plain-directory workspace owns no
+ * execution environment, so the caller runs the command itself. Either way a
+ * command that outlives `bash`'s wait window is followed with `bash_output` and
+ * stopped with `bash_stop`, through the host's own process path.
  */
 
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import type {
-  BackgroundJob,
   CallContext,
   DirectToolSpec,
   ExecResult,
@@ -32,7 +29,6 @@ import type {
   ToolGroup,
   ToolResult,
   WindowRef,
-  WorkspaceJobs,
   WorkspaceMount,
 } from "@arbor/interfaces";
 import { textOf } from "@arbor/prompt";
@@ -45,11 +41,6 @@ const BASH_WAIT_MS = 20000;
 
 /** How much one background job keeps in memory. */
 const JOB_BUFFER = 200000;
-
-/** The first pause between two reads of a background job, and the longest one. */
-const POLL_MS = 100;
-
-const POLL_MAX_MS = 1000;
 
 interface Job {
   id: string;
@@ -64,8 +55,6 @@ export class FileToolGroup implements ToolGroup {
 
   private readonly services: import("../host.ts").ToolServices;
   private readonly jobs = new Map<string, Job>();
-  /** The mount each background job an implementation owns runs in. */
-  private readonly mounts = new Map<string, WorkspaceMount>();
   private nextJob = 1;
 
   constructor(services: import("../host.ts").ToolServices) {
@@ -147,7 +136,6 @@ export class FileToolGroup implements ToolGroup {
     if (item !== undefined) this.services.envRead(window, item);
   }
 
-
   private async bash(request: ToolCall, window: WindowRef, context: CallContext): Promise<ToolResult> {
     const table = this.services.table;
     const workspace = await this.mount(window);
@@ -158,37 +146,9 @@ export class FileToolGroup implements ToolGroup {
       this.services.envPaths(),
       context.envRevision,
     );
-    const jobs = workspace.jobs;
-    if (jobs !== undefined) {
-      // The implementation owns the execution environment, so the command runs
-      // there and `path` is not a host path. One that ends inside the wait
-      // window answers here with its output and its exit code; one that
-      // outlives it is followed with `bash_output` and stopped with
-      // `bash_stop` (docs/tools.md#rules), the same way a host directory's is.
-      let started: BackgroundJob;
-      try {
-        started = await jobs.start(command);
-      } catch (error) {
-        // A start the implementation could not make is run to completion
-        // instead: the command answers with its output and its exit code, and
-        // the refusal it gave never reaches the model.
-        if (workspace.exec === undefined) return this.failed(request, error);
-        return this.ran(request, await runToEnd(workspace.exec, command));
-      }
-      this.mounts.set(started.id, workspace);
-      const followed = await this.follow(jobs, started.id, numberArg(request.args, "timeout", BASH_WAIT_MS));
-      if (followed.running) {
-        return {
-          callId: request.callId,
-          ok: true,
-          content: `${tailOf(followed.output)}\n${textOf(table, "result.bash.started", { job: followed.id })}`,
-        };
-      }
-      return { callId: request.callId, ok: passed(followed.exitCode), content: tailOf(followed.output) };
-    }
     if (workspace.exec !== undefined) {
-      // The implementation owns the execution environment and starts no
-      // background command, so this one runs to completion in the call.
+      // The implementation owns the execution environment, so the command runs
+      // there and `path` is not a host path.
       return this.ran(request, await runToEnd(workspace.exec, command));
     }
     const job = this.start(command, workspace.path);
@@ -206,75 +166,27 @@ export class FileToolGroup implements ToolGroup {
     return { callId: request.callId, ok: outcome.exitCode === 0, content: body };
   }
 
-  /**
-   * One background job until the wait window ends: what it wrote, and whether
-   * it is still running. The reads back off, so a command that runs for the
-   * whole window is not polled hard.
-   */
-  private async follow(jobs: WorkspaceJobs, id: string, waitMs: number): Promise<BackgroundJob> {
-    let job = await jobs.output(id);
-    let pause = POLL_MS;
-    let waited = 0;
-    while (job.running && waited < waitMs) {
-      const step = Math.min(pause, waitMs - waited);
-      await sleep(step);
-      waited += step;
-      pause = Math.min(pause * 2, POLL_MAX_MS);
-      job = await jobs.output(id);
-    }
-    return job;
-  }
-
   private async bashOutput(request: ToolCall): Promise<ToolResult> {
     const table = this.services.table;
     const id = stringArg(request.args, "job");
     const job = this.jobs.get(id);
-    if (job !== undefined) {
-      const content = job.done
-        ? `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`
-        : `${job.output}\n${textOf(table, "result.bash.running", { job: id })}`;
-      return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
-    }
-    const jobs = this.mounts.get(id)?.jobs;
-    if (jobs === undefined) return this.jobMissing(request, id);
-    let followed: BackgroundJob;
-    try {
-      followed = await jobs.output(id);
-    } catch (error) {
-      return this.failed(request, error);
-    }
-    return {
-      callId: request.callId,
-      ok: followed.running || passed(followed.exitCode),
-      content: `${tailOf(followed.output)}\n${textOf(table, followed.running ? "result.bash.running" : "result.bash.stopped", { job: id })}`,
-    };
+    if (job === undefined) return this.jobMissing(request, id);
+    const content = job.done
+      ? `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`
+      : `${job.output}\n${textOf(table, "result.bash.running", { job: id })}`;
+    return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
   }
 
   private async bashStop(request: ToolCall): Promise<ToolResult> {
     const table = this.services.table;
     const id = stringArg(request.args, "job");
     const job = this.jobs.get(id);
-    if (job !== undefined) {
-      job.stop();
-      return {
-        callId: request.callId,
-        ok: true,
-        content: `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`,
-      };
-    }
-    const jobs = this.mounts.get(id)?.jobs;
-    if (jobs === undefined) return this.jobMissing(request, id);
-    let stopped: BackgroundJob;
-    try {
-      await jobs.stop(id);
-      stopped = await jobs.output(id);
-    } catch (error) {
-      return this.failed(request, error);
-    }
+    if (job === undefined) return this.jobMissing(request, id);
+    job.stop();
     return {
       callId: request.callId,
       ok: true,
-      content: `${tailOf(stopped.output)}\n${textOf(table, "result.bash.stopped", { job: id })}`,
+      content: `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`,
     };
   }
 
@@ -410,21 +322,6 @@ export class FileToolGroup implements ToolGroup {
     return this.refusal(request, "workspace.absent", "result.no_workspace", {});
   }
 
-  /** One refusal the implementation gave, in the core's error shape it already carries. */
-  private failed(request: ToolCall, error: unknown): ToolResult {
-    const refusal = error as { rule?: string; message?: string; nextAction?: string };
-    return {
-      callId: request.callId,
-      ok: false,
-      content: "",
-      error: {
-        rule: refusal.rule ?? "bash.job.failed",
-        message: refusal.message ?? (error instanceof Error ? error.message : String(error)),
-        ...(refusal.nextAction === undefined ? {} : { nextAction: refusal.nextAction }),
-      },
-    };
-  }
-
   private jobMissing(request: ToolCall, id: string): ToolResult {
     return this.refusal(request, "bash.job.not_found", "bash.notfound", { job: id });
   }
@@ -477,11 +374,6 @@ function insidePath(root: string, path: string): string | undefined {
   return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
 }
 
-/** The last of a background job's output, the part a caller reads. */
-function tailOf(output: string): string {
-  return output.slice(-JOB_BUFFER);
-}
-
 /**
  * One command to its end in a mount that owns its execution environment, or
  * the failure it was answered with - so a command the implementation could not
@@ -494,14 +386,6 @@ function runToEnd(exec: (command: string) => Promise<ExecResult>, command: strin
     stderr: error instanceof Error ? error.message : String(error),
     truncated: false,
   }));
-}
-
-/**
- * Whether a command that ended succeeded. One that never reported an exit code
- * - a command its caller stopped - is not a failure.
- */
-function passed(exitCode: number | undefined): boolean {
-  return exitCode === undefined || exitCode === 0;
 }
 
 function stringArg(args: Record<string, unknown>, name: string): string {

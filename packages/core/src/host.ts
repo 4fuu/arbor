@@ -78,12 +78,10 @@ import type {
   ToolCallContext,
   WindowRuntimeState,
   SearchHit,
-  SnapshotRef,
   WindowSession,
   WindowState,
   Workspace,
   WorkspaceMount,
-  WorkspaceRef,
 } from "@arbor/interfaces";
 import { arborError } from "@arbor/errors";
 import { isAbsolute, join } from "node:path";
@@ -177,14 +175,7 @@ export interface WindowRecord {
   currentTarget?: Target;
   /** The workspace mount, once the window touched files. */
   mount?: WorkspaceMount;
-  workspaceRef?: WorkspaceRef;
-  /**
-   * The workspace this window's directory is forked from, when it is a
-   * continuation: the directory the window it continues worked in, so work in
-   * progress carries over (docs/workspaces.md#what-the-framework-guarantees).
-   */
-  forkedFrom?: WorkspaceRef;
-  /** The event each tool call was recorded at, for its snapshot. */
+  /** The event each tool call was recorded at. */
   callEvents: Map<string, EventRef>;
   /** The window's session, once it is running. */
   session?: WindowSession;
@@ -608,13 +599,7 @@ export class Arbor {
     );
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window)) continue;
-      await this.continueWindow(event.window, {
-        midTaskReset: true,
-        // The window's directory comes back from the journal: the last snapshot
-        // one of its calls recorded names the workspace it worked in. A window
-        // that never touched files has none, and gets a fresh one.
-        forkedFrom: await this.workspaceOfWork(event.window),
-      });
+      await this.continueWindow(event.window, { midTaskReset: true });
     }
     // The scheduled tasks come back from the journal, so a restart does not
     // lose a schedule that has not fired yet. The records are replayed in
@@ -1405,17 +1390,13 @@ export class Arbor {
       midTaskReset: reason === "hard_limit",
       targets,
       ...(record.tier === undefined ? {} : { tier: record.tier }),
-      // The continuation works in a fork of the directory this window worked
-      // in, so nothing it did is lost by ending the window.
-      ...(record.workspaceRef === undefined ? {} : { forkedFrom: record.workspaceRef }),
     });
   }
 
   /**
-   * Open the continuation window. It forks the previous window's workspace and
-   * keeps its watermarks, and its first input carries the previous window's ref
-   * and handoff - or, after the hard limit, one host line saying the window was
-   * reset mid-task.
+   * Open the continuation window. It keeps its watermarks, and its first input
+   * carries the previous window's ref and handoff - or, after the hard limit,
+   * one host line saying the window was reset mid-task.
    */
   private async continueWindow(
     previous: WindowRef,
@@ -1424,7 +1405,6 @@ export class Arbor {
       midTaskReset?: boolean;
       targets?: readonly string[];
       tier?: string;
-      forkedFrom?: WorkspaceRef;
     },
   ): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
@@ -1468,7 +1448,7 @@ export class Arbor {
       targets: [...(options.targets ?? [])],
       refs: [taskRef, previous],
     });
-    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier, options.forkedFrom);
+    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier);
     this.launch(record, {
       firstInput,
       epoch,
@@ -1525,29 +1505,6 @@ export class Arbor {
     });
     this.board.close(record.window);
     this.windows.delete(record.window);
-  }
-
-  /**
-   * The workspace a window worked in, from the last snapshot one of its calls
-   * recorded. A restart keeps no record of the window itself, so the journal is
-   * what its continuation forks from; a window that never touched files has no
-   * snapshot and so no workspace.
-   */
-  private async workspaceOfWork(window: WindowRef): Promise<WorkspaceRef | undefined> {
-    const size = 50;
-    const first = await this.journal.list({ window, kinds: ["tool_result"], limit: size });
-    const page =
-      first.total <= size
-        ? first
-        : await this.journal.list({ window, kinds: ["tool_result"], limit: size, offset: first.total - size });
-    // The journal lists oldest first, so the newest snapshot is at the end.
-    for (let index = page.items.length - 1; index >= 0; index -= 1) {
-      const snapshot = page.items[index]?.snapshot;
-      if (snapshot === undefined || snapshot === null) continue;
-      const workspace = snapshot.slice(0, snapshot.indexOf("@"));
-      if (/^ws\d+$/.test(workspace)) return workspace as WorkspaceRef;
-    }
-    return undefined;
   }
 
   /** The task a window was opened for, so its continuation names it. */
@@ -1704,9 +1661,7 @@ export class Arbor {
   }
 
   /**
-   * The window's own directory, created on first use. A continuation forks the
-   * directory of the window it continues, so cloned repositories, installed
-   * dependencies and work in progress carry over
+   * The window's own directory, created on first use
    * (docs/workspaces.md#what-the-framework-guarantees).
    */
   private async mountFor(window: WindowRef): Promise<WorkspaceMount | undefined> {
@@ -1714,13 +1669,9 @@ export class Arbor {
     if (workspace === undefined) return undefined;
     const record = this.windows.get(window);
     if (record?.mount !== undefined) return record.mount;
-    const from = record?.forkedFrom;
-    const ref = from === undefined ? await workspace.create(window) : await workspace.fork(from, window);
+    const ref = await workspace.create(window);
     const mount = await workspace.mount(ref);
-    if (record !== undefined) {
-      record.mount = mount;
-      record.workspaceRef = ref;
-    }
+    if (record !== undefined) record.mount = mount;
     return mount;
   }
 
@@ -1940,10 +1891,7 @@ export class Arbor {
 
   // ---- the window control the backend calls -------------------------------
 
-  /**
-   * Record one tool call before it runs, so a snapshot the call takes names the
-   * event it happened at (docs/workspaces.md#what-the-framework-guarantees).
-   */
+  /** Record one tool call before it runs, at its own event. */
   recordToolCall = async (window: WindowRef, call: ToolCall): Promise<EventRef | undefined> => {
     const record = this.windows.get(window);
     const event = await this.journal.append({
@@ -1958,7 +1906,7 @@ export class Arbor {
 
   /**
    * Run one call through the tool groups - the same path a direct call takes -
-   * then record its result and snapshot the directory the call changed.
+   * then record its result.
    */
   runToolCall = async (window: WindowRef, call: ToolCall, at?: EventRef): Promise<ToolResult> => {
     const record = this.windows.get(window);
@@ -1986,28 +1934,12 @@ export class Arbor {
       result = await this.catalog.call(ran, context).catch((error: unknown) => this.refusalOf(call, error));
     }
     if (!this.hooks.empty) await this.hooks.after("afterToolCall", { window, call, result });
-    // Every write and every bash call ends with a snapshot of the directory,
-    // and the event records its id (docs/workspaces.md#what-the-framework-
-    // guarantees). A call that changes nothing - a search, a note, a read -
-    // takes none, and a window that never touches files has no directory. The
-    // call that ran is what counts: a hook may have changed it.
-    let snapshot: SnapshotRef | null = null;
-    if (
-      changesFiles(ran.name) &&
-      record?.mount !== undefined &&
-      record.workspaceRef !== undefined &&
-      this.options.workspace !== undefined
-    ) {
-      const handle = await this.options.workspace.snapshot(record.workspaceRef, at);
-      snapshot = handle.ref;
-    }
     await this.journal.append({
       kind: "tool_result",
       window,
       body: result.content === "" ? refusalText(result) : result.content,
       targets: [],
       ...(at === undefined ? {} : { refs: [at] }),
-      snapshot,
     });
     return result;
   };
@@ -2095,7 +2027,6 @@ export class Arbor {
     doing: string,
     targets: readonly string[],
     tier?: string,
-    forkedFrom?: WorkspaceRef,
   ): WindowRecord {
     const entry: BoardEntry = {
       window,
@@ -2118,7 +2049,6 @@ export class Arbor {
       paused: false,
       ...(tier === undefined ? {} : { tier }),
       ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
-      ...(forkedFrom === undefined ? {} : { forkedFrom }),
       callEvents: new Map(),
       inbox: [],
       protectionUntil: this.clock() + (this.current()?.window?.protectionSeconds ?? DEFAULT_PROTECTION_SECONDS) * 1000,
@@ -2129,17 +2059,6 @@ export class Arbor {
     for (const target of targets) this.board.touch(window, target);
     return record;
   }
-}
-
-/**
- * The tools that change the directory: every write and every bash call
- * (docs/workspaces.md#what-the-framework-guarantees). `edit` writes a file as
- * `write` does, and `bash` may or may not - the snapshot is what the event
- * records either way. Everything else - a search, a note, a read - changes no
- * file and takes no snapshot.
- */
-function changesFiles(tool: string): boolean {
-  return tool === "write" || tool === "edit" || tool === "bash";
 }
 
 /** What a refusal records: the rule and the one line the model reads. */

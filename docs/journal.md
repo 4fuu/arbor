@@ -15,7 +15,6 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 | `targets` | what it touches (below) |
 | `refs` | the refs it names: what it answers, cites, continues or quotes |
 | `external` | the native id of an outside message, with a short channel prefix |
-| `snapshot` | the workspace snapshot, for an event that changed files |
 
 Events have one global order: the number in their id, assigned at append and
 only growing. Watermarks and every comparison use it; `time` is for display
@@ -73,7 +72,7 @@ One reference format points at anything, in every tool argument and result:
 | `n012@3` | note `n012`, revision 3 (`n012` alone means the latest) |
 | `t9` | a task |
 | `m55` | a message between windows |
-| `ws3`, `ws3@r902` | a workspace, or its snapshot at an event |
+| `ws3` | a workspace |
 | `e7` | an environment revision |
 | `b7` | an image or file stored once by content beside the journal |
 | `sk:deploy@4`, `mcp:weather@2`, `svc:crawler@3` | a skill, an MCP server or a service, at a revision |

@@ -49,7 +49,6 @@ const STATEMENTS: readonly string[] = [
      time INTEGER NOT NULL,
      kind TEXT NOT NULL,
      external TEXT,
-     snapshot TEXT,
      body TEXT,
      redacted TEXT
    )`,

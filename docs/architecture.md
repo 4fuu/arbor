@@ -159,10 +159,9 @@ approvals are built from these.
 | --- | --- |
 | events, watermarks, links | `Journal` |
 | notes | `NoteStore` |
-| files | `Workspace`: one directory per window, with its snapshots |
+| files | `Workspace`: one directory per window |
 | skills, MCP and service configurations, the settings | `Environment`: the `/env` directory, with revisions |
 | service directories and logs | `Supervisor`, on `Workspace` |
-| an event that changed files | the journal, with the snapshot id |
 | effect queue, schedules | host database |
 
 There is no project boundary: a host has one journal, one set of notes and

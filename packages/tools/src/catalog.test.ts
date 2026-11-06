@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import { SqliteJournal } from "@arbor/journal-sqlite";
 import { DirectoryWorkspace } from "@arbor/workspace-dir";
 import type {
-  BackgroundJob,
   CallContext,
   Channel,
   Event,
@@ -483,18 +482,6 @@ describe("tool catalog", () => {
     assert.equal(missing.error?.rule, "bash.job.not_found");
   });
 
-  it("snapshots the directory at the event a write is recorded at", async () => {
-    const { catalog, workspace, refOf } = await harness();
-    await run(catalog, "write", { path: "a.txt", text: "one" });
-    const ref = refOf("c1");
-    assert.equal(ref, "ws1");
-    const handle = await workspace.snapshot(ref as `ws${number}`, "r902");
-    await run(catalog, "write", { path: "a.txt", text: "two" });
-    const mount = await workspace.mount(handle.ref);
-    assert.equal(await readFile(join(mount.path, "a.txt"), "utf8"), "one");
-    await mount.release();
-  });
-
   it("lists, greps and finds files through the workspace module", async () => {
     const { catalog, refOf } = await harness();
     await run(catalog, "write", { path: "src/a.ts", text: "const deploy = 1" });
@@ -637,7 +624,6 @@ describe("tool catalog", () => {
     const owned: WorkspaceMount = {
       ref: "ws1",
       path: "/sandbox/ws1",
-      readOnly: false,
       exec: async (command: string) => {
         commands.push(command);
         if (command.startsWith("ls ")) return { exitCode: 0, stdout: "a.txt\n", stderr: "", truncated: false };
@@ -679,169 +665,6 @@ describe("tool catalog", () => {
     assert.ok(grep.content.includes("notes/a.txt:1:deploy is done"));
   });
 
-  it("runs a command that outlives the wait window through the mount's own jobs", async () => {
-    const { catalog } = await harness();
-    const commands: string[] = [];
-    const running = new Map<string, { command: string; output: string; running: boolean }>();
-    const owned: WorkspaceMount = {
-      ref: "ws1",
-      path: "/sandbox/ws1",
-      readOnly: false,
-      exec: async (command: string) => {
-        commands.push(command);
-        return { exitCode: 0, stdout: "", stderr: "", truncated: false };
-      },
-      jobs: {
-        start: async (command: string) => {
-          const id = `proc_1_${running.size + 1}`;
-          running.set(id, { command, output: "", running: true });
-          return { id, command, running: true, output: "" };
-        },
-        output: async (id: string) => {
-          const job = running.get(id);
-          if (job === undefined) throw Object.assign(new Error(`no job ${id}`), { rule: "workspace.job.unknown" });
-          return { id, command: job.command, running: job.running, output: job.output };
-        },
-        stop: async (id: string) => {
-          const job = running.get(id);
-          if (job !== undefined) job.running = false;
-        },
-      },
-      release: async () => {},
-    };
-    const services = (catalog as unknown as { services: ToolServices }).services;
-    services.ensureWorkspace = async () => owned;
-
-    // The command outlives the wait window, so it runs as a background job the
-    // implementation owns - never as a command in this call.
-    const started = await run(catalog, "bash", { command: "sleep 30", timeout: 50 });
-    assert.ok(started.content.includes("proc_1_1"));
-    assert.ok(started.content.includes("已启动"));
-    assert.deepEqual(commands, []);
-
-    const followed = await run(catalog, "bash_output", { job: "proc_1_1" });
-    assert.ok(followed.content.includes("仍在运行"));
-
-    // The command writes on its own; `bash_output` reads what it wrote.
-    const job = running.get("proc_1_1");
-    assert.ok(job !== undefined);
-    job.output = "working\n";
-    const written = await run(catalog, "bash_output", { job: "proc_1_1" });
-    assert.ok(written.content.includes("working"));
-
-    const stopped = await run(catalog, "bash_stop", { job: "proc_1_1" });
-    assert.ok(stopped.content.includes("已停止"));
-    const after = await run(catalog, "bash_output", { job: "proc_1_1" });
-    assert.ok(after.content.includes("已停止"));
-
-    const missing = await run(catalog, "bash_output", { job: "proc_1_9" });
-    assert.equal(missing.ok, false);
-    assert.equal(missing.error?.rule, "bash.job.not_found");
-  });
-
-  it("answers a command that ends inside the wait window from the job it ran as", async () => {
-    const { catalog } = await harness();
-    const commands: string[] = [];
-    const jobs = new Map<string, BackgroundJob>();
-    // What each command wrote and how it ended. A mount that owns its execution
-    // environment answers a command that ended from the job it ran as: the
-    // daemon reports whether a process still runs and never how a command
-    // ended, so the exit code is the job's own.
-    const answers = new Map([
-      ["printf 'quick\\n'", { stdout: "quick\n", exitCode: 0 }],
-      ["printf 'bad\\n'; exit 3", { stdout: "bad\n", exitCode: 3 }],
-    ]);
-    const owned: WorkspaceMount = {
-      ref: "ws1",
-      path: "/sandbox/ws1",
-      readOnly: false,
-      exec: async (command: string) => {
-        commands.push(command);
-        return { exitCode: 0, stdout: "", stderr: "", truncated: false };
-      },
-      jobs: {
-        start: async (command: string) => {
-          const answer = answers.get(command) ?? { stdout: "", exitCode: 0 };
-          const job: BackgroundJob = {
-            id: `proc_1_${jobs.size + 1}`,
-            command,
-            running: false,
-            output: answer.stdout,
-            exitCode: answer.exitCode,
-          };
-          jobs.set(job.id, job);
-          return job;
-        },
-        output: async (id: string) => {
-          const job = jobs.get(id);
-          if (job === undefined) throw Object.assign(new Error(`no job ${id}`), { rule: "workspace.job.unknown" });
-          return job;
-        },
-        stop: async (id: string) => {
-          const job = jobs.get(id);
-          if (job !== undefined) job.running = false;
-        },
-      },
-      release: async () => {},
-    };
-    const services = (catalog as unknown as { services: ToolServices }).services;
-    services.ensureWorkspace = async () => owned;
-
-    // The command ran as a job, never as a command in the call, and answers
-    // with what it wrote and its exit code - the same contract a command that
-    // ran to completion has.
-    const quick = await run(catalog, "bash", { command: "printf 'quick\\n'" });
-    assert.equal(quick.ok, true);
-    assert.equal(quick.content, "quick\n");
-    assert.deepEqual(commands, []);
-
-    const failed = await run(catalog, "bash", { command: "printf 'bad\\n'; exit 3" });
-    assert.equal(failed.ok, false);
-    assert.equal(failed.content, "bad\n");
-    assert.deepEqual(commands, []);
-
-    // A job that ended is followed the same way, and a failure is one there too.
-    const followed = await run(catalog, "bash_output", { job: "proc_1_2" });
-    assert.equal(followed.ok, false);
-    assert.ok(followed.content.includes("bad"));
-    assert.ok(followed.content.includes("已停止"));
-  });
-
-  it("runs a command to completion when the implementation could not start a job", async () => {
-    const { catalog } = await harness();
-    const commands: string[] = [];
-    const owned: WorkspaceMount = {
-      ref: "ws1",
-      path: "/sandbox/ws1",
-      readOnly: false,
-      exec: async (command: string) => {
-        commands.push(command);
-        return { exitCode: 0, stdout: "quick\n", stderr: "", truncated: false };
-      },
-      jobs: {
-        // An implementation refuses a start it cannot observe: the command ended
-        // the engine read the process it started, which is what happens to
-        // every quick command whose process is not held open. The refusal must
-        // never reach the model, so the command runs to completion instead.
-        start: async () => {
-          throw Object.assign(new Error("background process exited before its identity was observed"), {
-            rule: "workspace.job.start",
-          });
-        },
-        output: async () => ({ id: "proc_1_1", command: "", running: false, output: "" }),
-        stop: async () => {},
-      },
-      release: async () => {},
-    };
-    const services = (catalog as unknown as { services: ToolServices }).services;
-    services.ensureWorkspace = async () => owned;
-
-    const answered = await run(catalog, "bash", { command: "printf 'quick\\n'" });
-    assert.equal(answered.ok, true);
-    assert.equal(answered.content, "quick\n");
-    assert.deepEqual(commands, ["printf 'quick\\n'"]);
-  });
-
   it("stages the environment into a mount that owns its execution environment", async () => {
     const { catalog } = await harness();
     const directory = await mkdtemp(join(tmpdir(), "arbor-env-"));
@@ -853,7 +676,6 @@ describe("tool catalog", () => {
     const owned: WorkspaceMount = {
       ref: "ws1",
       path: "/workspaces/1-1",
-      readOnly: false,
       exec: async (command: string) => {
         commands.push(command);
         return { exitCode: 0, stdout: "", stderr: "", truncated: false };

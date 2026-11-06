@@ -129,8 +129,8 @@ describe("one window end to end", () => {
     assert.equal(JSON.parse(ended.items[0]?.body ?? "{}").reason, "model_ended");
   });
 
-  it("snapshots the workspace at the event a write call happened at", async () => {
-    const { arbor, journal, backend } = await host();
+  it("writes through the window's own directory, and records no snapshot id on any event", async () => {
+    const { arbor, journal, backend, root } = await host();
     backend.script([
       { tool: "write", args: { path: "a.txt", text: "one" } },
       { text: "完成" },
@@ -141,49 +141,15 @@ describe("one window end to end", () => {
     await backend.finished();
     const results = await journal.list({ kinds: ["tool_result"] });
     assert.equal(results.total, 1);
-    // The tool_result event records the snapshot id of the directory it changed.
-    assert.match(results.items[0]?.snapshot ?? "", /^ws1@r\d+$/);
-    const calls = await journal.list({ kinds: ["tool_call"] });
-    assert.equal(results.items[0]?.snapshot, `ws1@${calls.items[0]?.ref}`);
-  });
-
-  it("forks the workspace for a continuation, so the work carries over", async () => {
-    const { arbor, journal, backend, root } = await host();
-    backend.script([
-      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
-      { text: "完成" },
-    ]);
-    const record = await arbor.open(task);
-    await backend.finished();
-
-    // The model ends with a handoff, so the host opens a continuation.
-    backend.script([
-      { tool: "read", args: { path: "notes.txt" } },
-      { text: "读到了" },
-    ]);
-    await arbor.services.endWindow(record.window, {
-      topics: ["CI"],
-      progress: ["已写下结论"],
-      pending: ["重跑"],
-      agreements: ["先修测试"],
-      refs: ["r1"],
-    });
-    await backend.finished();
-
-    // The continuation reads what the window before it wrote.
-    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
-    assert.equal(read.total, 1);
-    assert.ok(read.items[0]?.body?.includes("work in progress"));
-
-    // Its directory is a fork of the first window's, not a fresh one: the file
-    // is there without having been written again, and the first window's own
-    // directory still holds it.
-    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
-    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
-
-    // Reading it changed nothing, so the continuation's own call records no
-    // snapshot - only a write or a bash call does.
-    assert.equal(read.items[0]?.snapshot ?? null, null);
+    assert.ok(results.items[0]?.body?.includes("已写入 a.txt"));
+    // The directory was created for the window, under the root the host named.
+    assert.equal(await readFile(join(root, "ws1", "a.txt"), "utf8"), "one");
+    // No event carries a snapshot id: the directory is the only state a file
+    // call leaves, and nothing names a state of it.
+    for (const event of (await journal.list({ window: record.window })).items) {
+      assert.equal("snapshot" in event, false);
+      assert.ok(!event.refs.some((ref) => /^ws\d+@/.test(ref)));
+    }
   });
 
   it("gives every call the environment's revision, so a live window reads what it holds now", async () => {
@@ -228,7 +194,7 @@ describe("one window end to end", () => {
     assert.notEqual(before, after);
   });
 
-  it("takes no snapshot for a call that changes no file, and makes no directory", async () => {
+  it("makes no directory for a call that changes no file", async () => {
     const { arbor, journal, backend, root } = await host();
     backend.script([
       { tool: "probe", args: { text: "CI" } },
@@ -240,10 +206,7 @@ describe("one window end to end", () => {
     await backend.finished();
     const results = await journal.list({ kinds: ["tool_result"] });
     assert.equal(results.total, 1);
-    // Only a write or a bash call ends with a snapshot
-    // (docs/workspaces.md#what-the-framework-guarantees), so a call that
-    // changes nothing records none.
-    assert.equal(results.items[0]?.snapshot ?? null, null);
+    assert.ok(results.items[0]?.body?.includes("探测完成"));
     // A window that never touches files has no directory.
     assert.deepEqual(await readdir(root), []);
   });
@@ -325,7 +288,7 @@ describe("one window end to end", () => {
   });
 
   it("stops the windows on close without opening a continuation, and the next start continues the work", async () => {
-    const { arbor, journal, backend, root } = await host();
+    const { arbor, journal, backend, root, probe } = await host();
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "第一轮" },
@@ -346,19 +309,17 @@ describe("one window end to end", () => {
     assert.equal(arbor.live().length, 0);
 
     // The next start on the same journal continues the stopped window, the way
-    // the restart section describes: a fork of the directory it worked in.
+    // the restart section describes.
     const reopened = new Arbor({
       journal,
       backend,
       timers: new ManualTimers(),
       now: () => 1700000000000,
       workspace: new DirectoryWorkspace({ root }),
+      groups: [probe],
     });
     backend.attach(reopened.windowControl());
-    backend.script([
-      { tool: "read", args: { path: "notes.txt" } },
-      { text: "读到了" },
-    ]);
+    backend.script([{ tool: "probe", args: { text: "第二轮" } }, { text: "读到了" }]);
     await reopened.start();
     await backend.finished();
     const continued = await journal.list({ kinds: ["window_start"] });
@@ -368,9 +329,8 @@ describe("one window end to end", () => {
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.continuation?.midTaskReset === true);
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
-    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
-    assert.ok(read.items[0]?.body?.includes("work in progress"));
-    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
+    const probed = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(probed.items[0]?.body?.includes("探测完成"));
   });
 
   it("runs a module call from a script through the same service call", async () => {
@@ -502,7 +462,7 @@ describe("one window end to end", () => {
   });
 
   it("rebuilds a running window from the journal after a restart", async () => {
-    const { arbor, journal, backend, root } = await host();
+    const { arbor, journal, backend, root, probe } = await host();
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "第一轮" },
@@ -517,15 +477,11 @@ describe("one window end to end", () => {
       timers,
       now: () => 1700000000000,
       workspace: new DirectoryWorkspace({ root }),
+      groups: [probe],
     });
     // A restart is a new host, so the backend takes its control, the way pi does.
     backend.attach(reopened.windowControl());
-    // The continued window forks the directory the stopped one worked in, which
-    // the journal's snapshots name.
-    backend.script([
-      { tool: "read", args: { path: "notes.txt" } },
-      { text: "读到了" },
-    ]);
+    backend.script([{ tool: "probe", args: { text: "第二轮" } }, { text: "读到了" }]);
     await reopened.start();
     await backend.finished();
     const started = await journal.list({ kinds: ["window_start"] });
@@ -535,9 +491,8 @@ describe("one window end to end", () => {
     assert.ok(opened?.continuation?.midTaskReset === true);
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
     assert.equal(record.state, "idle");
-    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
-    assert.ok(read.items[0]?.body?.includes("work in progress"));
-    assert.equal(await readFile(join(root, "ws2", "notes.txt"), "utf8"), "work in progress");
+    const probed = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(probed.items[0]?.body?.includes("探测完成"));
   });
 
   it("records a send as an effect and never repeats it in the continuation", async () => {

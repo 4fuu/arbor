@@ -10,7 +10,6 @@ import type {
   LinkKind,
   MatchKind,
   Ref,
-  SnapshotRef,
   Target,
   WindowRef,
 } from "./refs.ts";
@@ -28,8 +27,6 @@ export interface EventInput {
   links?: readonly LinkInput[];
   /** Native id of an outside message, with a short channel prefix: `qq:12345`. */
   external?: ExternalRef | null;
-  /** The workspace snapshot, for an event that changed files. */
-  snapshot?: SnapshotRef | null;
   blobs?: readonly BlobRef[];
   /** Assigned by the journal when omitted; the journal's clock is the only writer. */
   time?: number;
@@ -76,7 +73,6 @@ export interface Event {
   refs: Ref[];
   links: Link[];
   external: ExternalRef | null;
-  snapshot: SnapshotRef | null;
   blobs: BlobRef[];
   body: string | null;
   redacted: Redaction | null;

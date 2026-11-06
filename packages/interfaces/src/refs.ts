@@ -20,9 +20,8 @@ export type TaskRef = `t${number}`;
 /** A message between windows: `m55`. */
 export type MessageRef = `m${number}`;
 
-/** A workspace: `ws3`, or its snapshot at an event: `ws3@r902`. */
+/** A workspace: `ws3`. */
 export type WorkspaceRef = `ws${number}`;
-export type SnapshotRef = `${WorkspaceRef}@${EventRef | "latest"}`;
 
 /** An environment revision: `e7`. */
 export type EnvRef = `e${number}`;
@@ -49,7 +48,6 @@ export type Ref =
   | TaskRef
   | MessageRef
   | WorkspaceRef
-  | SnapshotRef
   | EnvRef
   | EnvItemRef
   | EnvItemName

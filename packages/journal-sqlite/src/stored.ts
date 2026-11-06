@@ -8,7 +8,7 @@
  */
 
 import { arborError } from "@arbor/errors";
-import type { BlobRef, ExternalRef, Ref, SnapshotRef, WindowRef } from "@arbor/interfaces";
+import type { BlobRef, ExternalRef, Ref, WindowRef } from "@arbor/interfaces";
 
 const PATTERNS: readonly RegExp[] = [
   /^r\d+$/, // an event
@@ -16,7 +16,7 @@ const PATTERNS: readonly RegExp[] = [
   /^n\d+(@\d+)?$/, // a note, or one of its revisions
   /^t\d+$/, // a task
   /^m\d+$/, // a message between windows
-  /^ws\d+(@r\d+|@latest)?$/, // a workspace, or its snapshot at an event
+  /^ws\d+$/, // a workspace
   /^e\d+$/, // an environment revision
   /^(sk|mcp|svc):[^\s@]+@\d+$/, // a skill, an MCP server or a service
   /^b\d+$/, // media stored beside the journal
@@ -45,12 +45,6 @@ export function storedWindowRef(value: string | null): WindowRef | null {
   if (value === null) return null;
   if (!/^c\d+$/.test(value)) return malformed("window ref", value);
   return value as WindowRef;
-}
-
-export function storedSnapshotRef(value: string | null): SnapshotRef | null {
-  if (value === null) return null;
-  if (!/^ws\d+(@r\d+|@latest)$/.test(value)) return malformed("snapshot ref", value);
-  return value as SnapshotRef;
 }
 
 export function storedBlobRef(value: string): BlobRef {

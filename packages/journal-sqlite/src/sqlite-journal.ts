@@ -57,13 +57,7 @@ import { indexText, resolveSegmenter } from "./segmenter.ts";
 import { IMPLICIT_CITE_WEIGHT, TRIGRAM_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 import { buildFilters, likePattern, ranked, substring, trigramMatch, wordMatch } from "./search.ts";
 import type { Ranked, SearchFilters } from "./search.ts";
-import {
-  storedBlobRef,
-  storedExternalRef,
-  storedRef,
-  storedSnapshotRef,
-  storedWindowRef,
-} from "./stored.ts";
+import { storedBlobRef, storedExternalRef, storedRef, storedWindowRef } from "./stored.ts";
 
 /** A query shorter than this cannot use the trigram index. */
 export const MIN_TRIGRAM_CHARS = 3;
@@ -80,7 +74,6 @@ interface EventRow {
   time: number;
   kind: string;
   external: string | null;
-  snapshot: string | null;
   body: string | null;
   redacted: string | null;
 }
@@ -246,15 +239,14 @@ export class SqliteJournal implements Journal {
       }
       const info = this.db
         .prepare(
-          `INSERT INTO events (window, time, kind, external, snapshot, body, redacted)
-           VALUES (?, ?, ?, ?, ?, ?, NULL)`,
+          `INSERT INTO events (window, time, kind, external, body, redacted)
+           VALUES (?, ?, ?, ?, ?, NULL)`,
         )
         .run(
           input.window ?? null,
           time,
           input.kind,
           external,
-          input.snapshot ?? null,
           input.body ?? null,
         );
       const assigned = toNumber(info.lastInsertRowid);
@@ -505,8 +497,8 @@ export class SqliteJournal implements Journal {
     const redaction = inTransaction(this.db, () => {
       const info = this.db
         .prepare(
-          `INSERT INTO events (window, time, kind, external, snapshot, body, redacted)
-           VALUES (?, ?, 'redaction', NULL, NULL, ?, NULL)`,
+          `INSERT INTO events (window, time, kind, external, body, redacted)
+           VALUES (?, ?, 'redaction', NULL, ?, NULL)`,
         )
         .run(null, time, reason);
       const by = toNumber(info.lastInsertRowid);
@@ -600,7 +592,7 @@ export class SqliteJournal implements Journal {
   private readEvent(seq: number): Event | null {
     const row = this.db
       .prepare(
-        `SELECT seq, window, time, kind, external, snapshot, body, redacted
+        `SELECT seq, window, time, kind, external, body, redacted
          FROM events WHERE seq = ?`,
       )
       .get(seq) as EventRow | undefined;
@@ -629,7 +621,6 @@ export class SqliteJournal implements Journal {
         time: toNumber(link.time),
       })),
       external: storedExternalRef(row.external),
-      snapshot: storedSnapshotRef(row.snapshot),
       blobs: blobs.map(storedBlobRef),
       body: row.body,
       redacted: row.redacted === null ? null : (JSON.parse(row.redacted) as Event["redacted"]),

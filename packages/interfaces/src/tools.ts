@@ -20,7 +20,7 @@ export interface CallContext {
   workspace?: WorkspaceMount;
   /** The environment revision frozen when the window opened. */
   envRevision?: string;
-  /** The event this call is recorded at, so a snapshot can name it. */
+  /** The event this call is recorded at. */
   call?: EventRef;
 }
 

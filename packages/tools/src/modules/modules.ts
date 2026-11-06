@@ -824,7 +824,7 @@ export class ScheduleModuleGroup implements ToolGroup {
   }
 }
 
-/** `workspace`: snapshots, mount, diff, grep, find, ls. */
+/** `workspace`: grep, find, ls. Absent when the host has no workspace. */
 export class WorkspaceModuleGroup implements ToolGroup {
   readonly id = "modules.workspace";
 
@@ -839,11 +839,11 @@ export class WorkspaceModuleGroup implements ToolGroup {
   }
 
   modules(): readonly ModuleSpec[] {
+    // A module whose backing feature is not configured is absent
+    // (docs/tools.md#modules).
+    if (this.services.workspace === undefined) return [];
     return [
       moduleSpec(this.services.table, "workspace", [
-        { name: "workspace.snapshots", signature: "workspace.snapshots(ws?)" },
-        { name: "workspace.mount", signature: "workspace.mount(ws@ref)" },
-        { name: "workspace.diff", signature: "workspace.diff(from, to)" },
         { name: "workspace.grep", signature: "workspace.grep(pattern, path?)" },
         { name: "workspace.find", signature: "workspace.find(name, path?)" },
         { name: "workspace.ls", signature: "workspace.ls(path?)" },

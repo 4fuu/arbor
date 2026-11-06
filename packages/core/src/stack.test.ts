@@ -171,7 +171,7 @@ describe("the whole stack", () => {
     assert.ok(!text.includes("coding agent"));
   });
 
-  it("writes a file through the mount's own capability and records its snapshot", async () => {
+  it("writes a file through the mount's own capability", async () => {
     const { arbor, journal, script } = await stack();
     script([
       fauxAssistantMessage([fauxToolCall("write", { path: "notes/a.txt", text: "已确认" }, { id: "call_1" })]),
@@ -183,10 +183,9 @@ describe("the whole stack", () => {
 
     const results = await journal.list({ kinds: ["tool_result"] });
     assert.ok(results.items[0]?.body?.includes("已写入 notes/a.txt"));
-    // Every write ends with a snapshot, recorded at the event it happened at.
-    assert.match(results.items[0]?.snapshot ?? "", /^ws1@r\d+$/);
-    const calls = await journal.list({ kinds: ["tool_call"] });
-    assert.equal(results.items[0]?.snapshot, `ws1@${calls.items[0]?.ref}`);
+    // No event carries a snapshot id: the directory holds the file, and nothing
+    // names a state of it.
+    for (const event of results.items) assert.equal("snapshot" in event, false);
   });
 
   it("runs several windows at once, and steers a new message into the one in the conversation", async () => {

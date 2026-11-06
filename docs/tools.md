@@ -36,7 +36,7 @@ often the logs show it used.
 | `channels` | `list`, `get(ref)` |
 | `tasks` | `list`, `show(t…)` |
 | `schedule` | `list`, `create`, `update`, `cancel` |
-| `workspace` | `snapshots(ws?)`, `mount(ws@ref)`, `diff(from, to)`, `grep`, `find`, `ls` |
+| `workspace` | `grep`, `find`, `ls` |
 
 A module whose backing feature is not configured is absent: `env` and
 `services` appear only when the host has an environment and a supervisor, and

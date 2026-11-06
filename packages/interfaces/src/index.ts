@@ -15,7 +15,6 @@ export type {
   TaskRef,
   MessageRef,
   WorkspaceRef,
-  SnapshotRef,
   EnvRef,
   EnvItemRef,
   EnvItemName,
@@ -127,16 +126,9 @@ export type {
 } from "./notes.ts";
 
 export type {
-  SnapshotHandle,
-  Snapshot,
-  MountOptions,
   ExecResult,
-  BackgroundJob,
-  WorkspaceJobs,
   StagedFile,
   WorkspaceMount,
-  WorkspaceDiff,
-  DiffFile,
   WorkspaceQuota,
   Workspace,
 } from "./workspace.ts";

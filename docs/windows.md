@@ -94,7 +94,7 @@ is recorded with the reason `host_restart`.
 A host restart is a new host over the same journal. Its `start()` continues
 every window that was still running and every window a `close` stopped, the way
 the hard limit does; effects already made are not made again. A continued window
-forks the directory the stopped one worked in, which the snapshots its calls
-recorded name ([workspaces.md](workspaces.md#what-the-framework-guarantees)); a
+works in the directory its predecessor worked in, which the window chain in the
+journal names ([workspaces.md](workspaces.md#what-the-framework-guarantees)); a
 window that never touched files has none, and its continuation starts a fresh
 one.

@@ -9,8 +9,7 @@
  * - A workspace that owns its execution environment runs the command where the
  *   host's directory is not visible, so the files are staged into that
  *   environment through the mount's own capability and the prefix is rewritten
- *   onto where they landed. What is staged sits outside the workspace's tree,
- *   so no snapshot holds it, and it is read-only, so a change goes through the
+ *   onto where they landed. It is read-only, so a change goes through the
  *   environment's own draft and `reload`.
  *
  * Staging is per mount and per revision: a `reload` lands as a new revision,
