@@ -17,6 +17,22 @@ hooks ([architecture.md](architecture.md#hooks)).
 Rules and guidance files for a piece of work are ordinary files in a
 workspace. The framework does not manage or restrict them.
 
+### What a subprocess gets
+
+A subprocess never inherits the host's own environment. Every MCP server,
+every resident service and every command a window runs is given the minimum
+it needs to run - `PATH`, `HOME`, `LANG`, `TMPDIR` and the directory it works
+in, which rides on `ARBOR_WORKSPACE` - plus what its own configuration adds:
+the item's own `env`, and the secrets it names by name. Nothing else the host
+carries reaches it, so a variable no configuration named stays outside every
+window's reach, which is what "secrets injected by name" means in practice.
+
+`bash` is the one command path: its environment is built in one place, so a
+`Workspace` implementation that needs more for the commands in its windows -
+the ovnfs workspace's `ARBOR_WINDOW` and its git hook path, for instance -
+declares them through `bashEnv` and they are added there
+([workspaces.md](workspaces.md#the-ovnfs-workspace)).
+
 ## Layout
 
 The environment is one shared directory, read-only for every window at `/env`:
@@ -112,8 +128,12 @@ service.
   An upgrade is another `reload`; the host swaps to the new revision.
   Reverting installs an older one.
 - **Failures are inputs.** A crash, a restart loop or a failing health check
-  is a journal event with target `svc:<name>`, dispatched like any outside
-  input: to a window that touched the service, or a new one
+  is a journal event with target `svc:<name>`. The bundled implementation
+  circulates it to the live windows that touched the service, the way any
+  other new event on a target reaches them
+  ([coordination.md](coordination.md#staying-current)); it opens no window of
+  its own. An implementation that wants one - a repair task, a pager - reads
+  the same event and dispatches it itself, the way a task source does
   ([dispatch.md](dispatch.md#tasks)). The host makes no repair task.
 - **Writing to the journal.** A service gets a credential of its own for the
   host API and may append events with it. Its events carry its name as their

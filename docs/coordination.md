@@ -122,3 +122,9 @@ An effect takes place when it is made and cannot be rolled back. So:
   repeat it.
 - A send that answers an outside message names it in `reply_to`, so a
   conversation with several windows in it stays readable.
+- Each effect's result is an event of its own, and it goes back out: the
+  window that made the effect hears whether it was carried out, in the one
+  line the text table holds - `result.effect.ok` or `result.effect.failed`,
+  with the reason. A window's own effect result is the answer to what it
+  sent, so the rule that keeps a window from hearing about its own events
+  does not apply to it.

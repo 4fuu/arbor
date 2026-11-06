@@ -49,7 +49,27 @@ reader.on("line", (line) => {
 });
 `;
 
-async function environment(options: { supervisor?: unknown } = {}): Promise<{
+/** A tiny MCP server whose one function answers with its own environment. */
+const ENV_SERVER = `
+const reader = require("node:readline").createInterface({ input: process.stdin });
+function send(message) { process.stdout.write(JSON.stringify(message) + "\\n"); }
+reader.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "weather", version: "1" } } });
+    return;
+  }
+  if (message.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [{ name: "env", description: "报告本进程的环境变量名", inputSchema: { type: "object", properties: {} } }] } });
+    return;
+  }
+  if (message.method === "tools/call") {
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: JSON.stringify(process.env) }] } });
+  }
+});
+`;
+
+async function environment(options: { supervisor?: unknown; secretOf?: (name: string) => string | undefined } = {}): Promise<{
   env: DirectoryEnvironment;
   root: string;
   work: string;
@@ -60,6 +80,7 @@ async function environment(options: { supervisor?: unknown } = {}): Promise<{
     root,
     mount: "/env",
     ...(options.supervisor === undefined ? {} : { supervisor: options.supervisor as never }),
+    ...(options.secretOf === undefined ? {} : { secretOf: options.secretOf }),
   });
   return { env, root, work };
 }
@@ -225,6 +246,47 @@ describe("the environment", () => {
       ["weather.forecast(city)"],
     );
     assert.equal(await env.call("weather", "weather.forecast", { city: "上海" }), "上海 晴");
+  });
+
+  it("gives an MCP server the minimum environment, its own env and its secrets", async () => {
+    const { env, root, work } = await environment({
+      secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? "sk-mcp-test" : undefined),
+    });
+    // A variable the host carries and no configuration named.
+    process.env.ARBOR_TEST_HOST_ONLY = "host-only";
+    const path = join(work, "weather");
+    await mkdir(path, { recursive: true });
+    await writeFile(join(path, "server.js"), ENV_SERVER, "utf8");
+    await writeFile(
+      join(path, "weather.json"),
+      `${JSON.stringify(
+        {
+          command: process.execPath,
+          args: ["server.js"],
+          description: "天气查询",
+          env: { MCP_MODE: "gray" },
+          secrets: ["ARBOR_TEST_SECRET"],
+        },
+        null,
+        2)}\n`,
+      "utf8",
+    );
+    try {
+      const revision = await env.install([{ kind: "mcp", name: "weather", path }]);
+      assert.equal(revision.changes[0]?.change, "added");
+      const answer = JSON.parse(await env.call("weather", "weather.env", {})) as Record<string, string>;
+      // The minimum a child process needs, and the item's own directory.
+      assert.ok(answer.PATH !== undefined, "a server can find programs");
+      assert.ok(answer.HOME !== undefined);
+      assert.equal(answer.ARBOR_WORKSPACE, join(root, "env/mcp/weather"), "the workspace is the item's own directory");
+      // What the item's own configuration adds, and the secret it names.
+      assert.equal(answer.MCP_MODE, "gray");
+      assert.equal(answer.ARBOR_TEST_SECRET, "sk-mcp-test");
+      // Nothing the host carries beyond that.
+      assert.equal(answer.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+    } finally {
+      delete process.env.ARBOR_TEST_HOST_ONLY;
+    }
   });
 
   it("refuses an MCP server that never starts, and changes nothing", async () => {

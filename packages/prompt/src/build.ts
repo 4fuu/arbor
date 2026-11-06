@@ -334,6 +334,11 @@ export function continuationRecoveryBlock(previous: WindowRef): Block {
   return { kind: "continuation_recovery", fields: { previous } };
 }
 
+/** The previous window's run was cut short by a model failure. */
+export function continuationInterruptedBlock(previous: WindowRef): Block {
+  return { kind: "continuation_interrupted", fields: { previous } };
+}
+
 /** One environment item's line, for `<env>` and `tool_search`. */
 export function envItemLine(item: EnvItem, renderer: Renderer): string {
   return item.path === undefined

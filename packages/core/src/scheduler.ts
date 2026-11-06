@@ -18,6 +18,7 @@ import type {
   InsertionPlan,
   InsertionRequest,
   QueuedInput,
+  RepeatRule,
   ScheduledTask,
   ScheduledTaskInput,
   ScheduledTaskUpdate,
@@ -104,6 +105,49 @@ function nextDaily(dailyAt: string, at: number): number {
   return day + wanted * 60 * 1000;
 }
 
+/** The weekday of a moment, 0 for Sunday. */
+function weekdayOf(at: number): number {
+  return new Date(at).getUTCDay();
+}
+
+/**
+ * The next moment one of these weekdays carries the clock time, after `at`. A
+ * week holds seven days, so the walk is bounded by them.
+ */
+function nextWeekly(weekdays: readonly number[], at: string, from: number): number {
+  const wanted = clockMinutes(at);
+  if (wanted === undefined) return from + DAY_MS;
+  const days = weekdays.filter((day) => day >= 0 && day <= 6);
+  if (days.length === 0) return from + DAY_MS;
+  for (let step = 1; step <= 7; step += 1) {
+    const day = startOfDay(from) + step * DAY_MS;
+    if (!days.includes(weekdayOf(day))) continue;
+    return day + wanted * 60 * 1000;
+  }
+  return from + DAY_MS;
+}
+
+/** Which repeat rule a task carries, so a caller never tests for a field. */
+function everyMsOf(repeat: RepeatRule): number | undefined {
+  return "everyMs" in repeat ? repeat.everyMs : undefined;
+}
+
+function dailyAtOf(repeat: RepeatRule): string | undefined {
+  return "dailyAt" in repeat ? repeat.dailyAt : undefined;
+}
+
+function weekdaysOf(repeat: RepeatRule): { weekdays: readonly number[]; at: string } | undefined {
+  return "weekdays" in repeat ? { weekdays: repeat.weekdays, at: repeat.at } : undefined;
+}
+
+/**
+ * How many firings a rule allows in all: the first one, plus the ones its
+ * `times` names. A rule that names none has no bound.
+ */
+function allowedFirings(times: number | undefined): number {
+  return times === undefined ? Number.POSITIVE_INFINITY : times + 1;
+}
+
 export interface RuleSchedulerOptions {
   /** The clock. Tests pass a fixed one. */
   now?: () => number;
@@ -114,6 +158,13 @@ export interface RuleSchedulerOptions {
   /** Called with the tasks whose time has come. */
   onDue?: (tasks: readonly TaskInput[]) => void | Promise<void>;
   settings?: Settings;
+  /**
+   * Where the jitter comes from. A deployment that wants a repeating task's
+   * timing to be the same across a restart passes a seeded source here, and
+   * passes the same one again after the restart
+   * (docs/dispatch.md#scheduled-tasks).
+   */
+  random?: () => number;
 }
 
 /**
@@ -278,6 +329,12 @@ export class RuleScheduler implements Scheduler {
       .sort((left, right) => left.nextAt - right.nextAt || (left.ref < right.ref ? -1 : 1));
     const fired: TaskInput[] = [];
     for (const task of ready) {
+      // A rule that has fired as often as it allows, or whose next firing would
+      // be past the moment it stops at, never fires again: it is spent.
+      if (this.outOfFirings(task.fired ?? 0, task.repeat?.times) || this.pastEnd(task.nextAt, task.repeat?.until)) {
+        this.tasks.delete(task.ref);
+        continue;
+      }
       if (insideSkip(task.nextAt, task.skipDaily)) {
         // A firing inside a daily skip period moves past it rather than firing.
         this.tasks.set(task.ref, { ...task, nextAt: skipEnd(task.nextAt, task.skipDaily) });
@@ -299,18 +356,57 @@ export class RuleScheduler implements Scheduler {
       this.tasks.delete(task.ref);
       return;
     }
+    // Counting the firing that just happened: a rule that has now fired as
+    // often as it allows is spent.
+    if (this.outOfFirings((task.fired ?? 0) + 1, repeat.times)) {
+      this.tasks.delete(task.ref);
+      return;
+    }
     let next: number;
-    if ("everyMs" in repeat) {
+    const everyMs = everyMsOf(repeat);
+    const dailyAt = dailyAtOf(repeat);
+    const weekly = weekdaysOf(repeat);
+    if (everyMs !== undefined) {
       const elapsed = now - task.nextAt;
       next =
         elapsed > MAX_LATENESS_MS
           ? now
-          : task.nextAt + (Math.floor(elapsed / repeat.everyMs) + 1) * repeat.everyMs;
+          : task.nextAt + (Math.floor(elapsed / everyMs) + 1) * everyMs;
+    } else if (dailyAt !== undefined) {
+      next = nextDaily(dailyAt, task.nextAt);
+    } else if (weekly !== undefined) {
+      next = nextWeekly(weekly.weekdays, weekly.at, task.nextAt);
     } else {
-      next = nextDaily(repeat.dailyAt, task.nextAt);
+      next = task.nextAt + DAY_MS;
     }
-    const moved: ScheduledTask = { ...task, nextAt: next + this.jitter(), lastAt: now };
+    // A next firing past the rule's own end never happens, so the schedule ends
+    // here rather than arming a timer for a firing that will not come.
+    if (this.pastEnd(next, repeat.until)) {
+      this.tasks.delete(task.ref);
+      return;
+    }
+    // The count of firings rides on the record, so a restart restores it.
+    const moved: ScheduledTask = {
+      ...task,
+      nextAt: next + this.jitter(),
+      lastAt: now,
+      fired: (task.fired ?? 0) + 1,
+    };
     this.tasks.set(task.ref, insideSkip(next, moved.skipDaily) ? this.skipAhead(moved) : moved);
+  }
+
+  /**
+   * True once a schedule has fired as often as its rule allows. `times` counts
+   * the firings after the first, so a rule with `times: 2` fires three times in
+   * all; a rule that names none never runs out.
+   */
+  private outOfFirings(fired: number, times: number | undefined): boolean {
+    return fired >= allowedFirings(times);
+  }
+
+  /** True when a firing would be past the moment the rule stops at. */
+  private pastEnd(nextAt: number, until: number | undefined): boolean {
+    return until !== undefined && nextAt > until;
   }
 
   /** Push a schedule past the daily period its next firing falls in. */
@@ -320,19 +416,21 @@ export class RuleScheduler implements Scheduler {
 
   /** Spread colliding repeating tasks apart, so they do not fire together. */
   private spread(task: ScheduledTask): void {
-    if (task.repeat === undefined || !("everyMs" in task.repeat)) return;
+    const everyMs = task.repeat === undefined ? undefined : everyMsOf(task.repeat);
+    if (everyMs === undefined) return;
     for (const other of this.tasks.values()) {
       if (other.ref === task.ref) continue;
-      if (other.repeat === undefined || !("everyMs" in other.repeat)) continue;
-      if (Math.abs(other.nextAt - task.nextAt) >= task.repeat.everyMs) continue;
-      this.tasks.set(task.ref, { ...task, nextAt: other.nextAt + task.repeat.everyMs });
+      if (other.repeat === undefined || everyMsOf(other.repeat) === undefined) continue;
+      if (Math.abs(other.nextAt - task.nextAt) >= everyMs) continue;
+      this.tasks.set(task.ref, { ...task, nextAt: other.nextAt + everyMs });
       return;
     }
   }
 
   private jitter(): number {
     const jitterMs = this.options.settings?.schedule?.jitterMs ?? 0;
-    return jitterMs <= 0 ? 0 : Math.floor(Math.random() * jitterMs);
+    if (jitterMs <= 0) return 0;
+    return Math.floor((this.options.random ?? Math.random)() * jitterMs);
   }
 
   /** One timer, for the nearest firing. */

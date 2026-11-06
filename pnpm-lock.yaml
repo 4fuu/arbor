@@ -90,10 +90,10 @@ importers:
       '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
-    devDependencies:
       '@4fu/arbor-tools':
         specifier: workspace:*
         version: link:../tools
+    devDependencies:
       '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
@@ -260,6 +260,9 @@ importers:
       '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@4fu/arbor-tools':
+        specifier: workspace:*
+        version: link:../tools
     devDependencies:
       '@types/node':
         specifier: ^26.0.0

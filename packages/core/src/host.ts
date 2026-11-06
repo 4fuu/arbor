@@ -104,7 +104,7 @@ import {
   usedPercent,
   zhTextTable,
 } from "@4fu/arbor-prompt";
-import { Jev, scrubJson } from "@4fu/arbor-judge-jev";
+import { Jev } from "@4fu/arbor-judge-jev";
 import type { JevDecisionLog } from "@4fu/arbor-judge-jev";
 import {
   callContext,
@@ -125,6 +125,7 @@ import { HookRunner } from "./hooks.ts";
 import { HookedJournal } from "./hooked-journal.ts";
 import { RefAllocator } from "./refs.ts";
 import { DEFAULT_RETRY_MS, RuleScheduler } from "./scheduler.ts";
+import { SecretScrub } from "./scrub.ts";
 import type { PromptEpoch } from "./snapshot.ts";
 import { SnapshotBuilder } from "./snapshot.ts";
 
@@ -174,6 +175,12 @@ export interface WindowRecord {
   paused: boolean;
   /** The model tier this window runs at; a continuation keeps it. */
   tier?: string;
+  /**
+   * Set when this window is the continuation of one whose model call failed.
+   * One interrupted continuation is enough: a model service that stays down
+   * must not chain windows for ever (docs/windows.md#model-failures).
+   */
+  interrupted?: boolean;
   /** The target it is working on now, for the protection period. */
   currentTarget?: Target;
   /** The workspace mount, once the window touched files. */
@@ -232,6 +239,12 @@ export interface ArborOptions {
   /** The one renderer, shared by the host and the backend. */
   renderer?: Renderer;
   table?: TextTable;
+  /**
+   * Where a secret's value comes from, for the names `settings.secrets` gives.
+   * Defaults to `process.env`; a deployment that holds its secrets elsewhere
+   * resolves them here (docs/architecture.md#data-placement).
+   */
+  secretOf?: (name: string) => string | undefined;
   /** The model a new window gets when settings map no tier. */
   defaultModel?: string;
   now?: () => number;
@@ -277,7 +290,9 @@ export class Arbor {
   /** Every judge decision, so a threshold is tuned from real decisions. */
   private readonly decisions: DecisionRecord[] = [];
   /** The scrub over every string that leaves the host. */
-  private readonly scrub: ((text: string) => string) | undefined;
+  private readonly secrets: SecretScrub;
+  /** Where a named secret's value comes from. `process.env` by default. */
+  private readonly secretOf: (name: string) => string | undefined;
   /** The queue id of the next input that waits for a window. */
   private nextQueueId = 0;
   /**
@@ -323,7 +338,18 @@ export class Arbor {
     this.refs = new RefAllocator();
     this.board = new Board();
     this.settings = options.settings;
-    const effects: EffectQueueOptions = { hooks: this.hooks };
+    this.secretOf = options.secretOf ?? ((name: string) => process.env[name]);
+    this.secrets = new SecretScrub(this.table);
+    this.refreshSecrets(this.settings);
+    const effects: EffectQueueOptions = {
+      hooks: this.hooks,
+      table: this.table,
+      // An effect's result goes back to the window that made it, and to the
+      // other windows in the conversation (docs/coordination.md#effects).
+      onResult: async (event) => {
+        await this.coordinator.circulate(event);
+      },
+    };
     this.effects = new EffectQueue(this.journal, options.executors ?? [], effects);
     this.snapshots = new SnapshotBuilder({
       // The settings are read per epoch, because the model changes them itself.
@@ -345,8 +371,7 @@ export class Arbor {
       now: this.clock,
       activeSet: (candidates, budget, judgeShare) => this.dispatcher.activeSet(candidates, budget, judgeShare),
     });
-    this.scrub = scrubOf(this.settings);
-    this.judge = options.judge ?? defaultJudge(options.settings, this.scrub, this.judgeRequest);
+    this.judge = options.judge ?? defaultJudge(options.settings, this.secrets, this.judgeRequest);
     this.scheduler =
       options.scheduler ??
       new RuleScheduler({
@@ -506,6 +531,15 @@ export class Arbor {
     }
     this.view = { items, modules, removed: [...this.removed].map(([name, ref]) => ({ name, ref })) };
     this.settings = await environment.settings();
+    // The settings name the secrets, and the model may change them: the scrub
+    // is refreshed with them, so a name that appears or disappears takes effect
+    // (docs/architecture.md#data-placement).
+    this.refreshSecrets(this.settings);
+  }
+
+  /** Read the named secrets again, so a settings change reaches the scrub. */
+  private refreshSecrets(settings: Settings | undefined): void {
+    this.secrets.refresh(settings?.secrets ?? [], this.secretOf);
   }
 
   /** What a window read, so `reload` knows which revision its draft is based on. */
@@ -1206,6 +1240,26 @@ export class Arbor {
       journal: this.journal,
       judge: this.judge,
       settings: this.current() ?? {},
+      hooks: this.hooks,
+      // The state a judge is asked about is scrubbed first: it carries outside
+      // text and tool output, and a credential can hide in either.
+      scrub: (state) => (this.secrets.active ? this.secrets.applyJson(state) : state),
+      // A hook refused the window or the act: the rule is recorded, so the
+      // journal says why nothing was routed, and the task is answered as
+      // unrouted rather than thrown back at the push source.
+      refuse: async (task, error) => {
+        await this.journal.append({
+          kind: "dispatch",
+          body: hostBody({
+            task: task.ref,
+            route: "refused",
+            rule: error.rule,
+            ...(error.message === undefined ? {} : { message: error.message }),
+          }),
+          targets: [...task.targets],
+          refs: [task.ref],
+        });
+      },
       now: () => host.clock(),
       nextTask: () => host.refs.nextTask(),
       render: (blocks) => host.renderer.render(blocks),
@@ -1262,7 +1316,7 @@ export class Arbor {
     void this.journal
       .append({
         kind: "judge_decision",
-        body: JSON.stringify(this.scrub === undefined ? record : scrubRecord(record, this.scrub)),
+        body: JSON.stringify(this.secrets.active ? scrubRecord(record, this.secrets) : record),
       })
       .catch(() => {});
   }
@@ -1272,7 +1326,7 @@ export class Arbor {
     void this.journal
       .append({
         kind: "judge_request",
-        body: JSON.stringify(this.scrub === undefined ? log : (scrubJson(log, this.scrub) as JevDecisionLog)),
+        body: JSON.stringify(this.secrets.active ? (this.secrets.applyJson(log) as JevDecisionLog) : log),
       })
       .catch(() => {});
   };
@@ -1306,12 +1360,11 @@ export class Arbor {
     }
     let session: WindowSession;
     // The prompt a window opens with goes through `beforeModelRequest`, so a
-    // plugin sees what the model will read before it reaches the backend. With
-    // no hook registered the window opens without an extra hop.
-    const asked = this.hooks.empty
-      ? { system: input.epoch.system, memory: input.epoch.memory, envRevision: input.epoch.envRevision }
-      : await this.modelRequest(record, input);
-    if (asked === null) {
+    // plugin sees what the model will read before it reaches the backend, and
+    // may change the inputs the first turn is built from. With no hook
+    // registered the window opens without an extra hop.
+    const asked = this.hooks.empty ? null : await this.modelRequest(record, input);
+    if (asked === null && !this.hooks.empty) {
       await this.fail(record, arborError({
         code: "refused",
         rule: "model.request.refused",
@@ -1320,15 +1373,25 @@ export class Arbor {
       }));
       return;
     }
+    // What the hook answered with is used: a changed `inputs` is rendered into
+    // the window's first input, so a plugin can add to it. The host's own
+    // inputs are left as they were built, so nothing is re-rendered for a hook
+    // that did not touch them.
+    const firstInput =
+      asked !== null && asked.inputs !== asked.built ? this.renderer.render(asked.inputs) : input.firstInput;
     try {
       session = await this.backend.open({
         window: record.window,
         task: record.task,
-        prompt: asked,
+        prompt: asked?.prompt ?? {
+          system: input.epoch.system,
+          memory: input.epoch.memory,
+          envRevision: input.epoch.envRevision,
+        },
         tools: this.catalog.tools(),
         modules: this.catalog.modules(),
         model: await this.modelFor(record.tier),
-        firstInput: input.firstInput,
+        firstInput,
         limits: input.limits,
         ...(input.continuation === undefined ? {} : { continuation: input.continuation }),
       });
@@ -1347,12 +1410,15 @@ export class Arbor {
 
   /**
    * The prompt one window opens with, after `beforeModelRequest`. `null` means a
-   * hook refused the request, so the window never reaches a model.
+   * hook refused the request, so the window never reaches a model. `built` is
+   * the inputs the host itself built, so the caller can tell a hook's change
+   * from the host's own.
    */
   private async modelRequest(
     record: WindowRecord,
     input: { firstInput: string; epoch: PromptEpoch },
-  ): Promise<RenderedPrompt | null> {
+  ): Promise<{ prompt: RenderedPrompt; inputs: readonly Block[]; built: readonly Block[] } | null> {
+    const built: readonly Block[] = [dataBlock(input.firstInput)];
     try {
       const asked = await this.hooks.before("beforeModelRequest", {
         window: record.window,
@@ -1361,9 +1427,9 @@ export class Arbor {
           memory: input.epoch.memory,
           envRevision: input.epoch.envRevision,
         },
-        inputs: [dataBlock(input.firstInput)],
+        inputs: built,
       });
-      return asked.prompt;
+      return { prompt: asked.prompt, inputs: asked.inputs, built };
     } catch {
       return null;
     }
@@ -1388,6 +1454,12 @@ export class Arbor {
             break;
           case "steered":
             await this.recordDelivery(record.window, event.delivery);
+            break;
+          case "appended":
+            // What the model wrote in its turn: recorded, so the window's
+            // transcript holds it and a continuation can read what its
+            // predecessor said (docs/journal.md).
+            await this.recordText(record.window, event.event);
             break;
           case "run_ended":
             record.state = record.ending ? "running" : "idle";
@@ -1415,6 +1487,10 @@ export class Arbor {
     if (this.hooks.empty) return;
     const handed = (this.streaming.get(window) ?? Promise.resolve())
       .then(() => this.hooks.after("windowStream", { window, event }))
+      .then(
+        () => undefined,
+        () => undefined,
+      )
       .catch(() => {});
     this.streaming.set(window, handed);
     void handed.then(() => {
@@ -1499,7 +1575,13 @@ export class Arbor {
     await this.release(record);
     // A window a `close` stopped goes on at the next `start`, not here: closing
     // a host starts no new turn (docs/windows.md#restart).
-    const continues = wanted !== undefined || reason === "hard_limit";
+    const continues =
+      wanted !== undefined ||
+      reason === "hard_limit" ||
+      // A window whose model call failed goes on once: its own continuation
+      // carries the interruption, and one is enough, so a model service that
+      // stays down does not chain windows for ever.
+      (reason === "failed" && record.interrupted !== true);
     // The chain's last window ended: its directory waits out the retention
     // period and is then reclaimed (docs/workspaces.md#lifecycle).
     if (!continues) {
@@ -1509,6 +1591,9 @@ export class Arbor {
     await this.continueWindow(record.window, {
       ...(wanted === undefined ? {} : { handoff: wanted }),
       midTaskReset: reason === "hard_limit",
+      // A window whose model call failed has steps that stand and nothing that
+      // says where it stopped, so the continuation is told it was interrupted.
+      interrupted: reason === "failed",
       targets,
       ...(record.tier === undefined ? {} : { tier: record.tier }),
     });
@@ -1524,6 +1609,7 @@ export class Arbor {
     options: {
       handoff?: Handoff;
       midTaskReset?: boolean;
+      interrupted?: boolean;
       targets?: readonly string[];
       tier?: string;
     },
@@ -1569,6 +1655,7 @@ export class Arbor {
           previous,
           ...(continued.handoff === undefined ? {} : { handoff: continued.handoff }),
           ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
+          ...(options.interrupted === true ? { interrupted: true } : {}),
           openTasks,
           effects,
         },
@@ -1585,6 +1672,9 @@ export class Arbor {
       refs: [taskRef, previous],
     });
     const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier);
+    // The continuation of a failed window is itself the interrupted one, so the
+    // chain stops there rather than following a model service that stays down.
+    if (options.interrupted === true) record.interrupted = true;
     this.launch(record, {
       firstInput,
       epoch,
@@ -1694,6 +1784,22 @@ export class Arbor {
       window,
       body: this.renderer.render([...delivery.content]),
       refs: [...delivery.refs],
+    });
+  }
+
+  /**
+   * What the model wrote in its own turn, as one event on the window's record
+   * (docs/journal.md). It is not sent anywhere - only `send` reaches the
+   * outside - so the record is the one place it stands, and a continuation
+   * reads it there. The scrub applies like it does to every other string the
+   * host writes.
+   */
+  private async recordText(window: WindowRef, text: string): Promise<void> {
+    if (text === "") return;
+    await this.journal.append({
+      kind: "assistant",
+      window,
+      body: this.secrets.active ? this.secrets.apply(text) : text,
     });
   }
 
@@ -1957,6 +2063,17 @@ export class Arbor {
     request: { to: string; content: string; replyTo?: string; cites?: readonly Ref[] },
   ): Promise<{ event: EventRef; behind: number }> {
     const target = request.to.includes(":") ? request.to : `window:${request.to}`;
+    // A secret value never leaves the host: the content is checked before the
+    // effect is recorded, so nothing is queued and nothing is sent.
+    const secret = this.secrets.secretIn(request.content);
+    if (secret !== undefined) {
+      throw arborError({
+        code: "refused",
+        rule: "send.secret",
+        message: textOf(this.table, "refused.send.secret", { name: secret.name }),
+        nextAction: textOf(this.table, "next.send.secret", { name: secret.name }),
+      });
+    }
     const input: EffectInput = {
       kind: "send",
       target,
@@ -1965,6 +2082,11 @@ export class Arbor {
       ...(request.replyTo === undefined ? {} : { replyTo: request.replyTo }),
       ...(request.cites === undefined ? {} : { cites: request.cites }),
     };
+    // A send writes on its target, so the window has touched that conversation
+    // and hears what comes back on it - above all its own effect's result
+    // (docs/coordination.md#staying-current). The touch stands before the
+    // effect is queued, because the queue carries the effect out at once.
+    this.board.touch(window, target);
     const outcome = await this.effects.submit(input);
     await this.see(window, outcome.event);
     // A send that cites notes is a use of them: the store cannot see it, so
@@ -2135,16 +2257,46 @@ export class Arbor {
       ran = allowed.call;
       result = await this.catalog.call(ran, context).catch((error: unknown) => this.refusalOf(call, error));
     }
-    if (!this.hooks.empty) await this.hooks.after("afterToolCall", { window, call, result });
+    if (!this.hooks.empty) {
+      const seen = await this.hooks.after("afterToolCall", { window, call, result });
+      // What an after hook answered with is used: it may rewrite the result,
+      // and what the window records and what the model read both follow it.
+      if (seen.result !== undefined) result = seen.result;
+    }
+    const scrubbed = this.scrubResult(result);
     await this.journal.append({
       kind: "tool_result",
       window,
-      body: result.content === "" ? refusalText(result) : result.content,
+      body: scrubbed.content === "" ? refusalText(scrubbed) : scrubbed.content,
       targets: [],
       ...(at === undefined ? {} : { refs: [at] }),
     });
-    return result;
+    return scrubbed;
   };
+
+  /**
+   * One tool result with every secret value replaced, before it is recorded and
+   * before it goes back to the backend: a command that echoes a credential, a
+   * configuration file a window read and an MCP server that answers with one
+   * all come through here (docs/architecture.md#data-placement).
+   */
+  private scrubResult(result: ToolResult): ToolResult {
+    if (!this.secrets.active) return result;
+    const error = result.error;
+    return {
+      ...result,
+      content: this.secrets.apply(result.content),
+      ...(error === undefined
+        ? {}
+        : {
+            error: {
+              ...error,
+              message: this.secrets.apply(error.message),
+              ...(error.nextAction === undefined ? {} : { nextAction: this.secrets.apply(error.nextAction) }),
+            },
+          }),
+    };
+  }
 
   /** One refusal, from a hook or from a call that threw, as a tool result. */
   private refusalOf(call: ToolCall, error: unknown): ToolResult {
@@ -2353,41 +2505,22 @@ function outsideMessageBlockOf(event: OutsideEvent): Block {
  */
 function defaultJudge(
   settings: Settings | undefined,
-  scrub: ((text: string) => string) | undefined,
+  secrets: SecretScrub,
   onDecision: (log: JevDecisionLog) => void,
 ): Judge {
   return new Jev({
-    ...(scrub === undefined ? {} : { scrub }),
+    ...(secrets.active ? { scrub: (text: string) => secrets.apply(text) } : {}),
     ...(settings?.judge?.maxCandidates === undefined ? {} : { maxItems: settings.judge.maxCandidates }),
     onDecision,
   });
 }
 
-/**
- * A scrub over every string that leaves the host, built from the secrets a
- * configuration names - never their values
- * (docs/architecture.md#data-placement). Every judge request goes through it on
- * the way out, and every decision log records the scrubbed form.
- */
-function scrubOf(settings: Settings | undefined): ((text: string) => string) | undefined {
-  const named = (settings?.secrets ?? []).flatMap((name) => {
-    const value = process.env[name];
-    return value === undefined || value === "" ? [] : [{ name, value }];
-  });
-  if (named.length === 0) return undefined;
-  return (text: string) => {
-    let out = text;
-    for (const secret of named) out = out.split(secret.value).join(`[hidden:${secret.name}]`);
-    return out;
-  };
-}
-
 /** The same scrub over one decision record, on the way to the journal. */
-function scrubRecord(record: DecisionRecord, scrub: (text: string) => string): DecisionRecord {
+function scrubRecord(record: DecisionRecord, secrets: SecretScrub): DecisionRecord {
   return {
     ...record,
-    state: scrubJson(record.state, scrub),
-    ...(record.answer === undefined ? {} : { answer: scrubJson(record.answer, scrub) as DecisionRecord["answer"] }),
+    state: secrets.applyJson(record.state),
+    ...(record.answer === undefined ? {} : { answer: secrets.applyJson(record.answer) as DecisionRecord["answer"] }),
   };
 }
 

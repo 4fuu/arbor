@@ -31,6 +31,16 @@ server.listen(Number(process.argv[2]), "127.0.0.1", () => process.stdout.write("
 /** A service that exits immediately, the way a broken one does. */
 const CRASHING = `process.stdout.write("starting\\n"); process.exit(3);`;
 
+/** A service that answers its health check and reports the environment it got. */
+const REPORTING = `
+const http = require("node:http");
+const server = http.createServer((request, response) => {
+  response.writeHead(200, { "content-type": "text/plain" });
+  response.end("ok");
+});
+server.listen(Number(process.argv[2]), "127.0.0.1", () => process.stdout.write(JSON.stringify(process.env) + "\\n"));
+`;
+
 /** A port nothing else is using, so a test's health check has something to hit. */
 async function freePort(): Promise<number> {
   const server = createServer();
@@ -46,16 +56,17 @@ interface Harness {
   root: string;
   /** The services this host started, in the order it reported them. */
   changes: ServiceStatus[];
-  spec(service: "healthy" | "crashing", port: number): ServiceSpec;
+  spec(service: "healthy" | "crashing" | "reporting", port: number): ServiceSpec;
 }
 
-async function harness(): Promise<Harness> {
+async function harness(options: { secretOf?: (name: string) => string | undefined } = {}): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "arbor-svc-"));
   const changes: ServiceStatus[] = [];
   const supervisor = new ProcessSupervisor({
     root,
     now: () => 1700000000000,
     record: async () => `r${changes.length + 1}` as Ref,
+    ...(options.secretOf === undefined ? {} : { secretOf: options.secretOf }),
   });
   supervisor.onStateChange((status) => {
     changes.push(status);
@@ -66,6 +77,7 @@ async function harness(): Promise<Harness> {
     return path;
   };
   const healthy = await script("healthy", HEALTHY);
+  const reporting = await script("reporting", REPORTING);
   const crashing = await script("crashing", CRASHING);
   return {
     supervisor,
@@ -75,7 +87,10 @@ async function harness(): Promise<Harness> {
       return {
         name: service,
         command: process.execPath,
-        args: [service === "healthy" ? healthy : crashing, String(port)],
+        args: [
+          service === "healthy" ? healthy : service === "reporting" ? reporting : crashing,
+          String(port),
+        ],
         ports: [port],
         dir: root,
         healthCheck: { path: "/healthz", port, intervalMs: 20, timeoutMs: 5000 },
@@ -116,6 +131,38 @@ describe("the supervisor", () => {
     assert.ok(page.items.includes("listening"), `the log holds the service's own output: ${page.items.join("|")}`);
     assert.ok(page.total >= 1);
     await host.supervisor.stop("healthy");
+  });
+
+  it("gives a service the minimum environment, its own env and the secrets it names", async () => {
+    const host = await harness({
+      secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? "sk-svc-test" : undefined),
+    });
+    // A variable the host carries and no configuration named.
+    process.env.ARBOR_TEST_HOST_ONLY = "host-only";
+    const port = await freePort();
+    try {
+      const spec = {
+        ...host.spec("reporting", port),
+        env: { SERVICE_MODE: "gray" },
+        secrets: ["ARBOR_TEST_SECRET"],
+      };
+      await host.supervisor.start(spec);
+      const page = await host.supervisor.logs("reporting", { tail: 5 });
+      const line = page.items.find((one) => one.startsWith("{"));
+      const reported = JSON.parse(line ?? "{}") as Record<string, string>;
+      // The minimum a child process needs, and the directory it works in.
+      assert.ok(reported.PATH !== undefined, "a service can find programs");
+      assert.ok(reported.HOME !== undefined);
+      assert.equal(reported.ARBOR_WORKSPACE, host.root, "the workspace is the service's own directory");
+      // What the service's own configuration adds, and the secret it names.
+      assert.equal(reported.SERVICE_MODE, "gray");
+      assert.equal(reported.ARBOR_TEST_SECRET, "sk-svc-test");
+      // Nothing the host carries beyond that.
+      assert.equal(reported.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+      await host.supervisor.stop("reporting");
+    } finally {
+      delete process.env.ARBOR_TEST_HOST_ONLY;
+    }
   });
 
   it("restarts a crash with backoff, then leaves it failed", async () => {

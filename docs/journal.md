@@ -20,6 +20,13 @@ Events have one global order: the number in their id, assigned at append and
 only growing. Watermarks and every comparison use it; `time` is for display
 only.
 
+Every window appends to the journal as it works, and so does the model inside
+it: an assistant message that carries text is recorded as one `assistant` event
+on the window. Nothing but `send` reaches the outside, so the record is the one
+place a window's own words stand - `windows.show` replays them, and a
+continuation reads what its predecessor said
+([windows.md](windows.md#prompt-layout)).
+
 ## Targets
 
 A target is anything two windows can collide on:

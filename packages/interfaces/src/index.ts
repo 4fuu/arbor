@@ -210,6 +210,11 @@ export type {
   AdmissionRequest,
   AdmissionPlan,
   SkipPeriod,
+  DailyRepeat,
+  EveryRepeat,
+  RepeatBounds,
+  RepeatRule,
+  WeeklyRepeat,
   ScheduledTaskInput,
   ScheduledTask,
   ScheduledTaskUpdate,
@@ -217,6 +222,7 @@ export type {
 } from "./scheduler.ts";
 
 export type {
+  AfterHookOutcome,
   HookOutcome,
   AppendContext,
   DispatchContext,

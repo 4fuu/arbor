@@ -62,6 +62,15 @@ routes one.
 A window that has had its final usage reminder, or is near its hard limit, is
 not a candidate.
 
+Every dispatch answers with one result: the task's ref, the window that took it
+or `null`, and how it got there - `filtered`, `hard_rule`, `judge`, `fallback`,
+`waiting` while the backend's rate limits hold it, `redelivered` for a batch of
+nothing but messages the journal already holds, or `refused` when a hook
+stopped it. A refusal is not an error: the rule is recorded as a `dispatch`
+event, the task goes nowhere, and the push source that handed the batch over
+reads the result like any other
+([architecture.md](architecture.md#hooks)).
+
 ## Judge decisions
 
 Every decision is one judge request with its questions batched, inside rules
@@ -191,3 +200,15 @@ tasks apart and their jitter are settings, off by default. The model manages
 them through the `schedule` module - `create`, `update`, `cancel` and `list`
 ([tools.md](tools.md#modules)) - and every change is one service call the host
 records, so a restart restores a schedule that has not fired yet.
+
+A repeat rule is one of three: a period in milliseconds, a clock time it fires
+at daily, or days of the week - `0` for Sunday - with the clock time it fires at
+on them. Any of them may carry two bounds: `times`, how many more times it
+fires after the first, and `until`, the last moment it may fire at. The count of
+firings rides on the schedule's record, so a restart neither repeats a firing
+that already happened nor extends a rule that is spent.
+
+Jitter comes from the scheduler's own random source, `Math.random` by default.
+A deployment that wants a repeating task's timing to be the same across a
+restart passes a seeded source to `RuleScheduler` and passes the same one again
+after the restart.

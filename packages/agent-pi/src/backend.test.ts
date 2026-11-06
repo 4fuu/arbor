@@ -330,6 +330,87 @@ describe("pi backend", () => {
     );
   });
 
+  it("retries a transient model error, sending the same request again", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    // Every request the provider was handed, so the retry's bytes can be read.
+    const sent: string[] = [];
+    const failing = fauxAssistantMessage("", { stopReason: "error", errorMessage: "503 overloaded" });
+    faux.setResponses([
+      (context) => {
+        sent.push(JSON.stringify(context.messages));
+        return failing;
+      },
+      (context) => {
+        sent.push(JSON.stringify(context.messages));
+        return fauxAssistantMessage("重试后完成");
+      },
+    ]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({
+      models,
+      control: controlOf(recorded, () => ({ callId: "x", ok: true, content: "" })),
+      retryDelaysMs: [0],
+      sleep: async () => {},
+    });
+
+    const session = await backend.open(requestOf());
+    const said: string[] = [];
+    const drain = (async () => {
+      for await (const event of session.events()) {
+        if (event.kind === "appended") said.push(event.event);
+        if (event.kind === "ended") break;
+      }
+    })();
+    // The retry runs after the first turn settled, so the test waits for it.
+    await waitFor(() => sent.length === 2);
+    await waitFor(() => said.length === 1);
+    await session.end();
+    await drain;
+
+    assert.equal(sent[1], sent[0], "the retry sends the same bytes, so the cached prefix holds");
+    assert.deepEqual(said, ["重试后完成"], "the failed turn is not an answer: it is dropped, not recorded");
+    assert.equal((await session.outcome()).reason, "model_ended", "the window ran on after the retry");
+  });
+
+  it("leaves a window failed when the model error is not transient", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    let calls = 0;
+    faux.setResponses([
+      () => {
+        calls += 1;
+        // A quota exhaustion is not transient: retrying it changes nothing.
+        return fauxAssistantMessage("", { stopReason: "error", errorMessage: "insufficient_quota" });
+      },
+    ]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({
+      models,
+      control: controlOf(recorded, () => ({ callId: "x", ok: true, content: "" })),
+      retryDelaysMs: [0],
+      sleep: async () => {},
+    });
+
+    const session = await backend.open(requestOf());
+    const kinds: string[] = [];
+    const drain = (async () => {
+      for await (const event of session.events()) kinds.push(event.kind);
+    })();
+    const outcome = await session.outcome();
+    await drain;
+
+    assert.equal(calls, 1, "a failure that is not transient is not retried");
+    assert.equal(outcome.reason, "failed", "the window ends failed, so the host can continue it");
+    assert.match(outcome.error ?? "", /insufficient_quota/);
+  });
+
   it("lists only the models that take images", async () => {
     const faux = fauxProvider({
       models: [

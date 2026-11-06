@@ -34,6 +34,7 @@ import type {
   Supervisor,
 } from "@4fu/arbor-interfaces";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
+import { childEnvironment } from "@4fu/arbor-tools";
 
 /** How many lines one service keeps in memory for `services.logs`. */
 const LOG_MEMORY_LINES = 2000;
@@ -212,7 +213,10 @@ export class ProcessSupervisor implements Supervisor {
     const command = quotaCommand(spec);
     const child = spawn(command.bin, command.args, {
       ...(spec.dir === undefined ? {} : { cwd: spec.dir }),
-      env: { ...process.env, ...(spec.env ?? {}), ...secrets },
+      // A service gets the minimum a child process needs, its own directory,
+      // its own `env` and the secrets it names - never the host's environment
+      // (docs/environment.md#what-a-subprocess-gets).
+      env: childEnvironment({ workspace: spec.dir, env: spec.env, secrets }),
       stdio: ["ignore", "pipe", "pipe"],
     });
     service.child = child;

@@ -15,7 +15,7 @@
 
 import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
 import { ToolCallArgumentsStream } from "@earendil-works/pi-ai";
-import type { Usage as PiUsage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, Usage as PiUsage } from "@earendil-works/pi-ai";
 import type {
   Delivery,
   Handoff,
@@ -207,7 +207,15 @@ export class PiWindowSession implements WindowSession {
         });
         break;
       case "message_end":
-        if (event.message.role === "assistant") this.trackUsage(event.message.usage);
+        if (event.message.role === "assistant") {
+          this.trackUsage(event.message.usage);
+          // What the model said in this turn, as one event on the window's
+          // record: the host journals it, so `windows.show` replays it and a
+          // continuation reads what its predecessor said. A message that only
+          // carries tool calls says nothing and records nothing.
+          const text = assistantText(event.message);
+          if (text !== "") this.stream.push({ kind: "appended", event: text });
+        }
         break;
       case "agent_end":
         this.stream.push({ kind: "run_ended", outcome: this.outcomeOf("model_ended") });
@@ -303,6 +311,13 @@ export class PiWindowSession implements WindowSession {
 
 function callOf(name: string, args: unknown, callId: string): ToolCall {
   return { name, args: (args ?? {}) as Record<string, unknown>, callId };
+}
+
+/** The text one assistant message carries, without its tool calls. */
+function assistantText(message: AssistantMessage): string {
+  return message.content
+    .flatMap((block) => (block.type === "text" ? [block.text] : []))
+    .join("\n");
 }
 
 /**

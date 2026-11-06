@@ -121,12 +121,23 @@ export class HookRunner {
   }
 
   /** After one hook point. An after hook observes and cannot change anything. */
-  async after<P extends HookPoint>(point: P, context: HookContextOf<P>): Promise<void> {
+  async after<P extends HookPoint>(point: P, context: HookContextOf<P>): Promise<HookContextOf<P>> {
+    let current = context;
     for (const hooks of this.hooks) {
-      const hook = hooks[point] as ((value: HookContextOf<P>) => void | Promise<void>) | undefined;
+      const hook = hooks[point] as
+        | ((value: HookContextOf<P>) => HookOutcome<HookContextOf<P>> | void | Promise<HookOutcome<HookContextOf<P>> | void>)
+        | undefined;
       if (hook === undefined) continue;
-      await hook(context);
+      const outcome = await hook(current);
+      // An after hook answers with an outcome where one is useful - a tool
+      // call's result, for instance - and with nothing anywhere else. A
+      // refusal stops the hooks after it: the action has already happened, so
+      // there is nothing left to refuse and nothing is undone.
+      if (outcome === undefined || outcome === null) continue;
+      if (!outcome.allow) break;
+      current = { ...current, ...(outcome.context ?? {}) };
     }
+    return current;
   }
 
   /**

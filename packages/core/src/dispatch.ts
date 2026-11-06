@@ -30,6 +30,7 @@ import type {
   BroadcastAnswer,
   CandidateWindow,
   Delivery,
+  DispatchContext,
   Event,
   EventRef,
   FilterAnswer,
@@ -52,7 +53,10 @@ import type {
 } from "@4fu/arbor-interfaces";
 import { taskBlock } from "@4fu/arbor-prompt";
 import { atHardLimit } from "@4fu/arbor-prompt";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
+import { arborError } from "@4fu/arbor-errors";
 import type { WindowRecord } from "./host.ts";
+import type { HookRunner } from "./hooks.ts";
 
 /**
  * Where each decision's threshold sits: the service layer's own, on the scale
@@ -89,7 +93,15 @@ export const MAX_PROFILE_TASKS = 5;
 export const MAX_PROFILE_INPUTS = 3;
 
 /** How a task reached the window it went to. */
-export type DispatchRoute = "filtered" | "hard_rule" | "judge" | "fallback" | "waiting" | "redelivered";
+export type DispatchRoute =
+  | "filtered"
+  | "hard_rule"
+  | "judge"
+  | "fallback"
+  | "waiting"
+  | "redelivered"
+  /** A hook refused the window or the act, so the task went nowhere. */
+  | "refused";
 
 /** What one dispatch decided. */
 export interface DispatchResult {
@@ -120,6 +132,19 @@ export interface DispatchHost {
   /** The judge, when one is configured. */
   readonly judge: Judge | undefined;
   readonly settings: Settings | undefined;
+  /** The hooks a plugin registered, when any are. */
+  readonly hooks?: HookRunner;
+  /**
+   * The host's secret scrub over a judge request's state, so no secret value
+   * reaches a judge or the hook that watches it.
+   */
+  scrub?(state: unknown): unknown;
+  /**
+   * A hook refused the window or the act. The host records the rule as an
+   * event and answers with `route: "refused"`, so a push source never sees an
+   * error for a refusal (docs/dispatch.md#refusals).
+   */
+  refuse?(task: Task, error: ArborErrorInfo): Promise<void>;
   now(): number;
   nextTask(): TaskRef;
   /** Blocks to text, by the host's one renderer. */
@@ -174,32 +199,100 @@ export class Dispatcher {
     const matched = await this.matched(full);
     if (matched.length === 1) {
       const record = matched[0] as WindowRecord;
-      await this.host.insert(record, full);
-      return { task: taskRef, window: record.window, route: "hard_rule" };
+      return this.act(full, { window: record.window, route: "hard_rule" }, async () => {
+        await this.host.insert(record, full);
+        return record;
+      });
     }
     const candidates = await this.candidates(full, matched);
     const routed = await this.route(full, candidates);
     if (routed.window !== null) {
-      await this.host.insert(routed.window, full);
-      return {
-        task: taskRef,
-        window: routed.window.window,
-        route: routed.answer === undefined ? "fallback" : "judge",
-        ...(routed.answer === undefined ? {} : { answer: routed.answer }),
-      };
+      const answer = routed.answer;
+      const window = routed.window.window;
+      return this.act(
+        full,
+        { window, route: answer === undefined ? "fallback" : "judge", ...(answer === undefined ? {} : { answer }) },
+        async () => {
+          await this.host.insert(routed.window as WindowRecord, full);
+          return routed.window as WindowRecord;
+        },
+      );
     }
     const tier = await this.tier(full);
-    const opened = await this.host.open(full, tier);
-    if (opened === null) {
-      return { task: taskRef, window: null, route: "waiting", tier };
-    }
-    return {
-      task: taskRef,
-      window: opened.window,
-      route: routed.answer === undefined ? "fallback" : "judge",
-      tier,
-      ...(routed.answer === undefined ? {} : { answer: routed.answer }),
+    const answer = routed.answer;
+    return this.act(
+      full,
+      {
+        window: null,
+        route: answer === undefined ? "fallback" : "judge",
+        ...(tier === undefined ? {} : { tier }),
+        ...(answer === undefined ? {} : { answer }),
+      },
+      // A window a hook refused to open is not an error: it is recorded with
+      // its rule and the task is answered as unrouted.
+      () => this.host.open(full, tier).catch((error: unknown) => this.refused(full, error)),
+    );
+  }
+
+  /**
+   * The act, with the dispatch hooks around it (docs/architecture.md#hooks).
+   * `beforeDispatch` sees the decision - the task, the judge's answer and the
+   * window it went to, or `null` when a new window opens - and may refuse it;
+   * a refusal leaves the task unrouted and is recorded with its rule, so a
+   * push source sees a result rather than an error. The decision itself is the
+   * host's: what a hook answers with is not applied to it.
+   */
+  private async act(
+    task: Task,
+    decision: { window: WindowRef | null; route: DispatchRoute; answer?: JudgeAnswer; tier?: string },
+    run: () => Promise<WindowRecord | null | Error>,
+  ): Promise<DispatchResult> {
+    const hooks = this.host.hooks;
+    const context: DispatchContext = {
+      task,
+      ...(decision.answer === undefined ? {} : { answer: decision.answer }),
+      window: decision.window,
     };
+    if (hooks !== undefined && !hooks.empty) {
+      try {
+        await hooks.before("beforeDispatch", context);
+      } catch (error: unknown) {
+        const info = error as ArborErrorInfo;
+        if (info.rule === undefined) throw error;
+        await this.host.refuse?.(task, info);
+        return {
+          task: task.ref,
+          window: null,
+          route: "refused",
+          ...(decision.tier === undefined ? {} : { tier: decision.tier }),
+          ...(decision.answer === undefined ? {} : { answer: decision.answer }),
+        };
+      }
+    }
+    const opened = await run();
+    // The window that took it: the one the decision named, the one the open
+    // made, or none - while backpressure holds it, or a hook refused it.
+    const record = opened instanceof Error || opened === null ? null : opened;
+    const result: DispatchResult = {
+      task: task.ref,
+      window: record?.window ?? null,
+      route: record === null ? (opened instanceof Error ? "refused" : "waiting") : decision.route,
+      ...(decision.tier === undefined ? {} : { tier: decision.tier }),
+      ...(decision.answer === undefined ? {} : { answer: decision.answer }),
+    };
+    if (hooks !== undefined && !hooks.empty) await hooks.after("afterDispatch", { ...context, window: result.window });
+    return result;
+  }
+
+  /**
+   * A window start a hook refused, as the error it refused with. The rule is
+   * recorded, so the journal says why the window never opened.
+   */
+  private refused(task: Task, error: unknown): Error {
+    const info = error as ArborErrorInfo;
+    if (info.rule === undefined) return error instanceof Error ? error : new Error(String(error));
+    void this.host.refuse?.(task, info);
+    return arborError(info);
   }
 
   // ---- 1. filter ----------------------------------------------------------
@@ -208,16 +301,40 @@ export class Dispatcher {
    * One request, with the criteria its plugins registered for this decision.
    * A criterion steers the wording of the question and never enters its state,
    * so it changes what the judge is asked, not what it is shown
-   * (packages/interfaces/src/judge.ts).
+   * (packages/interfaces/src/judge.ts). The state goes through the host's
+   * secret scrub first, so no secret value reaches a judge
+   * (docs/architecture.md#data-placement).
    */
   private ask<S>(decision: JudgeRequest["decision"], mode: JudgeRequest["mode"], state: S): JudgeRequest {
     const criteria = this.host.criteria?.(decision) ?? [];
+    const seen = this.host.scrub === undefined ? state : this.host.scrub(state);
     return {
       decision,
       mode,
-      state,
+      state: seen,
       ...(criteria.length === 0 ? {} : { criteria }),
     } as JudgeRequest;
+  }
+
+  /**
+   * One judge request, with the judge hooks around it
+   * (docs/architecture.md#hooks). `beforeJudge` sees the scrubbed request and
+   * may change it or refuse it; a refusal is this decision's own failure, so
+   * its documented fallback acts. `afterJudge` sees the answer.
+   */
+  private async decide(
+    decision: JudgeRequest["decision"],
+    mode: JudgeRequest["mode"],
+    state: unknown,
+  ): Promise<JudgeAnswer> {
+    const request = this.ask(decision, mode, state);
+    const judge = this.host.judge as Judge;
+    const hooks = this.host.hooks;
+    if (hooks === undefined || hooks.empty) return judge.decide(request);
+    const asked = await hooks.before("beforeJudge", { request, scrubbed: true });
+    const answer = await judge.decide(asked.request);
+    await hooks.after("afterJudge", { request: asked.request, answer, scrubbed: true });
+    return answer;
   }
 
   /**
@@ -233,7 +350,7 @@ export class Dispatcher {
     const judge = this.host.judge;
     if (judge === undefined) return true;
     try {
-      const answer = (await judge.decide(this.ask("filter", mode, state))) as FilterAnswer;
+      const answer = (await this.decide("filter", mode, state)) as FilterAnswer;
       this.log("filter", mode, state, answer);
       if (mode === "shadow") return true;
       return thresholded(answer, FILTER_THRESHOLD);
@@ -414,7 +531,7 @@ export class Dispatcher {
     if (judge === undefined) return none;
     let answer: RouteAnswer;
     try {
-      answer = (await judge.decide(this.ask("route", mode, state))) as RouteAnswer;
+      answer = (await this.decide("route", mode, state)) as RouteAnswer;
     } catch (error) {
       this.failed("route", mode, state, error);
       return none;
@@ -452,7 +569,7 @@ export class Dispatcher {
     if (judge === undefined) return this.defaultTier(tiers);
     let answer: ModelTierAnswer;
     try {
-      answer = (await judge.decide(this.ask("model_tier", mode, state))) as ModelTierAnswer;
+      answer = (await this.decide("model_tier", mode, state)) as ModelTierAnswer;
     } catch (error) {
       this.failed("model_tier", mode, state, error);
       return this.defaultTier(tiers);
@@ -486,7 +603,7 @@ export class Dispatcher {
     if (judge === undefined) return [];
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide(this.ask("notice", mode, state));
+      answer = await this.decide("notice", mode, state);
     } catch (error) {
       this.failed("notice", mode, state, error);
       return [];
@@ -519,7 +636,7 @@ export class Dispatcher {
     if (judge === undefined) return every;
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide(this.ask("broadcast", mode, state));
+      answer = await this.decide("broadcast", mode, state);
     } catch (error) {
       this.failed("broadcast", mode, state, error);
       return every;
@@ -551,7 +668,7 @@ export class Dispatcher {
     if (judge === undefined) return [];
     let answer: JudgeAnswer;
     try {
-      answer = await judge.decide(this.ask("active_set", mode, state));
+      answer = await this.decide("active_set", mode, state);
     } catch (error) {
       this.failed("active_set", mode, state, error);
       return [];

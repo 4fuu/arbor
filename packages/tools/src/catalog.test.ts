@@ -561,6 +561,30 @@ describe("tool catalog", () => {
     assert.equal(missing.error?.rule, "bash.job.not_found");
   });
 
+  it("gives a command the minimum environment, and never the host's own", async () => {
+    const { catalog, root } = await harness();
+    // A variable the host carries and no configuration named.
+    process.env.ARBOR_TEST_HOST_ONLY = "host-only";
+    try {
+      const result = await run(catalog, "bash", { command: "env", timeout: 5000 });
+      assert.equal(result.ok, true);
+      const reported = Object.fromEntries(
+        result.content
+          .split("\n")
+          .filter((line) => line.includes("="))
+          .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+      ) as Record<string, string>;
+      // The minimum a child process needs, and the window's own directory.
+      assert.ok(reported.PATH !== undefined, "a command can find programs");
+      assert.ok(reported.HOME !== undefined);
+      assert.equal(reported.ARBOR_WORKSPACE, join(root, "ws1"), "the workspace is the window's own directory");
+      // Nothing the host carries beyond that.
+      assert.equal(reported.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+    } finally {
+      delete process.env.ARBOR_TEST_HOST_ONLY;
+    }
+  });
+
   it("cuts every tool's result once, at the one exit they all leave by", async () => {
     const { catalog } = await harness();
     // `bash` bounds nothing of its own: the cut is the catalog's, and it is the

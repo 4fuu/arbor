@@ -26,6 +26,7 @@ export {
   broadcastBlock,
   continuationBlocks,
   continuationHandoffBlock,
+  continuationInterruptedBlock,
   continuationRecoveryBlock,
   conversationUpdateBlock,
   dataBlock,

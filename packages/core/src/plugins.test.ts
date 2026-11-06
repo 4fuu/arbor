@@ -20,14 +20,23 @@ import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
   Block,
   BlockKindSpec,
+  DispatchContext,
   Effect,
+  Judge,
+  JudgeAnswer,
+  JudgeContext,
+  JudgeRequest,
+  ModelRequestContext,
   Note,
   Plugin,
   StreamEvent,
   TextTable,
+  ToolCallContext,
+  ToolResult,
 } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
+import { dataBlock } from "@4fu/arbor-prompt";
 
 /** The block kinds the plugin adds to the ones the core builds. */
 const REVIEW_BLOCKS: readonly BlockKindSpec[] = [
@@ -141,7 +150,7 @@ interface Harness {
   timers: ManualTimers;
 }
 
-async function host(options: { plugins?: readonly Plugin[] } = {}): Promise<Harness> {
+async function host(options: { plugins?: readonly Plugin[]; judge?: Judge } = {}): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-plugin-"));
   const backend = new ScriptedBackend();
@@ -153,6 +162,7 @@ async function host(options: { plugins?: readonly Plugin[] } = {}): Promise<Harn
     now: () => 1700000000000,
     workspace: new DirectoryWorkspace({ root }),
     plugins: options.plugins,
+    ...(options.judge === undefined ? {} : { judge: options.judge }),
   });
   backend.attach(arbor.windowControl());
   return { arbor, journal, backend, timers };
@@ -293,7 +303,7 @@ describe("plugins", () => {
     await turn();
     assert.deepEqual(ran, ["hold:deploy"]);
     const results = await journal.list({ kinds: ["effect_result"] });
-    assert.ok((results.items.at(-1)?.body ?? "").includes("dropped 负责人不同意"));
+    assert.ok((results.items.at(-1)?.body ?? "").includes("负责人不同意"));
   });
 
   it("refuses a tool call through a hook, in the core's error shape", async () => {
@@ -414,13 +424,15 @@ describe("plugins", () => {
       ["text 我看一下", "send 已修", "send 已修好", "text 说完了"],
     );
     // The stream is ephemeral: the deltas are not events. The run records the
-    // lifecycle's own events and nothing else, and the call is recorded once,
-    // when it is complete - never once per delta.
+    // lifecycle's own events, the call is recorded once - when it is complete,
+    // never once per delta - and the text the turn finished with is the one
+    // thing the deltas leave behind in the record (docs/journal.md).
     const recorded = await journal.list({ limit: 200 });
     assert.deepEqual(
       recorded.items.map((event) => event.kind),
-      ["window_start", "tool_call", "send", "tool_result"],
+      ["window_start", "tool_call", "send", "tool_result", "assistant"],
     );
+    assert.equal(recorded.items.at(-1)?.body, "完成");
     assert.ok((recorded.items[1]?.body ?? "").includes("已修好"));
     // The window ran to its end all the same.
     assert.equal(arbor.live()[0]?.state, "idle");
@@ -447,5 +459,147 @@ describe("plugins", () => {
     const ended = await journal.list({ kinds: ["window_end"] });
     assert.equal(ended.items.length, 0, "the window is still open, not failed");
     assert.equal(arbor.live()[0]?.state, "idle");
+  });
+});
+
+describe("the hooks the core runs", () => {
+  /** A judge that answers every decision the way the quiet one does. */
+  class AnsweringJudge implements Judge {
+    readonly name = "answering";
+    /** Every request the judge was handed, in order. */
+    readonly asked: JudgeRequest[] = [];
+
+    async decide(request: JudgeRequest): Promise<JudgeAnswer> {
+      this.asked.push(request);
+      if (request.decision === "filter") return { decision: "filter", needsHandling: true };
+      if (request.decision === "model_tier") return { decision: "model_tier", tier: "" };
+      if (request.decision === "route") {
+        // The best of the candidates it was asked about, or a new window when
+        // there are none.
+        const candidates = request.state.candidates;
+        const first = candidates[0]?.window;
+        return first === undefined
+          ? { decision: "route", scores: [{ item: "new", score: 3 }], best: "new" }
+          : { decision: "route", scores: [{ item: first, score: 3 }], best: first };
+      }
+      return { decision: "active_set", keep: [], drop: [] };
+    }
+  }
+
+  it("runs the dispatch hooks around a routing decision, with the window it went to", async () => {
+    const before: DispatchContext[] = [];
+    const after: DispatchContext[] = [];
+    const plugin: Plugin = {
+      name: "watcher",
+      hooks: {
+        beforeDispatch: (context) => {
+          before.push({ ...context, task: { ...context.task } });
+          return { allow: true };
+        },
+        afterDispatch: (context) => void after.push({ ...context, task: { ...context.task } }),
+      },
+    };
+    const { arbor, backend } = await host({ plugins: [plugin], judge: new AnsweringJudge() });
+    backend.script([{ text: "第一个窗口" }]);
+    const first = await arbor.open(task);
+    await backend.finished();
+
+    const result = await arbor.dispatch({ ...task, reason: "再看一次 CI", time: 1700000001000 });
+
+    assert.equal(result.route, "judge");
+    assert.equal(result.window, first.window);
+    assert.equal(before.length, 1);
+    assert.equal(before[0]?.window, first.window, "the decision names the window the task goes to");
+    assert.equal(before[0]?.answer?.decision, "route", "the judge's answer rides on the decision");
+    assert.equal(after.length, 1);
+    assert.equal(after[0]?.window, result.window, "the after hook sees the window that took it");
+  });
+
+  it("runs the judge hooks around a judge request, with the state it saw", async () => {
+    const before: JudgeContext[] = [];
+    const after: JudgeContext[] = [];
+    const plugin: Plugin = {
+      name: "watcher",
+      hooks: {
+        beforeJudge: (context) => {
+          before.push(context);
+          return { allow: true };
+        },
+        afterJudge: (context) => void after.push(context),
+      },
+    };
+    const { arbor, backend } = await host({ plugins: [plugin], judge: new AnsweringJudge() });
+    backend.script([{ text: "第一个窗口" }]);
+
+    await arbor.dispatch(task);
+
+    assert.ok(before.length > 0, "every decision was watched");
+    assert.equal(before[0]?.scrubbed, true, "the state was through the host's scrub");
+    assert.equal(before[0]?.request.decision, "filter");
+    assert.equal(after.length, before.length);
+    assert.equal(after[0]?.answer?.decision, "filter");
+  });
+
+  it("falls back on a judge request a hook refused", async () => {
+    const plugin: Plugin = {
+      name: "gate",
+      hooks: {
+        beforeJudge: () => ({
+          allow: false,
+          error: { code: "refused", rule: "policy.judge.denied", message: "本部署禁止询问判官。" },
+        }),
+      },
+    };
+    const { arbor, backend } = await host({ plugins: [plugin], judge: new AnsweringJudge() });
+    backend.script([{ text: "仍然开窗" }]);
+
+    const result = await arbor.dispatch(task);
+
+    // The filter's own fallback passes the batch, so a window opens all the same.
+    assert.equal(result.route, "fallback");
+    await settle();
+    assert.equal(backend.opened.length, 1);
+  });
+
+  it("uses the result an after-tool-call hook answered with", async () => {
+    const plugin: Plugin = {
+      name: "rewriter",
+      hooks: {
+        afterToolCall: (context: ToolCallContext) => ({
+          allow: true,
+          context: { ...context, result: { ...(context.result as ToolResult), content: "钩子改写后的结果" } },
+        }),
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    backend.script([{ tool: "send", args: { to: "qq:group:1", content: "已修好" } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.equal(results.items[0]?.body, "钩子改写后的结果", "the record holds what the hook answered with");
+    // The window's own effect was made before the hook ran, so the send stands.
+    assert.equal((await journal.list({ kinds: ["send"] })).items.length, 1);
+  });
+
+  it("opens the window with the inputs a model-request hook answered with", async () => {
+    const plugin: Plugin = {
+      name: "injector",
+      hooks: {
+        beforeModelRequest: (context: ModelRequestContext) => ({
+          allow: true,
+          context: { ...context, inputs: [dataBlock(`${context.inputs[0]?.fields.content ?? ""}\n注入的一行`)] },
+        }),
+      },
+    };
+    const { arbor, backend } = await host({ plugins: [plugin] });
+    backend.script([{ text: "完成" }]);
+
+    await arbor.open(task);
+    await backend.finished();
+
+    const opened = backend.opened[0];
+    assert.ok(opened?.firstInput?.includes("CI 红了"), "the input the host built is still there");
+    assert.ok(opened?.firstInput?.includes("注入的一行"), "what the hook added is rendered into it");
   });
 });

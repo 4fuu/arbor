@@ -349,6 +349,118 @@ describe("scheduled tasks", () => {
     assert.equal(host.fired.length, 1);
     assert.equal(host.fired[0]?.reason, "a restored check");
   });
+
+  it("fires a weekly rule on the weekdays it names, at the clock time it names", async () => {
+    const host = scheduler();
+    // 2026-11-05 is a Thursday. The next Friday at 09:00 is 2026-11-06.
+    const thursday = Date.UTC(2026, 10, 5, 12, 0, 0);
+    await host.scheduler.schedule(
+      schedule({ firstAt: thursday, repeat: { weekdays: [5, 1], at: "09:00" } }),
+    );
+
+    host.at(thursday);
+    host.timers.fireAll();
+    await settle();
+
+    const after = await host.scheduler.list();
+    assert.equal(after[0]?.nextAt, Date.UTC(2026, 10, 6, 9, 0, 0), "the next named weekday, at its clock time");
+    // The Monday after that is 2026-11-09.
+    host.at(Date.UTC(2026, 10, 6, 9, 0, 0));
+    host.timers.fireAll();
+    await settle();
+    assert.equal((await host.scheduler.list())[0]?.nextAt, Date.UTC(2026, 10, 9, 9, 0, 0));
+  });
+
+  it("fires a rule as many more times as it says, and then drops it", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule({ repeat: { everyMs: 5_000, times: 1 } }));
+
+    host.at(10_000);
+    host.timers.fireAll();
+    await settle();
+    host.at(15_000);
+    host.timers.fireAll();
+    await settle();
+
+    assert.equal(host.fired.length, 2, "the first firing and the one more the rule allows");
+    assert.equal((await host.scheduler.list()).length, 0, "a rule out of firings is spent");
+    host.at(20_000);
+    host.timers.fireAll();
+    await settle();
+    assert.equal(host.fired.length, 2);
+  });
+
+  it("keeps the count of firings on the record, so a restart does not repeat them", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule({ repeat: { everyMs: 5_000, times: 1 } }));
+
+    host.at(10_000);
+    host.timers.fireAll();
+    await settle();
+    const [stored] = await host.scheduler.list();
+    assert.equal(stored?.fired, 1);
+
+    // The next host restores the record, which says one firing is already made.
+    const restarted = scheduler();
+    await restarted.scheduler.restore([stored as ScheduledTask]);
+    restarted.at(15_000);
+    restarted.timers.fireAll();
+    await settle();
+
+    assert.equal(restarted.fired.length, 1, "the one more firing the rule allows");
+    assert.equal((await restarted.scheduler.list()).length, 0);
+  });
+
+  it("stops a rule at the moment it names", async () => {
+    const host = scheduler();
+    await host.scheduler.schedule(schedule({ repeat: { everyMs: 5_000, until: 12_000 } }));
+
+    host.at(10_000);
+    host.timers.fireAll();
+    await settle();
+    assert.equal(host.fired.length, 1);
+
+    // The next firing would be past the end, so the schedule is spent instead.
+    host.at(15_000);
+    host.timers.fireAll();
+    await settle();
+
+    assert.equal(host.fired.length, 1, "nothing fires past the end");
+    assert.equal((await host.scheduler.list()).length, 0);
+  });
+
+  it("draws its jitter from the source it was given, so the same seed repeats it", async () => {
+    // The jitter comes from the source a deployment passes, not from
+    // `Math.random`: two schedulers seeded the same way time the same firing the
+    // same way, which is what makes a restart reproducible.
+    const seeded = (): (() => number) => {
+      let value = 0.5;
+      return () => {
+        value = (value * 1103515245 + 12345) % 2147483648;
+        return value / 2147483648;
+      };
+    };
+    const first = new RuleScheduler({
+      now: () => 1_000,
+      timers: new ManualTimers(),
+      nextTask: () => "t1" as TaskRef,
+      settings: { schedule: { jitterMs: 1_000 } },
+      random: seeded(),
+    });
+    const second = new RuleScheduler({
+      now: () => 1_000,
+      timers: new ManualTimers(),
+      nextTask: () => "t1" as TaskRef,
+      settings: { schedule: { jitterMs: 1_000 } },
+      random: seeded(),
+    });
+    await first.schedule(schedule({ repeat: { everyMs: 5_000 } }));
+    await second.schedule(schedule({ repeat: { everyMs: 5_000 } }));
+
+    const nextAt = (await first.list())[0]?.nextAt ?? 0;
+    assert.equal(nextAt, (await second.list())[0]?.nextAt, "the same seed gives the same firing time");
+    assert.ok(nextAt >= 10_000 && nextAt < 11_000, "the jitter stays inside the window it was given");
+  });
 });
 
 function task(): TaskInput {

@@ -235,8 +235,9 @@ describe("the http channel plugin", () => {
   it("steers a second message in the same conversation into the window already in it", async () => {
     const harness = await host();
     try {
-      // One response per turn: the first message, the second one steered in, and
-      // the message that opens a window of its own.
+      // One response per turn: the first message, the two the second message
+      // reaches the window as - the conversation update and the inserted task -
+      // and the message that opens a window of its own.
       harness.script([
         async (context: { messages: readonly { role: string }[] }) => {
           harness.seen.push(JSON.stringify(context.messages));
@@ -245,6 +246,10 @@ describe("the http channel plugin", () => {
         async (context: { messages: readonly { role: string }[] }) => {
           harness.seen.push(JSON.stringify(context.messages));
           return fauxAssistantMessage("这个也收到了。");
+        },
+        async (context: { messages: readonly { role: string }[] }) => {
+          harness.seen.push(JSON.stringify(context.messages));
+          return fauxAssistantMessage("这条也收到了。");
         },
         async (context: { messages: readonly { role: string }[] }) => {
           harness.seen.push(JSON.stringify(context.messages));
@@ -314,7 +319,9 @@ describe("the http channel plugin", () => {
       const results = await harness.journal.list({ kinds: ["effect_result"] });
       const last = results.items.at(-1);
       assert.equal(last?.external, sent?.external);
-      assert.equal(last?.body, "ok");
+      // The result is one fixed line from the text table, so the window that
+      // sent it reads the same words whatever the channel answered.
+      assert.equal(last?.body, "效果 r8 已执行。");
       // The send is recorded as an effect on the conversation, not on a window.
       const sends = await harness.journal.list({ kinds: ["send"] });
       assert.deepEqual(sends.items.at(-1)?.targets, ["http:demo"]);

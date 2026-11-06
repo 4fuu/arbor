@@ -8,9 +8,20 @@
  * repeat it: the event is the record that it happened.
  */
 
-import type { Effect, EffectExecutor, EffectResult, EventRef, Ref, Target, WindowRef } from "@4fu/arbor-interfaces";
+import type {
+  Effect,
+  EffectExecutor,
+  Event,
+  EventRef,
+  ExternalRef,
+  Ref,
+  Target,
+  TextTable,
+  WindowRef,
+} from "@4fu/arbor-interfaces";
 import type { Journal } from "@4fu/arbor-interfaces";
 import type { Block } from "@4fu/arbor-interfaces";
+import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 import type { HookRunner } from "./hooks.ts";
 
 /** What a `send` hands the queue. */
@@ -34,12 +45,22 @@ export interface EffectOutcome {
 export interface EffectQueueOptions {
   /** Hooks, from a plugin: an effect can be held for an approval or dropped. */
   hooks?: HookRunner;
+  /** The fixed strings the result event records. */
+  table?: TextTable;
+  /**
+   * Called with each effect's result event, so the host circulates it: the
+   * window that made the effect hears whether it was carried out
+   * (docs/coordination.md#effects).
+   */
+  onResult?: (event: Event) => void | Promise<void>;
 }
 
 export class EffectQueue {
   private readonly journal: Journal;
   private executors: readonly EffectExecutor[];
   private readonly hooks: HookRunner | undefined;
+  private readonly table: TextTable;
+  private readonly onResult: ((event: Event) => void | Promise<void>) | undefined;
   private readonly queue: Effect[] = [];
   /** Effects no executor owns yet. They stay recorded and wait for a plugin. */
   private readonly unowned: Effect[] = [];
@@ -52,6 +73,8 @@ export class EffectQueue {
     this.journal = journal;
     this.executors = executors;
     this.hooks = options.hooks;
+    this.table = options.table ?? zhTextTable;
+    this.onResult = options.onResult;
   }
 
   /** Record one effect and queue it. The effect is not carried out yet. */
@@ -147,15 +170,7 @@ export class EffectQueue {
       if (effects === undefined) continue;
       this.held.delete(key);
       dropped += effects.length;
-      for (const effect of effects) {
-        await this.journal.append({
-          kind: "effect_result",
-          window: effect.madeBy,
-          body: `dropped ${reason}`,
-          targets: [effect.target],
-          refs: [effect.event],
-        });
-      }
+      for (const effect of effects) await this.record(effect, { ok: false, error: reason });
     }
     return dropped;
   }
@@ -179,13 +194,7 @@ export class EffectQueue {
       return;
     }
     if (outcome.action === "drop") {
-      await this.journal.append({
-        kind: "effect_result",
-        window: effect.madeBy,
-        body: `dropped ${outcome.error.message}`,
-        targets: [effect.target],
-        refs: [effect.event],
-      });
+      await this.record(effect, { ok: false, error: outcome.error.message });
       return;
     }
     const executor = this.executors.find((one) => one.can(effect));
@@ -195,15 +204,39 @@ export class EffectQueue {
       this.unowned.push(effect);
       return;
     }
-    const result: EffectResult = await executor.run(effect);
-    await this.journal.append({
+    const result = await executor.run(effect);
+    await this.record(effect, {
+      ok: result.ok,
+      ...(result.error === undefined ? {} : { error: result.error.message }),
+      ...(result.external === undefined ? {} : { external: result.external }),
+    });
+  }
+
+  /**
+   * One effect's result, as an event on its target. The body is the one fixed
+   * line the text table holds, so the window that made the effect reads the
+   * same words whether the channel took it or the executor failed
+   * (docs/coordination.md#effects).
+   */
+  private async record(
+    effect: Effect,
+    result: { ok: boolean; error?: string; external?: ExternalRef },
+  ): Promise<void> {
+    const body = textOf(
+      this.table,
+      result.ok ? "result.effect.ok" : "result.effect.failed",
+      result.ok ? { ref: effect.event } : { ref: effect.event, reason: result.error ?? "" },
+    );
+    const event = await this.journal.append({
       kind: "effect_result",
       window: effect.madeBy,
-      body: result.ok ? "ok" : (result.error?.message ?? "failed"),
+      body,
       targets: [effect.target],
       refs: [effect.event],
       ...(result.external === undefined ? {} : { external: result.external }),
     });
+    // The result goes back out, so the window that made the effect hears it.
+    await this.onResult?.(event);
   }
 }
 

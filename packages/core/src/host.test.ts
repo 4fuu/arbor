@@ -7,8 +7,8 @@ import { describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
-import type { Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
-import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
+import type { Effect, Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
+import type { CallContext, DirectToolSpec, Settings, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
 import type {
   OutsideEvent,
   Plugin,
@@ -42,6 +42,11 @@ class QuietJudge implements Judge {
     }
     return { decision: "active_set", keep: [], drop: [] };
   }
+}
+
+/** Let the host's watchers run, so a test observes what it recorded. */
+async function settle(): Promise<void> {
+  for (let index = 0; index < 8; index += 1) await turn();
 }
 
 /** A tool group a test owns, so a call's result is exactly what it scripts. */
@@ -81,6 +86,14 @@ async function host(
     retentionMs?: number;
     now?: () => number;
     plugins?: readonly Plugin[];
+    /** The settings the host runs with, secrets included. */
+    settings?: Settings;
+    /** The judge the host routes with. Defaults to one that answers nothing. */
+    judge?: Judge;
+    /** Where a named secret's value comes from. */
+    secretOf?: (name: string) => string | undefined;
+    /** Extra tool groups, from a plugin. */
+    groups?: readonly ToolGroup[];
   } = {},
 ): Promise<{
   arbor: Arbor;
@@ -102,12 +115,14 @@ async function host(
     backend,
     timers,
     now: options.now ?? (() => 1700000000000),
-    judge: new QuietJudge(),
+    judge: options.judge ?? new QuietJudge(),
     ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
     ...(environment === undefined ? {} : { environment }),
     ...(options.retentionMs === undefined ? {} : { settings: { workspaces: { retentionMs: options.retentionMs } } }),
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
+    ...(options.secretOf === undefined ? {} : { secretOf: options.secretOf }),
     ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
-    groups: [probe],
+    groups: [...(options.groups ?? []), probe],
   });
   backend.attach(arbor.windowControl());
   return { arbor, journal, timers, backend, probe, root, ...(environment === undefined ? {} : { environment }) };
@@ -1150,5 +1165,261 @@ describe("refs across a restart", () => {
     }
     const refs = await RefAllocator.from(journal);
     assert.equal(refs.nextWindow(), "c251");
+  });
+});
+
+describe("secrets", () => {
+  const VALUE = "sk-live-4fUU-arbor-0001";
+
+  /** A tool group whose result carries whatever the script gave it. */
+  class EchoGroup implements ToolGroup {
+    readonly id = "echo";
+    readonly text: string;
+
+    constructor(text: string) {
+      this.text = text;
+    }
+
+    tools(): readonly DirectToolSpec[] {
+      return [
+        {
+          name: "echo",
+          description: "把一段文本原样返回。",
+          parameters: { text: { type: "string", description: "内容", required: true } },
+        },
+      ];
+    }
+
+    modules(): readonly [] {
+      return [];
+    }
+
+    async call(request: ToolCall): Promise<ToolResult> {
+      return { callId: request.callId, ok: true, content: this.text };
+    }
+  }
+
+  function secretHost(groups: readonly ToolGroup[]): Promise<Awaited<ReturnType<typeof host>>> {
+    return host({
+      groups,
+      settings: { secrets: ["ARBOR_TEST_SECRET"] },
+      secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? VALUE : undefined),
+    });
+  }
+
+  it("replaces a secret value in a tool result, in every form it can take", async () => {
+    const raw = `key=${VALUE}`;
+    const encoded = `base64 ${Buffer.from(VALUE, "utf8").toString("base64")} url ${encodeURIComponent(VALUE)}`;
+    const { arbor, journal, backend } = await secretHost([new EchoGroup(`${raw}\n${encoded}`)]);
+    backend.script([{ tool: "echo", args: {} }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    const body = results.items[0]?.body ?? "";
+    assert.ok(!body.includes(VALUE), "the raw value is gone");
+    assert.ok(!body.includes(Buffer.from(VALUE, "utf8").toString("base64")), "its base64 form is gone");
+    assert.ok(!body.includes(encodeURIComponent(VALUE)), "its URL-encoded form is gone");
+    assert.equal(body.split("[hidden:ARBOR_TEST_SECRET]").length - 1, 3, "every form carries the placeholder");
+    // What the model reads is the scrubbed form too, not only the record.
+    assert.ok(!(backend.opened[0]?.firstInput ?? "").includes(VALUE));
+  });
+
+  it("leaves a value too short to be a secret alone", async () => {
+    const { arbor, journal, backend } = await secretHost([new EchoGroup("abc")]);
+    backend.script([{ tool: "echo", args: {} }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.equal(results.items[0]?.body, "abc");
+  });
+
+  it("refuses a send whose content carries a secret value, and records nothing", async () => {
+    const { arbor, journal, backend } = await secretHost([]);
+    backend.script([{ tool: "send", args: { to: "qq:group:1", content: `密钥是 ${VALUE}` } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.equal((results.items[0]?.body ?? "").includes("send.secret"), true);
+    assert.ok((results.items[0]?.body ?? "").includes("ARBOR_TEST_SECRET"));
+    // Nothing was recorded as an effect, so nothing can be carried out.
+    assert.equal((await journal.list({ kinds: ["send"] })).items.length, 0);
+    assert.equal((await journal.list({ kinds: ["effect_result"] })).items.length, 0);
+  });
+
+  it("picks a secret up when the settings name one later", async () => {
+    // The host opens with no secret named; the environment's settings name one,
+    // and `start` reads them, so the scrub covers it from then on.
+    const { arbor, journal, backend, root, environment } = await host({
+      environment: true,
+      groups: [new EchoGroup(`key=${VALUE}`)],
+      settings: { secrets: [] },
+      secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? VALUE : undefined),
+    });
+    assert.ok(environment !== undefined);
+    // The settings item is one file, the way a window writes it in its workspace.
+    const draft = join(root, "settings.json");
+    await writeFile(draft, `${JSON.stringify({ secrets: ["ARBOR_TEST_SECRET"] }, null, 2)}\n`, "utf8");
+    await environment.install([{ kind: "settings", name: "settings", path: draft }]);
+
+    await arbor.start();
+    backend.script([{ tool: "echo", args: {} }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.equal(results.items[0]?.body, "key=[hidden:ARBOR_TEST_SECRET]");
+  });
+
+  it("asks the judge about a scrubbed state, and logs no secret value", async () => {
+    const asked: unknown[] = [];
+    const quiet = new QuietJudge();
+    const judge: Judge = {
+      name: "recording",
+      decide: async (request) => {
+        asked.push(request.state);
+        return quiet.decide(request);
+      },
+    };
+    const { arbor, journal } = await host({
+      settings: { secrets: ["ARBOR_TEST_SECRET"] },
+      secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? VALUE : undefined),
+      judge,
+    });
+    await arbor.dispatch({ ...task, content: [{ kind: "data", fields: { content: `密钥是 ${VALUE}` } }] });
+
+    assert.ok(asked.length > 0, "the judge was asked");
+    const state = JSON.stringify(asked);
+    assert.ok(!state.includes(VALUE), "the state the judge saw holds no raw value");
+    assert.ok(state.includes("[hidden:ARBOR_TEST_SECRET]"), "the placeholder stands in its place");
+    const decisions = await journal.list({ kinds: ["judge_decision"] });
+    for (const decision of decisions.items) {
+      assert.ok(!(decision.body ?? "").includes(VALUE), "no decision log holds the raw value");
+    }
+  });
+});
+
+describe("the window's own words", () => {
+  it("records what the model wrote, so the transcript replays it", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ textDelta: "我看一下" }, { text: "CI 是网络问题" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const said = await journal.list({ window: record.window, kinds: ["assistant"] });
+    assert.equal(said.items.length, 1);
+    assert.equal(said.items[0]?.body, "CI 是网络问题");
+    // `windows.show` reads the window's events, so the transcript holds it.
+    const shown = await arbor.services.windowTranscript(record.window);
+    assert.ok(shown.some((event) => event.kind === "assistant" && event.body === "CI 是网络问题"));
+  });
+
+  it("records nothing for a turn that only made tool calls", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ tool: "probe", args: {} }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    assert.equal((await journal.list({ window: record.window, kinds: ["assistant"] })).items.length, 0);
+  });
+
+  it("opens a continuation when the window's model call failed, saying it was interrupted", async () => {
+    const { arbor, backend } = await host();
+    backend.script([{ ended: "failed" }, { text: "接着做" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const continuation = backend.opened[1];
+    assert.ok(continuation !== undefined, "a failed window's work goes on");
+    assert.ok(continuation?.firstInput?.includes("上一轮因模型服务异常中断"));
+    assert.equal(record.state, "ended");
+  });
+});
+
+describe("a window's own effect result", () => {
+  it("comes back to the window that made it, in the text table's words", async () => {
+    let now = 1700000000000;
+    const { arbor, journal, backend } = await host({ now: () => now });
+    arbor.effects.addExecutor({
+      id: "test-send",
+      can: (effect: Effect) => effect.kind === "send",
+      run: async () => ({ ok: true }),
+    });
+    backend.script([{ tool: "send", args: { to: "qq:group:123", content: "已修好" } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    // Past the protection period, so what the send brought back may go in: the
+    // window is on another conversation, and only the current target enters
+    // during the period (docs/dispatch.md#insertion-timing).
+    now += 120_000;
+    await backend.finished();
+    await settle();
+
+    const results = await journal.list({ kinds: ["effect_result"] });
+    assert.equal(results.items.length, 1);
+    assert.match(results.items[0]?.body ?? "", /^效果 r\d+ 已执行。$/);
+    // The window that sent it hears the result, as a delivery it may read.
+    const deliveries = await journal.list({ window: record.window, kinds: ["delivery"] });
+    assert.ok(
+      deliveries.items.some((event) => (event.body ?? "").includes("已执行。")),
+      "the window's own result is delivered to it",
+    );
+  });
+
+  it("says an effect did not run, and why", async () => {
+    let now = 1700000000000;
+    const { arbor, journal, backend } = await host({ now: () => now });
+    arbor.effects.addExecutor({
+      id: "test-send",
+      can: (effect: Effect) => effect.kind === "send",
+      run: async () => ({
+        ok: false,
+        error: { code: "unavailable", rule: "channel.refused", message: "频道拒收了这条消息" },
+      }),
+    });
+    backend.script([{ tool: "send", args: { to: "qq:group:123", content: "已修好" } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    now += 120_000;
+    await backend.finished();
+    await settle();
+
+    const results = await journal.list({ kinds: ["effect_result"] });
+    assert.equal(results.items.length, 1);
+    assert.ok((results.items[0]?.body ?? "").includes("没有执行"));
+    assert.ok((results.items[0]?.body ?? "").includes("频道拒收了这条消息"));
+    const deliveries = await journal.list({ window: record.window, kinds: ["delivery"] });
+    assert.ok(deliveries.items.some((event) => (event.body ?? "").includes("没有执行")));
+    assert.equal(record.window, "c1");
+  });
+});
+
+describe("a refusal to open a window", () => {
+  it("records the rule and answers the task as unrouted, without throwing", async () => {
+    const plugin: Plugin = {
+      name: "gate",
+      hooks: {
+        windowStart: () => ({
+          allow: false,
+          error: {
+            code: "refused",
+            rule: "policy.window.denied",
+            message: "本部署不允许为这个来源开窗。",
+            nextAction: "换一个被允许的来源。",
+          },
+        }),
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    backend.script([{ text: "不会运行" }]);
+
+    const result = await arbor.dispatch(task);
+
+    assert.equal(result.route, "refused");
+    assert.equal(result.window, null);
+    assert.equal(backend.opened.length, 0, "no window opened");
+    const recorded = await journal.list({ kinds: ["dispatch"] });
+    assert.equal(recorded.items.length, 1);
+    assert.ok((recorded.items[0]?.body ?? "").includes("policy.window.denied"));
   });
 });

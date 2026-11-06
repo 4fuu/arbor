@@ -161,10 +161,24 @@ The hooks run in the order their plugins registered, each seeing what the one
 before it changed, and the first refusal stops the rest. What a refusal does is
 the point's own: around an append, a note write, a reload or a tool call it
 throws, so the caller answers with the rule; before a delivery it drops the
-delivery; before an effect it holds it for an approval; before a window start or
-a model request the window never opens. The live-output hook has nothing to
-refuse: it observes, and a hook that fails loses its own deltas
+delivery; before an effect it holds it for an approval; before a window start,
+a dispatch or a judge request it stops what was about to happen - the window
+never opens, the task is answered as `route: "refused"` with the rule recorded
+as an event, or the decision falls back on its own documented default - and a
+push source never sees an error for a refusal. Before a model request the
+window never opens. The live-output hook has nothing to refuse: it observes,
+and a hook that fails loses its own deltas
 ([windows.md](windows.md#streaming)).
+
+`afterToolCall` answers with an outcome whose `result` is used: a hook that
+rewrites a result changes what the window records and what the model reads.
+The call has already run, so a refusal there stops the hooks after it and
+changes nothing else. `beforeModelRequest` runs once per window, before the
+first turn, and the `inputs` it answers with are rendered into the window's
+first input, so a plugin adds to what the model reads first. `beforeDispatch`
+sees the decision - the task, the judge's answer and the window it went to -
+and a refusal leaves the task unrouted; the decision itself is the host's, so
+what a hook answers with is not applied to it.
 
 The host API lets an operator list, pause and end windows, steer an input
 into one, and read the board. Permissions, privacy review, budgets and
@@ -183,6 +197,24 @@ approvals are built from these.
 
 There is no project boundary: a host has one journal, one set of notes and
 one `/env`, and every window can read all of it.
+
+### Secret values
+
+A configuration names its secrets and never holds their values
+([environment.md](environment.md#what-the-model-can-change)). The host resolves
+each name - through `Arbor`'s `secretOf`, `process.env` by default - and
+replaces every form a value can take: the raw value, its base64 and its
+URL-encoded form, longest first. The replacement is the one placeholder the
+text table holds, `[hidden:NAME]`, and a value shorter than four characters is
+left alone, because too short a string would redact ordinary text.
+
+The scrub is applied where a value could otherwise travel: every tool result,
+before it is journaled and before it goes back to the backend; the state a
+judge is asked about and every decision log; and what the model writes in its
+own turn. A `send` whose content carries a secret value is refused with
+`send.secret` before the effect is recorded, so nothing is queued and nothing
+is carried out. The settings are the model's to change, so the scrub is
+refreshed whenever they are read.
 
 ## Room for many machines
 

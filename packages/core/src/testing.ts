@@ -37,7 +37,12 @@ export type Step =
    * backend reports it (docs/windows.md#streaming).
    */
   | { textDelta: string }
-  | { toolCallDelta: { name: string; callId: string; args: Record<string, unknown> } };
+  | { toolCallDelta: { name: string; callId: string; args: Record<string, unknown> } }
+  /**
+   * The run ends the way a failure ends one: the window's own outcome carries
+   * the reason, and the host settles it like any other end.
+   */
+  | { ended: WindowEndReason };
 
 /** The host's window control, which the backend calls the same way pi does. */
 export interface ScriptedControl {
@@ -310,6 +315,10 @@ export class ScriptedBackend implements AgentBackend {
           call: { name: step.toolCallDelta.name, args: step.toolCallDelta.args, callId: step.toolCallDelta.callId },
         });
         continue;
+      }
+      if ("ended" in step) {
+        session.end(undefined, step.ended);
+        return;
       }
       session.push({ kind: "appended", event: step.text });
     }

@@ -33,7 +33,8 @@
   },
   "dependencies": {
     "@4fu/arbor-errors": "workspace:*",
-    "@4fu/arbor-interfaces": "workspace:*"
+    "@4fu/arbor-interfaces": "workspace:*",
+    "@4fu/arbor-tools": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^26.0.0",

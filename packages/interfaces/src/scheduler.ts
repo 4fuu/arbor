@@ -82,11 +82,38 @@ export interface SkipPeriod {
   to: string;
 }
 
+/** How a repeating schedule stops: how often it fires, and until when. */
+export interface RepeatBounds {
+  /** How many more times it fires after the first one. */
+  times?: number;
+  /** The last moment it may fire at, in epoch milliseconds. */
+  until?: number;
+}
+
+/** A period in milliseconds. */
+export interface EveryRepeat extends RepeatBounds {
+  everyMs: number;
+}
+
+/** A clock time a firing repeats at daily. */
+export interface DailyRepeat extends RepeatBounds {
+  dailyAt: string;
+}
+
+/** Days of the week, 0 for Sunday, and the clock time it fires at on them. */
+export interface WeeklyRepeat extends RepeatBounds {
+  weekdays: readonly number[];
+  at: string;
+}
+
+/** How a scheduled task repeats. */
+export type RepeatRule = EveryRepeat | DailyRepeat | WeeklyRepeat;
+
 export interface ScheduledTaskInput {
   name?: string;
   /** The first firing, in epoch milliseconds. */
   firstAt: number;
-  repeat?: { everyMs: number } | { dailyAt: string };
+  repeat?: RepeatRule;
   skipDaily?: readonly SkipPeriod[];
   targets?: readonly Target[];
   task: Omit<TaskInput, "kind">;
@@ -98,7 +125,9 @@ export interface ScheduledTask {
   firstAt: number;
   nextAt: number;
   lastAt?: number;
-  repeat?: { everyMs: number } | { dailyAt: string };
+  /** How many times it has fired, so `repeat.times` survives a restart. */
+  fired?: number;
+  repeat?: RepeatRule;
   skipDaily?: readonly SkipPeriod[];
   targets: readonly Target[];
   paused: boolean;

@@ -12,6 +12,7 @@ import {
   boardLineBlock,
   continuationBlocks,
   continuationHandoffBlock,
+  continuationInterruptedBlock,
   continuationRecoveryBlock,
   handoffBlock,
   midTaskResetBlock,
@@ -36,6 +37,11 @@ export interface FirstInputInput {
     handoff?: Handoff;
     /** Set after the hard limit: the window was reset mid-task. */
     midTaskReset?: boolean;
+    /**
+     * Set when the previous window's run was cut short by a model failure:
+     * the steps it had taken stand, and the ones it had sent are not repeated.
+     */
+    interrupted?: boolean;
     /** The tasks the previous window still had open. */
     openTasks?: readonly Ref[];
     /** The effects the previous window already made. */
@@ -72,6 +78,7 @@ export function firstInputBlocks(input: FirstInputInput): Block[] {
       }),
     );
     if (continuation.midTaskReset === true) blocks.push(midTaskResetBlock(continuation.previous));
+    if (continuation.interrupted === true) blocks.push(continuationInterruptedBlock(continuation.previous));
     if (continuation.handoff === undefined) {
       blocks.push(continuationRecoveryBlock(continuation.previous));
     } else {

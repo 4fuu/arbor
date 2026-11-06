@@ -16,8 +16,9 @@
  */
 
 import { Agent } from "@earendil-works/pi-agent-core";
-import type { Api, Model as PiModel, Models } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model as PiModel, Models } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type {
   AgentBackend,
   LoginRequest,
@@ -51,7 +52,19 @@ export interface PiBackendOptions {
   control?: WindowControl;
   /** The name this backend reports. */
   name?: string;
+  /**
+   * How long to wait before each retry of a transient model error. A run that
+   * fails with one pi classifies as transient is sent again, byte for byte, so
+   * the provider's cached prefix still holds
+   * (docs/windows.md#model-failures).
+   */
+  retryDelaysMs?: readonly number[];
+  /** How the backend waits between retries. Tests pass an immediate one. */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** How long to wait before each retry of a transient model error. */
+export const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [2000, 8000, 30000];
 
 export class PiAgentBackend implements AgentBackend {
   readonly name: string;
@@ -59,12 +72,16 @@ export class PiAgentBackend implements AgentBackend {
   private readonly runtime: Models;
   private readonly renderer: Renderer;
   private control: WindowControl | undefined;
+  private readonly retryDelaysMs: readonly number[];
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(options: PiBackendOptions = {}) {
     this.name = options.name ?? "pi";
     this.runtime = options.models ?? builtinModels();
     this.renderer = options.renderer ?? new Renderer();
     this.control = options.control;
+    this.retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+    this.sleep = options.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   /**
@@ -150,10 +167,7 @@ export class PiAgentBackend implements AgentBackend {
     const run =
       first === ""
         ? Promise.resolve()
-        : agent.prompt(first).then(
-            () => undefined,
-            () => undefined,
-          );
+        : this.runWithRetry(agent, first);
     return new PiWindowSession({
       agent,
       window: request.window,
@@ -162,6 +176,37 @@ export class PiAgentBackend implements AgentBackend {
       results,
       run,
     });
+  }
+
+  /**
+   * The window's first turn, retried while the model service fails transiently.
+   *
+   * pi settles a failed run rather than throwing: the agent records an assistant
+   * message whose `stopReason` is `error`, and `isRetryableAssistantError` says
+   * whether that error is the transient kind. When it is, the failed message is
+   * dropped and the same request is sent again - the same bytes, in the same
+   * order, so the provider's cached prefix still holds and nothing the model
+   * already did is repeated. A run that fails any other way, or one that runs
+   * out of retries, rejects, which is how the session settles the window as
+   * failed for the host (docs/windows.md#model-failures).
+   */
+  private async runWithRetry(agent: Agent, first: string): Promise<void> {
+    await agent.prompt(first);
+    for (let attempt = 0; ; attempt += 1) {
+      const failed = failedMessageOf(agent);
+      if (failed === null) return;
+      if (attempt >= this.retryDelaysMs.length || !isRetryableAssistantError(failed)) {
+        throw new Error(failed.errorMessage ?? "the model call failed");
+      }
+      const delay = this.retryDelaysMs[attempt];
+      if (delay !== undefined && delay > 0) await this.sleep(delay);
+      // The failed turn is not an answer: dropping it leaves the transcript as
+      // it was, so the retry sends exactly what the first attempt sent.
+      agent.state.messages = agent.state.messages.filter((message) => message !== failed);
+      await agent.continue().catch(() => {
+        // The window was ended while the retry waited.
+      });
+    }
   }
 
   /**
@@ -218,4 +263,15 @@ export class PiAgentBackend implements AgentBackend {
 function systemPromptOf(request: OpenWindowRequest): string {
   const memory = request.prompt.memory.trim();
   return memory === "" ? request.prompt.system : `${request.prompt.system}\n\n${memory}`;
+}
+
+/**
+ * The assistant message a failed run left on the transcript, or null when the
+ * last message is not one. pi settles a provider failure by recording it, so
+ * this is where a run's failure is read from.
+ */
+function failedMessageOf(agent: Agent): AssistantMessage | null {
+  const last = agent.state.messages.at(-1);
+  if (last === undefined || last.role !== "assistant") return null;
+  return last.stopReason === "error" ? last : null;
 }

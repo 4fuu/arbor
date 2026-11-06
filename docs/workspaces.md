@@ -60,6 +60,15 @@ merged back; `cache` (`node_modules` and build outputs) and `local` (`.env` and
 other secrets) show the live folder, read-only, and are never merged; `hidden`
 paths are absent.
 
+A command run in `bash` inside a checkout is given two variables of this
+workspace's own: `ARBOR_WINDOW`, the window that runs it, and a git
+configuration that points `core.hooksPath` at the hooks that stamp an
+`Arbor-Window` trailer onto a commit. A `Workspace` implementation declares
+them through `bashEnv`, and they are the only variables a command gets beyond
+the minimum the framework gives every subprocess
+([environment.md](environment.md#what-a-subprocess-gets)); the host's own
+environment never reaches a command.
+
 ## Another window's checkout
 
 `workspace.path(window)` names the checkouts a window's chain has, and both the

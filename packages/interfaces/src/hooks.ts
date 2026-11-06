@@ -26,6 +26,12 @@ export type HookOutcome<T> =
   | { allow: true; context?: T }
   | { allow: false; error: ArborErrorInfo };
 
+/**
+ * What an after hook answers with: the outcome of what it observed, or nothing
+ * at all. An after hook that observes only answers with nothing.
+ */
+export type AfterHookOutcome<T> = HookOutcome<T> | void;
+
 export interface AppendContext {
   input: EventInput;
   event?: Event;
@@ -69,6 +75,12 @@ export interface WindowContinueContext {
 export interface ModelRequestContext {
   window: WindowRef;
   prompt: RenderedPrompt;
+  /**
+   * The blocks the window's first input is rendered from, and what a hook
+   * changes is what the window opens with: the host renders what comes back.
+   * The hook runs once per window, before the first turn
+   * (docs/windows.md#prompt-layout).
+   */
   inputs: readonly Block[];
 }
 
@@ -159,7 +171,13 @@ export interface Hooks {
   windowStream?(context: WindowStreamContext): Promise<void> | void;
 
   beforeToolCall?(context: ToolCallContext): Promise<HookOutcome<ToolCallContext>> | HookOutcome<ToolCallContext>;
-  afterToolCall?(context: ToolCallContext): Promise<void> | void;
+  /**
+   * After one call has run. The call is already made, so a refusal cannot undo
+   * it: it stops the hooks after it and leaves the result as it stands. What it
+   * answers with is used - a hook that returns a different `result` replaces
+   * what is recorded and what the model reads (docs/architecture.md#hooks).
+   */
+  afterToolCall?(context: ToolCallContext): Promise<AfterHookOutcome<ToolCallContext>> | AfterHookOutcome<ToolCallContext>;
 
   beforeEffect?(context: EffectContext): Promise<EffectOutcome> | EffectOutcome;
 

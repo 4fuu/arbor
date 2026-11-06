@@ -827,13 +827,24 @@ export class ScheduleModuleGroup implements ToolGroup {
     };
   }
 
-  /** One repeat rule as one line: only once, a period, or a daily clock time. */
+  /** One repeat rule as one line: only once, a period, a daily or a weekly time. */
   private repeatText(repeat: ScheduledTaskInput["repeat"]): string {
     const table = this.services.table;
     if (repeat === undefined) return textOf(table, "result.schedule.once");
-    return "everyMs" in repeat
-      ? textOf(table, "result.schedule.every_ms", { ms: repeat.everyMs })
-      : textOf(table, "result.schedule.daily", { time: repeat.dailyAt });
+    const base =
+      "everyMs" in repeat
+        ? textOf(table, "result.schedule.every_ms", { ms: repeat.everyMs })
+        : "weekdays" in repeat
+          ? textOf(table, "result.schedule.weekly", {
+              weekdays: [...repeat.weekdays].sort().join("、"),
+              time: repeat.at,
+            })
+          : textOf(table, "result.schedule.daily", { time: repeat.dailyAt });
+    const bounds = [
+      ...(repeat.times === undefined ? [] : [textOf(table, "result.schedule.times", { count: repeat.times })]),
+      ...(repeat.until === undefined ? [] : [textOf(table, "result.schedule.until", { time: formatTime(repeat.until) })]),
+    ];
+    return `${base}${bounds.join("")}`;
   }
 
   /** One argument the script did not name in a shape this module can read. */
@@ -1133,18 +1144,38 @@ function taskRefArg(args: Record<string, unknown>, name: string): TaskRef | unde
 
 /**
  * One repeat rule, `invalid` when the argument is not one this module can read:
- * a period in milliseconds, or a clock time a firing repeats at daily.
+ * a period in milliseconds, a clock time a firing repeats at daily, or days of
+ * the week with the clock time it fires at on them. `times` and `until` bound
+ * any of the three.
  */
 function repeatArg(args: Record<string, unknown>): ScheduledTaskInput["repeat"] | "invalid" | undefined {
   const value = args.repeat;
   if (value === undefined) return undefined;
   if (typeof value !== "object" || value === null) return "invalid";
-  const repeat = value as { everyMs?: unknown; dailyAt?: unknown };
+  const repeat = value as {
+    everyMs?: unknown;
+    dailyAt?: unknown;
+    weekdays?: unknown;
+    at?: unknown;
+    times?: unknown;
+    until?: unknown;
+  };
+  const times = typeof repeat.times === "number" && Number.isFinite(repeat.times) && repeat.times >= 0 ? Math.floor(repeat.times) : undefined;
+  const until =
+    typeof repeat.until === "number" && Number.isFinite(repeat.until) ? Math.floor(repeat.until) : undefined;
+  const bounds = { ...(times === undefined ? {} : { times }), ...(until === undefined ? {} : { until }) };
   if (typeof repeat.everyMs === "number" && Number.isFinite(repeat.everyMs) && repeat.everyMs > 0) {
-    return { everyMs: repeat.everyMs };
+    return { everyMs: repeat.everyMs, ...bounds };
   }
   if (typeof repeat.dailyAt === "string" && /^\d{1,2}:\d{2}$/u.test(repeat.dailyAt.trim())) {
-    return { dailyAt: repeat.dailyAt.trim() };
+    return { dailyAt: repeat.dailyAt.trim(), ...bounds };
+  }
+  if (Array.isArray(repeat.weekdays) && typeof repeat.at === "string" && /^\d{1,2}:\d{2}$/u.test(repeat.at.trim())) {
+    const weekdays = repeat.weekdays.filter(
+      (day): day is number => typeof day === "number" && Number.isInteger(day) && day >= 0 && day <= 6,
+    );
+    if (weekdays.length === 0) return "invalid";
+    return { weekdays, at: repeat.at.trim(), ...bounds };
   }
   return "invalid";
 }

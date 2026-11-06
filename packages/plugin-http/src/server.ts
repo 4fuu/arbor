@@ -15,7 +15,8 @@
  * Configuration names a secret and never holds its value
  * (docs/architecture.md#data-placement). The keys pi and Jev read are
  * environment variables those two modules read themselves; the settings name
- * them, so the host's scrub covers every string that leaves it.
+ * them, and the host's scrub keeps their values out of the journal, out of the
+ * judge's requests and out of what the model reads.
  *
  * | Name | What it names | Default |
  * | --- | --- | --- |

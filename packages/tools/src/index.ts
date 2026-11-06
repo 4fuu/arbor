@@ -17,6 +17,7 @@ export {
   type ScriptCatalog,
 } from "./code-exec.ts";
 export { RESULT_LIMIT, boundResult, boundText, nextCall, type Bound } from "./bound.ts";
+export { WORKSPACE_ENV, childEnvironment, type ChildEnvInput } from "./child-env.ts";
 export {
   callContext,
   moduleSpec,
@@ -32,6 +33,7 @@ export {
   type ToolServices,
 } from "./host.ts";
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
+export { bashEnvironment } from "./groups/files.ts";
 export { EnvToolGroup } from "./groups/env.ts";
 export { NoteToolGroup } from "./groups/notes.ts";
 export { FileToolGroup } from "./groups/files.ts";

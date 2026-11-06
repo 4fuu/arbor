@@ -17,6 +17,7 @@ import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
 import { arborError } from "@4fu/arbor-errors";
 import type { FunctionSpec } from "@4fu/arbor-interfaces";
+import { childEnvironment } from "@4fu/arbor-tools";
 
 /** The MCP protocol version this client speaks. */
 const PROTOCOL_VERSION = "2024-11-05";
@@ -66,7 +67,10 @@ export class StdioMcpServer {
     }
     this.child = spawn(options.command, [...(options.args ?? [])], {
       cwd: options.dir,
-      env: { ...process.env, ...(options.env ?? {}), ...secrets },
+      // A server gets the minimum a child process needs, its own directory, its
+      // own `env` and the secrets it names - never the host's environment
+      // (docs/environment.md#what-a-subprocess-gets).
+      env: childEnvironment({ workspace: options.dir, env: options.env, secrets }),
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child.stderr?.on("data", (chunk: Buffer) => {

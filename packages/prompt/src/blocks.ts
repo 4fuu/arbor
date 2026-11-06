@@ -236,4 +236,10 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
     lines: ["continuation.handoff.none"],
     fields: [{ name: "previous", type: "ref" }],
   },
+  {
+    kind: "continuation_interrupted",
+    tag: "continuation_interrupted",
+    lines: ["continuation.interrupted"],
+    fields: [{ name: "previous", type: "ref" }],
+  },
 ];

@@ -32,6 +32,7 @@ import type {
   WorkspaceMount,
 } from "@4fu/arbor-interfaces";
 import { textOf } from "@4fu/arbor-prompt";
+import { childEnvironment } from "../child-env.ts";
 import { envCommand } from "../env-stage.ts";
 import { toolSpec } from "../host.ts";
 
@@ -40,6 +41,17 @@ const BASH_WAIT_MS = 20000;
 
 /** How much one background job keeps in memory. */
 const JOB_BUFFER = 200000;
+
+/**
+ * The environment one command runs with: the minimum a child process needs, the
+ * window's own directory, and the extra environment the workspace
+ * implementation asks for. This is the one place a command's environment is
+ * built, so everything a deployment adds to it is added here
+ * (docs/environment.md#what-a-subprocess-gets).
+ */
+export function bashEnvironment(cwd: string, extraEnv?: Record<string, string>): Record<string, string> {
+  return childEnvironment({ workspace: cwd, env: extraEnv });
+}
 
 interface Job {
   id: string;
@@ -277,14 +289,13 @@ export class FileToolGroup implements ToolGroup {
   private start(command: string, cwd: string, extraEnv?: Record<string, string>): Job {
     const id = `b${this.nextJob}`;
     this.nextJob += 1;
-    // Extra environment the workspace implementation asks for - the ovnfs
-    // workspace's `ARBOR_WINDOW` and git hook path - is set on this command's
-    // own process, never on the host, so it reaches no MCP server or service.
-    const options =
-      extraEnv === undefined || Object.keys(extraEnv).length === 0
-        ? { cwd }
-        : { cwd, env: { ...process.env, ...extraEnv } };
-    const child = spawn("/bin/sh", ["-c", command], options);
+    // The one place a command's environment is built: the minimum a child
+    // process needs, the window's own directory, and the extra environment the
+    // workspace implementation asks for - the ovnfs workspace's `ARBOR_WINDOW`
+    // and git hook path. A command never inherits the host's own environment,
+    // and the extra variables reach no MCP server and no service
+    // (docs/environment.md#what-a-subprocess-gets).
+    const child = spawn("/bin/sh", ["-c", command], { cwd, env: bashEnvironment(cwd, extraEnv) });
     let end = (): void => {};
     const job: Job = {
       id,

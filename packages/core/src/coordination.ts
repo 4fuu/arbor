@@ -96,7 +96,10 @@ export class Coordinator {
   async circulate(event: Event): Promise<void> {
     const behind: WindowRecord[] = [];
     for (const record of this.host.live()) {
-      if (record.window === event.window || record.state === "ended") continue;
+      if (record.state === "ended") continue;
+      // A window's own effect result is the answer to what it sent, so the rule
+      // that skips the window an event came from does not apply to it.
+      if (record.window === event.window && event.kind !== "effect_result") continue;
       const touched = this.host.boardLine(record.window)?.targets ?? [];
       if (!event.targets.some((target) => touched.includes(target))) continue;
       if (await this.seen(record.window, event)) continue;

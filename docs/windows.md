@@ -53,6 +53,12 @@ in the journal ([journal.md](journal.md)).
   deterministic: no timestamps or counters in the system prompt or snapshot.
 - Anything that changes per input - its time, people or items seen for the
   first time in this window - goes into the input itself.
+- **The first input is the one thing a plugin may add to per window.**
+  `beforeModelRequest` runs once, before the first turn, and the `inputs` it
+  answers with are rendered into the first input
+  ([architecture.md](architecture.md#hooks)). What the model writes in its own
+  turn is recorded as an `assistant` event, so `windows.show` replays the
+  window exactly as the model saw it ([journal.md](journal.md#events)).
 
 ## Streaming
 
@@ -113,6 +119,22 @@ one host line saying the window was reset mid-task and that the steps already
 taken can be looked up with `windows.show`, then the open tasks and the
 effects already made. Tool calls are not replayed; nothing already sent is
 sent again.
+
+## Model failures
+
+A model call that fails with a transient error - a rate limit, a 5xx, a
+transport failure - is retried inside the backend, with the provider's own
+classifier deciding what counts as transient. The retry sends the same bytes
+in the same order, so the cached prefix still holds and nothing the model
+already did is repeated.
+
+A window whose run finally fails does not end its chain: the host opens a
+continuation whose first input says the previous turn was cut short by a model
+failure, that the steps already taken stand, and that what was already sent is
+not sent again. The open tasks and the effects already made are listed with
+it, exactly as they are after the hard limit. One interrupted continuation is
+enough: a window that continues a failed one and fails again ends its chain,
+because a model service that stays down must not chain windows for ever.
 
 ## Restart
 
