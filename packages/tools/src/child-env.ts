@@ -16,8 +16,48 @@
 /** The variable that carries the directory a child process works in. */
 export const WORKSPACE_ENV = "ARBOR_WORKSPACE";
 
-/** The variables every child process gets, whatever it is. */
-const MINIMUM_KEYS = ["PATH", "HOME", "LANG", "TMPDIR"] as const;
+/**
+ * The variables every child process gets, whatever it is: where programs and
+ * the user's files are, the locale and time zone, the terminal, the network
+ * proxy (without which `npx` or `uvx` cannot fetch an MCP server behind one),
+ * and the system variables Windows programs cannot start without. None of
+ * them is a credential a configuration would name as a secret.
+ */
+const MINIMUM_KEYS = [
+  "PATH",
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TERM",
+  "LANG",
+  "LANGUAGE",
+  "LC_ALL",
+  "LC_CTYPE",
+  "TZ",
+  "TMPDIR",
+  "XDG_RUNTIME_DIR",
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+  // Windows.
+  "SystemRoot",
+  "windir",
+  "ComSpec",
+  "PATHEXT",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TEMP",
+  "TMP",
+  "ProgramFiles",
+  "ProgramData",
+] as const;
 
 /** What one child process is given beyond the minimum. */
 export interface ChildEnvInput {

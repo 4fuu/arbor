@@ -565,6 +565,9 @@ describe("tool catalog", () => {
     const { catalog, root } = await harness();
     // A variable the host carries and no configuration named.
     process.env.ARBOR_TEST_HOST_ONLY = "host-only";
+    // The proxy is part of the minimum: without it nothing behind one can fetch.
+    const proxy = process.env.HTTPS_PROXY;
+    process.env.HTTPS_PROXY = "http://proxy.test:3128";
     try {
       const result = await run(catalog, "bash", { command: "env", timeout: 5000 });
       assert.equal(result.ok, true);
@@ -577,11 +580,14 @@ describe("tool catalog", () => {
       // The minimum a child process needs, and the window's own directory.
       assert.ok(reported.PATH !== undefined, "a command can find programs");
       assert.ok(reported.HOME !== undefined);
+      assert.equal(reported.HTTPS_PROXY, "http://proxy.test:3128", "a command reaches the network through the host's proxy");
       assert.equal(reported.ARBOR_WORKSPACE, join(root, "ws1"), "the workspace is the window's own directory");
       // Nothing the host carries beyond that.
       assert.equal(reported.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
     } finally {
       delete process.env.ARBOR_TEST_HOST_ONLY;
+      if (proxy === undefined) delete process.env.HTTPS_PROXY;
+      else process.env.HTTPS_PROXY = proxy;
     }
   });
 

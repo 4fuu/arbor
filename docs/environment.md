@@ -21,8 +21,10 @@ workspace. The framework does not manage or restrict them.
 
 A subprocess never inherits the host's own environment. Every MCP server,
 every resident service and every command a window runs is given the minimum
-it needs to run - `PATH`, `HOME`, `LANG`, `TMPDIR` and the directory it works
-in, which rides on `ARBOR_WORKSPACE` - plus what its own configuration adds:
+it needs to run - `PATH`, `HOME` and the user's name and shell, the locale and
+time zone, `TERM`, `TMPDIR`, the proxy variables, the system variables Windows
+programs need, and the directory it works in, which rides on `ARBOR_WORKSPACE`
+(the full list is `MINIMUM_KEYS` in `packages/tools/src/child-env.ts`) - plus what its own configuration adds:
 the item's own `env`, and the secrets it names by name. Nothing else the host
 carries reaches it, so a variable no configuration named stays outside every
 window's reach, which is what "secrets injected by name" means in practice.
