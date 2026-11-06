@@ -65,7 +65,7 @@ export interface Settings {
   };
 
   workspaces?: {
-    /** How long snapshots are kept before the host reclaims them. */
+    /** How long a chain's directory is kept after its last window ended, before the host reclaims it. */
     retentionMs?: number;
   };
 

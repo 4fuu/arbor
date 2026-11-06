@@ -294,8 +294,8 @@ export class ScriptedBackend implements AgentBackend {
    *
    * The wait is bounded in time, never in yields. One `turn` is one pass of the
    * event loop, which costs microseconds while nothing blocks in it, while the
-   * work a run waits on - a tool call that writes a file, then snapshots the
-   * directory it changed - costs milliseconds of real time on the thread pool.
+   * work a run waits on - a tool call that writes a file in the window's
+   * directory - costs milliseconds of real time on the thread pool.
    * A budget of yields therefore expires on a loaded machine long before the
    * run has finished, and a test that failed for no other reason reports "the
    * scripted run never finished": a run that needs ten yields when the machine

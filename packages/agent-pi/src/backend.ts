@@ -35,7 +35,7 @@ import { piTool } from "./tools.ts";
 
 /** What the host gives the backend about the window it is running. */
 export interface WindowControl {
-  /** Record one call at an event, so a workspace snapshot can name it. */
+  /** Record one call at an event, before it runs. */
   recordToolCall(window: string, call: ToolCall): Promise<string | undefined>;
   /** Run one call through the host's tool groups, the same path a direct call takes. */
   runToolCall(window: string, call: ToolCall, at?: string): Promise<ToolResult>;
@@ -165,10 +165,9 @@ export class PiAgentBackend implements AgentBackend {
   }
 
   /**
-   * One direct tool call. The call is recorded at its event before it runs, so
-   * a snapshot the call takes names that event, and the call itself goes
-   * through the host's tool groups - the same path a direct call takes
-   * (docs/tools.md#rules).
+   * One direct tool call. The call is recorded at its event before it runs, and
+   * the call itself goes through the host's tool groups - the same path a direct
+   * call takes (docs/tools.md#rules).
    */
   private async callTool(
     window: string,

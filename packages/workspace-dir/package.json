@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The plain-directory Workspace: one directory per window, with forks and snapshots as simple copies.",
+  "description": "The plain-directory Workspace: one directory per window, with a continuation working in its predecessor's directory in place.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
