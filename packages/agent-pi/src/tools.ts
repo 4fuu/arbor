@@ -13,7 +13,7 @@
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { ParameterSpec, ToolResult } from "@4fu/arbor-interfaces";
 import type { Renderer } from "@4fu/arbor-prompt";
-import { errorBlock } from "@4fu/arbor-prompt";
+import { errorBlock, toolResultBlock } from "@4fu/arbor-prompt";
 
 /** One parameter's JSON Schema, from its `ParameterSpec`. */
 export function parameterSchema(parameter: ParameterSpec): Record<string, unknown> {
@@ -62,21 +62,28 @@ export function toolParameters(parameters: Record<string, ParameterSpec>): Recor
 }
 
 /**
- * What the model reads of one result. A refusal is rendered as the error block,
- * so the model always gets the rule and the next action, never an empty result.
+ * What the model reads of one result. A successful result is rendered as the
+ * `tool_result` block, so it is escaped and marked as data like every other
+ * block. A refusal is rendered as the error block, so the model always gets
+ * the rule and the next action, never an empty result; a failure that carries
+ * no error shape is marked as a failed result instead.
  */
 export function resultText(result: ToolResult, renderer: Renderer): string {
-  if (result.ok) return result.content;
-  const error = result.error;
-  if (error === undefined) return result.content;
+  const name = result.tool ?? result.callId;
+  const error = result.ok ? undefined : result.error;
+  if (error !== undefined) {
+    return renderer.render([
+      errorBlock({
+        tool: name,
+        rule: error.rule,
+        message: error.message,
+        ...(error.nextAction === undefined ? {} : { nextAction: error.nextAction }),
+        ...(error.refs === undefined ? {} : { refs: error.refs }),
+      }),
+    ]);
+  }
   return renderer.render([
-    errorBlock({
-      tool: result.callId,
-      rule: error.rule,
-      message: error.message,
-      ...(error.nextAction === undefined ? {} : { nextAction: error.nextAction }),
-      ...(error.refs === undefined ? {} : { refs: error.refs }),
-    }),
+    toolResultBlock({ callId: result.callId, name }, result.content, result.ok ? "ok" : "failed"),
   ]);
 }
 

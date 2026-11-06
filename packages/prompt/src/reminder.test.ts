@@ -22,7 +22,7 @@ describe("usage reminders", () => {
 
   it("sends the highest crossed tier and skips the ones it jumped over", () => {
     const tier = nextReminderTier(usage(130000), 0);
-    assert.equal(tier?.tier, "handoff");
+    assert.equal(tier?.tier, "p60");
     // 15, 30, 50 and 60 were all crossed; only 60 is sent.
     assert.equal(REMINDER_TIERS.indexOf(tier!), 3);
   });
@@ -30,6 +30,18 @@ describe("usage reminders", () => {
   it("does not send a tier twice", () => {
     assert.equal(nextReminderTier(usage(130000), 4), null);
     assert.equal(nextReminderTier(usage(130000), 4)?.tier, undefined);
+  });
+
+  it("sends the next tier once the one already sent is behind it", () => {
+    // Three tiers are sent, so 60 % is the one that fires.
+    assert.equal(nextReminderTier(usage(130000), 3)?.tier, "p60");
+    assert.equal(nextReminderTier(usage(130000), 4), null);
+    assert.equal(nextReminderTier(usage(145000), 4)?.tier, "p70");
+    assert.equal(nextReminderTier(usage(165000), 5)?.tier, "p80");
+    // A tier below the highest one already sent stays behind it.
+    assert.equal(nextReminderTier(usage(31000), 1), null);
+    assert.equal(nextReminderTier(usage(70000), 1)?.tier, "p30");
+    assert.equal(nextReminderTier(usage(70000), 2), null);
   });
 
   it("reports the real share of the window", () => {
@@ -48,6 +60,10 @@ describe("usage reminders", () => {
 
   it("holds a series of seven reminders", () => {
     assert.equal(REMINDER_SERIES, 7);
+    assert.deepEqual(
+      REMINDER_TIERS.map((tier) => tier.tier),
+      ["p15", "p30", "p50", "p60", "p70", "p80", "final"],
+    );
   });
 });
 

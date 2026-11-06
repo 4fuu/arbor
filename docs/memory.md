@@ -6,8 +6,9 @@ window, written only through the note tools.
 ## Notes
 
 - **Fields:** id, title, a summary of at most 200 characters, body,
-  revision, anchor. Lists show summaries; `notes.read` returns the
-  body, paged.
+  revision, anchor. A write and a replace may name `refs`, which the host
+  records as the write's evidence. Lists show summaries; `notes.read` returns
+  the body, paged.
 - **One copy, checked writes.** A write names the revision it read
   ([conflicts](#conflicts)).
 - **A replace that changes the body names a summary**, so a list never shows
@@ -17,8 +18,10 @@ window, written only through the note tools.
   edited, archived or deleted. A delete leaves every revision and every ref to
   them resolving, and no list, search or active set returns the note again.
 - **Budget:** a token budget on the active set, because the active set is
-  part of every prefix. It refuses growth and never tidying. There is no cap
-  on how many notes a window writes.
+  part of every prefix. The budget bounds the set and never tidies it: a note
+  that does not fit waits for the next epoch. There is no cap on how many
+  notes a window writes. Every note write's result reports where the budget
+  stands, so a window hears how full it is.
 
 ## Conflicts
 
@@ -48,7 +51,7 @@ input, and live windows through notices.
 
 ### Snapshot epochs
 
-The active set is frozen with an epoch. At most every `snapshot.min_interval`
+The active set is frozen with an epoch. At most every `snapshot.minIntervalMs`
 (default 10 minutes), and only when a note was written since the last epoch or
 the budget changed, the host builds a new one. Every window opened in one epoch
 has the same prefix; what changed since reaches it as a delta.
@@ -62,6 +65,9 @@ has the same prefix; what changed since reaches it as a delta.
   state the judge's `active set` decision reads.
 - `notes.recordUse` is how the host feeds the uses the store cannot see - an
   event that cited a note or held it as evidence. One event is recorded once.
+  A `send` that cites notes is a use of them, so the host records each note ref
+  it names; `note_write` and `note_replace` name the refs they carry in `refs`,
+  which the host records as the write's evidence as well.
 
 A note's score is its direct credit - what windows cite, use as evidence and
 read, decayed by age - or the share that reached it through evidence links up

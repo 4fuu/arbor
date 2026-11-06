@@ -125,7 +125,7 @@ describe("writes", () => {
     await store.write({ title: "a", body: "one", summary: "the first summary" });
     await assert.rejects(
       () => store.write({ title: "a", body: "two", id: "n1", expectedRevision: 1 }),
-      refused("note.write.summary"),
+      refused("note.write.replace_summary"),
     );
     const replaced = await store.write({
       title: "a",
@@ -268,7 +268,7 @@ describe("writes", () => {
     await store.write({ title: "a", body: "one" });
     await assert.rejects(
       () => store.write({ title: "a", body: "x", id: "n1", expectedRevision: 5 }),
-      refused("note.write.revision"),
+      refused("note.write.revision.absent"),
     );
     await assert.rejects(
       () => store.write({ title: "a", body: "x", id: "n9", expectedRevision: 1 }),

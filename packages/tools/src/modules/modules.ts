@@ -39,6 +39,12 @@ import type { LiveWindow, TaskSummary, ToolServices } from "../host.ts";
 import { moduleSpec, refused } from "../host.ts";
 import { envCommand } from "../env-stage.ts";
 
+/** How many returned items carry a 相关 line of their own. */
+const RELATED_ITEMS = 3;
+
+/** How many neighbours one 相关 line names before it says there are more. */
+const RELATED_LIMIT = 3;
+
 /** `journal`: search, show, around, trace, links. */
 export class JournalModuleGroup implements ToolGroup {
   readonly id = "modules.journal";
@@ -73,12 +79,12 @@ export class JournalModuleGroup implements ToolGroup {
         const page = await journal.search(stringArg(args, "query"), {
           ...(numberArg(args, "limit") === undefined ? {} : { limit: numberArg(args, "limit") }),
         });
-        return this.answer(request, page.items.map((hit) => `${hit.ref} ${hit.kind} ${hit.summary}`), page);
+        return this.answer(request, page.items.map((hit) => ({ ref: hit.ref, line: `${hit.ref} ${hit.kind} ${hit.summary}` })), page);
       }
       case "journal.show": {
         const refs = eventRefsArg(args, "ref");
         const events = await journal.getMany(refs);
-        return this.answer(request, events.map((event) => `${event.ref} ${event.kind} ${bodyOf(event)}`), {
+        return this.answer(request, events.map((event) => ({ ref: event.ref, line: `${event.ref} ${event.kind} ${bodyOf(event)}` })), {
           items: events,
           total: events.length,
           limit: events.length,
@@ -90,7 +96,7 @@ export class JournalModuleGroup implements ToolGroup {
           ...(numberArg(args, "before") === undefined ? {} : { before: numberArg(args, "before") }),
           ...(numberArg(args, "after") === undefined ? {} : { after: numberArg(args, "after") }),
         });
-        return this.answer(request, events.map((event) => `${event.ref} ${event.kind} ${bodyOf(event)}`), {
+        return this.answer(request, events.map((event) => ({ ref: event.ref, line: `${event.ref} ${event.kind} ${bodyOf(event)}` })), {
           items: events,
           total: events.length,
           limit: events.length,
@@ -99,7 +105,7 @@ export class JournalModuleGroup implements ToolGroup {
       }
       case "journal.trace": {
         const node = await journal.trace(refArg(args, "ref"));
-        return this.answer(request, [traceText(node, 0)], {
+        return this.answer(request, [{ ref: node.ref, line: traceText(node, 0) }], {
           items: [node.ref],
           total: 1,
           limit: 1,
@@ -110,25 +116,57 @@ export class JournalModuleGroup implements ToolGroup {
         const page = await journal.links(refArg(args, "ref"), {
           ...(numberArg(args, "offset") === undefined ? {} : { offset: numberArg(args, "offset") }),
         });
-        return this.answer(
-          request,
-          page.items.map((item) => `${item.ref} ${item.kind} ${item.summary}`),
-          page,
-        );
+        // The items are the neighbours already, so this one answer adds no
+        // related line of its own.
+        return this.answer(request, page.items.map((item) => ({ ref: item.ref, line: `${item.ref} ${item.kind} ${item.summary}` })), page, false);
       }
       default:
         return this.notOwned(request);
     }
   }
 
-  private answer(request: ToolCall, lines: readonly string[], page: Page<unknown>): ToolResult {
+  /**
+   * One answer: the items, then one 相关 line per returned item for the first
+   * three of them, then the total and the call that pages the rest
+   * (docs/prompting.md#information-density).
+   */
+  private async answer(
+    request: ToolCall,
+    items: readonly { ref: Ref; line: string }[],
+    page: Page<unknown>,
+    related = true,
+  ): Promise<ToolResult> {
     const table = this.services.table;
+    const lines = items.map((item) => item.line);
     const body = lines.length === 0 ? textOf(table, "result.search.empty") : lines.join("\n");
     return {
       callId: request.callId,
       ok: true,
-      content: `${body}\n${textOf(table, "result.search.total", { total: page.total })}\n${page.nextCall}`,
+      content: [
+        body,
+        ...(related ? await this.related(items) : []),
+        textOf(table, "result.search.total", { total: page.total }),
+        page.nextCall,
+      ].join("\n"),
     };
+  }
+
+  /** One 相关 line per item, for the first three: no line without neighbours. */
+  private async related(items: readonly { ref: Ref; line: string }[]): Promise<string[]> {
+    const table = this.services.table;
+    const lines: string[] = [];
+    for (const item of items.slice(0, RELATED_ITEMS)) {
+      const page = await this.services.journal.links(item.ref, { limit: RELATED_LIMIT });
+      if (page.items.length === 0) continue;
+      const more = page.total > page.items.length
+        ? textOf(table, "result.journal.related.more", { total: page.total, offset: page.items.length })
+        : "";
+      lines.push(textOf(table, "result.journal.related", {
+        refs: page.items.map((one) => one.ref).join("、"),
+        more,
+      }));
+    }
+    return lines;
   }
 
   private notOwned(request: ToolCall): ToolResult {

@@ -12,6 +12,7 @@ import type {
   DirectToolSpec,
   NoteStore,
   NoteWriteInput,
+  Ref,
   ToolCall,
   ToolGroup,
   ToolResult,
@@ -37,6 +38,7 @@ export class NoteToolGroup implements ToolGroup {
         title: { type: "string", required: true },
         summary: { type: "string" },
         body: { type: "string", required: true },
+        refs: { type: "refs" },
       }),
       toolSpec(table, "note_replace", {
         id: { type: "string", required: true },
@@ -44,6 +46,7 @@ export class NoteToolGroup implements ToolGroup {
         title: { type: "string" },
         summary: { type: "string" },
         body: { type: "string", required: true },
+        refs: { type: "refs" },
       }),
       toolSpec(table, "note_delete", {
         id: { type: "string", required: true },
@@ -72,36 +75,33 @@ export class NoteToolGroup implements ToolGroup {
   }
 
   private async write(request: ToolCall, store: NoteStore, window: WindowRef): Promise<ToolResult> {
-    const title = stringArg(request.args, "title");
-    const body = stringArg(request.args, "body");
-    if (title === "" || body === "") return this.refusal(request, "note.write.empty");
+    // Every rule a write has to meet lives in the store, which answers in the
+    // core's error shape; the group adds nothing of its own.
+    const refs = refsArg(request.args, "refs");
     return this.record(request, store, window, {
-      title,
-      body,
+      title: stringArg(request.args, "title"),
+      body: stringArg(request.args, "body"),
       ...(stringArg(request.args, "summary") === "" ? {} : { summary: stringArg(request.args, "summary") }),
+      ...(refs.length === 0 ? {} : { refs }),
     });
   }
 
   private async replace(request: ToolCall, store: NoteStore, window: WindowRef): Promise<ToolResult> {
-    const id = stringArg(request.args, "id");
-    const revision = numberArg(request.args, "revision");
-    const body = stringArg(request.args, "body");
-    if (id === "" || body === "") return this.refusal(request, "note.write.empty");
+    const refs = refsArg(request.args, "refs");
     return this.record(request, store, window, {
-      id: id as NoteWriteInput["id"],
+      id: stringArg(request.args, "id") as NoteWriteInput["id"],
       title: stringArg(request.args, "title"),
-      body,
+      body: stringArg(request.args, "body"),
       replace: true,
-      expectedRevision: revision,
+      expectedRevision: numberArg(request.args, "revision"),
       ...(stringArg(request.args, "summary") === "" ? {} : { summary: stringArg(request.args, "summary") }),
+      ...(refs.length === 0 ? {} : { refs }),
     });
   }
 
   private async remove(request: ToolCall, store: NoteStore, window: WindowRef): Promise<ToolResult> {
-    const id = stringArg(request.args, "id");
-    if (id === "") return this.refusal(request, "note.write.empty");
     return this.record(request, store, window, {
-      id: id as NoteWriteInput["id"],
+      id: stringArg(request.args, "id") as NoteWriteInput["id"],
       title: "",
       body: "",
       delete: true,
@@ -116,20 +116,42 @@ export class NoteToolGroup implements ToolGroup {
    */
   private async record(
     request: ToolCall,
-    _store: NoteStore,
+    store: NoteStore,
     window: WindowRef,
     input: NoteWriteInput,
   ): Promise<ToolResult> {
     try {
       const note = await this.services.writeNote(window, input);
-      return this.answer(request, note.ref, this.services.table);
+      return this.answer(request, note.ref, store);
     } catch (error: unknown) {
       return this.refusalOf(request, error);
     }
   }
 
-  private answer(request: ToolCall, ref: string, table: import("@4fu/arbor-interfaces").TextTable): ToolResult {
-    return { callId: request.callId, ok: true, content: textOf(table, "result.note_written", { ref }) };
+  /**
+   * One write's answer, with the active set's budget beside it: the budget is
+   * part of every prefix, so a window that writes hears how full it is
+   * (docs/memory.md#the-active-set).
+   */
+  private async answer(request: ToolCall, ref: string, store: NoteStore): Promise<ToolResult> {
+    const table = this.services.table;
+    const snapshot = await store.snapshot().catch(() => null);
+    return {
+      callId: request.callId,
+      ok: true,
+      content: [
+        textOf(table, "result.note_written", { ref }),
+        ...(snapshot === null
+          ? []
+          : [
+              textOf(table, "result.note.budget", {
+                used: snapshot.tokens,
+                hard: snapshot.budget.tokens,
+                left: Math.max(0, snapshot.budget.count - snapshot.total),
+              }),
+            ]),
+      ].join("\n"),
+    };
   }
 
   /** One refusal the note store returned, in the core's error shape. */
@@ -138,7 +160,9 @@ export class NoteToolGroup implements ToolGroup {
     const info = error as { rule?: string; message?: string; nextAction?: string; details?: { revisions?: readonly { ref: string; revision: number; window: string | null }[] } };
     const revisions = info.details?.revisions ?? [];
     const lines = [info.message ?? String(error)];
-    if (info.nextAction !== undefined) lines.push(`${textOf(table, "error.next", {})}${info.nextAction}`.trim());
+    if (info.nextAction !== undefined) {
+      lines.push(textOf(table, "error.next", { next: info.nextAction }));
+    }
     for (const revision of revisions) {
       lines.push(`${revision.ref} ${revision.window ?? ""}`);
     }
@@ -201,3 +225,9 @@ function numberArg(args: Record<string, unknown>, name: string): number | undefi
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** The refs a write names, so the store can link them to the note. */
+function refsArg(args: Record<string, unknown>, name: string): Ref[] {
+  const value = args[name];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Ref => typeof item === "string");
+}

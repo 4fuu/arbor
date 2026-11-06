@@ -84,6 +84,9 @@ importers:
       '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@4fu/arbor-prompt':
+        specifier: workspace:*
+        version: link:../prompt
     devDependencies:
       '@4fu/arbor-tools':
         specifier: workspace:*
@@ -157,6 +160,9 @@ importers:
       '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@4fu/arbor-prompt':
+        specifier: workspace:*
+        version: link:../prompt
     devDependencies:
       '@4fu/arbor-journal-sqlite':
         specifier: workspace:*

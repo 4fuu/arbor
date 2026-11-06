@@ -437,11 +437,39 @@ describe("tool catalog", () => {
     const { catalog } = await harness();
     const all = await run(catalog, "tool_search", {});
     assert.ok(all.content.includes("journal"));
+    // The answer leads with how a function is called, and closes with how to
+    // read one signature.
+    assert.ok(all.content.includes("在 code_exec 脚本中"));
+    assert.ok(all.content.includes("tool_describe"));
     const one = await run(catalog, "tool_search", { keywords: "journal.search" });
     assert.ok(one.content.includes("journal.search(query, options?)"));
     const none = await run(catalog, "tool_search", { keywords: "zzz" });
     assert.equal(none.ok, true);
     assert.ok(none.content.length > 0);
+    assert.ok(none.content.includes("没有匹配的名称"));
+  });
+
+  it("answers tool_search about a direct tool, exactly first", async () => {
+    const { catalog } = await harness();
+    // A direct tool is not a module function, and the answer says what it does.
+    const bash = await run(catalog, "tool_search", { keywords: "bash" });
+    assert.ok(bash.content.includes("bash"));
+    assert.ok(bash.content.includes("执行一条命令"));
+    // An exact name comes before a name that only starts with it, and both
+    // before a description that merely holds it.
+    const end = await run(catalog, "tool_search", { keywords: "end" });
+    const lines = end.content.split("\n");
+    assert.equal(lines[lines.length - 2]?.startsWith("end："), true);
+    const note = await run(catalog, "tool_search", { keywords: "note" });
+    assert.ok(note.content.includes("note_write"));
+    assert.ok(note.content.includes("note_replace"));
+    assert.ok(note.content.includes("note_delete"));
+    // A function answers on its own name, without the module in front of it.
+    const search = await run(catalog, "tool_search", { keywords: "search" });
+    assert.ok(search.content.includes("journal.search(query, options?)"));
+    const short = await run(catalog, "tool_search", { keywords: "sho" });
+    assert.ok(short.content.includes("journal.show(ref)"));
+    assert.ok(short.content.includes("windows.show(c…)"));
   });
 
   it("refuses a script that names a direct tool, and never reaches the host", async () => {
@@ -526,6 +554,40 @@ describe("tool catalog", () => {
     const missing = await run(catalog, "bash_output", { job: "b999" });
     assert.equal(missing.ok, false);
     assert.equal(missing.error?.rule, "bash.job.not_found");
+  });
+
+  it("cuts every tool's result once, at the one exit they all leave by", async () => {
+    const { catalog } = await harness();
+    // `bash` bounds nothing of its own: the cut is the catalog's, and it is the
+    // only one (docs/prompting.md#information-density).
+    const big = await run(catalog, "bash", { command: "head -c 30000 /dev/zero | tr '\\0' x" });
+    assert.equal(big.ok, true);
+    assert.ok(big.content.includes("输出已截断"));
+    assert.ok(big.content.length < 25000);
+    // A result inside the limit is left exactly as the tool wrote it.
+    const small = await run(catalog, "bash", { command: "echo hello" });
+    assert.equal(small.content.trim(), "hello");
+  });
+
+  it("reports the active set's budget with a note write", async () => {
+    const { catalog, written } = await harness();
+    const result = await run(catalog, "note_write", { title: "部署", body: "先灰度，再全量", refs: ["r12"] });
+    assert.equal(result.ok, true);
+    assert.ok(result.content.includes("已写入 n1@1"));
+    assert.ok(result.content.includes("活跃笔记约 4/10 token"));
+    assert.ok(result.content.includes("还可新建 0 条"));
+    // The refs the write named reach the store, which links them to the note.
+    assert.deepEqual(written[0]?.input.refs, ["r12"]);
+  });
+
+  it("says what one search covered, and that there is more", async () => {
+    const { catalog } = await harness();
+    const result = await run(catalog, "search", { query: "部署" });
+    assert.equal(result.ok, true);
+    assert.ok(result.content.includes("共 1 条。"));
+    assert.ok(result.content.includes("范围：journal"));
+    // Nothing was cut, so no 还有 line is written.
+    assert.ok(!result.content.includes("还有"));
   });
 
   it("lists, greps and finds files through the workspace module", async () => {
@@ -890,6 +952,7 @@ function notesStore(): NoteStore {
       limit: 20,
       nextCall: "notes.active()",
       budget: { count: 1, tokens: 10 },
+      tokens: 4,
     }),
     delta: async () => ({ since: 1, epoch: 1, items: [], total: 0, limit: 20, nextCall: "" }),
     score: async () => ({ items: [], total: 0, limit: 20, nextCall: "" }),

@@ -44,6 +44,7 @@ import type {
   MessageRef,
   ModelInfo,
   Note,
+  NoteRef,
   NoteStore,
   NoteWriteInput,
   OpenWindowRequest,
@@ -1404,16 +1405,16 @@ export class Arbor {
   }
 
   /**
-   * The reminder series (docs/windows.md#usage-reminders): at 15, 30 and 50 %
-   * write down what a later window would need; at 60, 70 and 80 % also end the
-   * window with a handoff; a final one at `window - 2 x reserve`. Only the
-   * highest crossed tier is sent; the lower ones it jumped over are recorded as
-   * sent with it.
+   * The reminder series (docs/windows.md#usage-reminders): seven tiers, each
+   * with its own instruction, from 15 % of the window to the final one at
+   * `window - 2 x reserve`. Only the highest crossed tier is sent; the lower
+   * ones it jumped over are recorded as sent with it, so a window that crosses
+   * several thresholds in one step still hears every tier, in order.
    */
   private async remind(record: WindowRecord): Promise<void> {
     const tier = nextReminderTier(record.usage, record.remindersSent);
     if (tier === null) return;
-    record.remindersSent = REMINDER_SERIES;
+    record.remindersSent = REMINDER_TIERS.indexOf(tier) + 1;
     if (tier.tier === "final") record.finalReminderSent = true;
     const time = this.clock();
     const delivery: Delivery = {
@@ -1848,8 +1849,9 @@ export class Arbor {
 
   /**
    * One note write. The anchor is the host's: the window that wrote it, the
-   * event the write is recorded at, and the refs the window cited
-   * (docs/memory.md#anchors). The model never fills one in.
+   * event the write is recorded at, and the refs the window cited - which are
+   * the write's evidence as well, so credit for the active set flows through
+   * them (docs/memory.md#anchors). The model never fills one in.
    */
   private async writeNote(window: WindowRef, input: NoteWriteInput): Promise<Note> {
     const notes = this.options.notes;
@@ -1864,10 +1866,11 @@ export class Arbor {
     const anchor: Anchor = { window, event: await this.lastEvent(window) };
     // A hook may change what the write carries; a refusal answers with the rule.
     const allowed = await this.hooks.before("beforeNoteWrite", { window, input });
+    const cited = [...(allowed.input.refs ?? []), ...(await this.citedRefs(window))];
     const note = await notes.write({
       ...allowed.input,
-      anchor,
-      refs: [...(input.refs ?? []), ...(await this.citedRefs(window))],
+      refs: cited,
+      anchor: cited.length === 0 ? anchor : { ...anchor, evidence: cited },
     });
     await this.hooks.after("afterNoteWrite", { window, input: allowed.input, revision: note.revision });
     // A revision is news about the note, so the windows working on it hear about
@@ -1929,11 +1932,27 @@ export class Arbor {
     };
     const outcome = await this.effects.submit(input);
     await this.see(window, outcome.event);
+    // A send that cites notes is a use of them: the store cannot see it, so
+    // the host records it (docs/memory.md#the-active-set).
+    await this.citeNotes(window, outcome.event, request.cites ?? []);
     // A send is a new event on its target, so the windows in that conversation
     // stay current (docs/coordination.md#staying-current).
     const sent = await this.journal.get(outcome.event);
     if (sent !== null) await this.coordinator.circulate(sent);
     return outcome;
+  }
+
+  /**
+   * The notes a send cited, recorded as used. A note is `n012`, with or without
+   * a revision; anything else is a ref of another kind and is left alone.
+   */
+  private async citeNotes(window: WindowRef, event: EventRef, cites: readonly Ref[]): Promise<void> {
+    const notes = this.options.notes;
+    if (notes === undefined) return;
+    for (const cite of cites) {
+      if (!/^n\d+(@\d+)?$/.test(cite)) continue;
+      await notes.recordUse({ ref: cite as NoteRef, kind: "cite", window, event });
+    }
   }
 
   private async boardPage(): Promise<Page<BoardLine>> {

@@ -349,7 +349,7 @@ describe("the environment in the host", () => {
     // A server that never starts is refused, and nothing is installed.
     const failed = await reload(arbor, record.window, mount, { install: [{ kind: "mcp", name: "weather", path: "./weather" }] });
     assert.equal(failed.ok, false);
-    assert.equal(failed.error?.rule, "env.draft.mcp");
+    assert.equal(failed.error?.rule, "env.draft.mcp.start");
 
     const removed = await reload(arbor, record.window, mount, { remove: ["skill:arbor-settings"] });
     assert.equal(removed.ok, false);

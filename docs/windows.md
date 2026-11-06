@@ -45,7 +45,7 @@ in the journal ([journal.md](journal.md)).
   once, so its prefix rarely pays off in the cache; a standard prefix is
   shared by every window and stays cached.
 - **Snapshot epochs.** The system prompt and memory snapshot are rebuilt at
-  most every `snapshot.min_interval` (default 10 minutes), and only when notes
+  most every `snapshot.minIntervalMs` (default 10 minutes), and only when notes
   or the environment ([environment.md](environment.md)) changed. Every window
   opened in one epoch has the same prefix. Changes since the epoch go into
   the first input.
@@ -80,12 +80,16 @@ its own deltas rather than the window.
 
 ## Usage reminders
 
-Host reminders are appended to an input, never to the prefix: at 15, 30 and
-50 % of the window, write down what a later window would need; at 60, 70 and
-80 %, also end the window with a handoff; a final one at
-`window - 2 x reserve`. Each carries the real numbers, its place in the
-series and the cost of ignoring it. Only the highest crossed tier is sent; the
-lower ones it jumped over are recorded as sent with it.
+Host reminders are appended to an input, never to the prefix. The series has
+seven tiers, each with its own instruction: at 15 % write down what a later
+window would need when there is no progress note yet; at 30 % change it when
+something changed; at 50 % write up to what a continuation needs; at 60 % say
+what the boundary is; at 70 % open no new large task; at 80 % rotate before new
+work; a final one at `window - 2 x reserve` rotates now. Each carries the real
+numbers, its place in the series and, from 80 % on, the cost of ignoring it.
+Only the highest crossed tier is sent; the lower ones it jumped over are
+recorded as sent with it, so a window that crosses several thresholds in one
+step hears every tier, in order.
 
 ## Ending and continuing
 
@@ -93,6 +97,10 @@ lower ones it jumped over are recorded as sent with it.
   current topics, progress, pending items, agreements, each with refs - and
   the host opens a continuation window whose first input carries the handoff
   and the previous window's ref. Details belong in notes and the journal.
+  Unfinished work is what another window wrote on a target this one touched
+  after it opened: the task and the outside events the window was opened for,
+  and the window's own `window_start`, are not open work, so a window that has
+  done nothing ends cleanly.
 - A continuation forks the previous window's workspace
   ([workspaces.md](workspaces.md)) and keeps its watermarks and its
   expectations ([coordination.md](coordination.md#expectations)).

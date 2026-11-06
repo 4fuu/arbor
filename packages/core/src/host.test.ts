@@ -316,10 +316,7 @@ describe("one window end to end", () => {
 
   it("ends the window with a handoff and opens a continuation that carries it", async () => {
     const { arbor, journal, backend } = await host();
-    backend.script([
-      { tool: "end", args: {}, result: { ok: true, content: "已结束" } },
-      { text: "继续" },
-    ]);
+    backend.script([{ text: "继续" }]);
     const record = await arbor.open(task);
     // The model ends with a handoff, so the host opens the continuation.
     await arbor.services.endWindow(record.window, {
@@ -338,6 +335,7 @@ describe("one window end to end", () => {
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.firstInput?.includes("上一个窗口 c1 的记录没有加载"));
+    assert.ok(opened?.firstInput?.includes("原因：继续窗口 c1 未完成的工作。"));
     assert.ok(opened?.firstInput?.includes("当前话题：CI"));
     assert.ok(opened?.firstInput?.includes("本 agent 在上一个窗口 c1 中自己写下的交接内容"));
     assert.ok(opened?.firstInput?.includes("未完成的任务：t1"));
@@ -507,8 +505,36 @@ describe("one window end to end", () => {
     const body = reminders.items[0]?.body ?? "";
     assert.ok(body.includes("已用 130000/200000 tokens（65%）"));
     assert.ok(body.includes("第 4/7 条提醒"));
-    assert.ok(body.includes("用 end 带上交接内容结束本窗口"));
-    assert.ok(body.includes("忽略本条"));
+    assert.ok(body.includes("这是系统提醒，不是用户请求"));
+    assert.ok(body.includes("说明什么是边界"));
+    // 80 % has not been crossed, so the cost of ignoring it is not said yet.
+    assert.ok(!body.includes("忽略本条"));
+  });
+
+  it("sends every tier in order when the window crosses several thresholds", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([
+      { usage: { used: 30000, limit: 200000, reserve: 4000 } },
+      { usage: { used: 70000, limit: 200000, reserve: 4000 } },
+      { usage: { used: 130000, limit: 200000, reserve: 4000 } },
+      { usage: { used: 165000, limit: 200000, reserve: 4000 } },
+      { text: "继续" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    const reminders = await journal.list({ kinds: ["reminder"] });
+    const bodies = reminders.items.map((item) => item.body ?? "");
+    assert.equal(bodies.length, 4);
+    assert.ok(bodies[0]?.includes("第 1/7 条提醒"));
+    assert.ok(bodies[0]?.includes("把后续窗口需要的内容写进记录"));
+    assert.ok(bodies[1]?.includes("第 2/7 条提醒"));
+    assert.ok(bodies[1]?.includes("有变化时修改记录里的进展和待办"));
+    assert.ok(bodies[2]?.includes("第 4/7 条提醒"));
+    assert.ok(bodies[2]?.includes("说明什么是边界"));
+    // From 80 % on, the reminder also says what ignoring it costs.
+    assert.ok(bodies[3]?.includes("第 6/7 条提醒"));
+    assert.ok(bodies[3]?.includes("再开新工作前先轮换"));
+    assert.ok(bodies[3]?.includes("忽略本条"));
   });
 
   it("keeps an ended run open for a related input, then ends it when quiet", async () => {
@@ -605,15 +631,54 @@ describe("one window end to end", () => {
 
   it("refuses end without a handoff while the window is behind on a target", async () => {
     const { arbor, journal, backend } = await host();
-    // Another window wrote on the target after this one's watermark.
-    await journal.append({ kind: "input", window: "c9", body: "新的 CI 结果", targets: ["gh:pr:57"] });
     backend.script([{ text: "完成" }]);
     const record = await arbor.open(task);
-    await arbor.journal.advanceWatermark(record.window, "gh:pr:57", 1);
+    // Another window wrote on the target after this one opened.
+    await journal.append({ kind: "input", window: "c9", body: "新的 CI 结果", targets: ["gh:pr:57"] });
     const result = await arbor.services.endWindow(record.window);
     assert.equal(result.ok, false);
     assert.equal(result.error?.rule, "end.handoff.required");
     assert.ok(result.error?.message.includes("当前话题"));
+  });
+
+  it("ends a fresh window cleanly, because its own opening is not open work", async () => {
+    const { arbor, backend } = await host();
+    backend.script([{ text: "完成" }]);
+    const record = await arbor.open(task);
+    // Nothing but the task this window was opened for sits on its target, so
+    // there is no unfinished work to hand over.
+    const result = await arbor.services.endWindow(record.window);
+    assert.equal(result.ok, true);
+  });
+
+  it("counts a note a send cited, so the note earns a place in the active set", async () => {
+    const journal = new SqliteJournal({ path: ":memory:" });
+    const { SqliteNoteStore } = await import("@4fu/arbor-notes-sqlite");
+    const notes = new SqliteNoteStore({ path: ":memory:", journal });
+    const timers = new ManualTimers();
+    const backend = new ScriptedBackend();
+    const arbor = new Arbor({
+      journal,
+      backend,
+      timers,
+      notes,
+      now: () => 1700000000000,
+      judge: new QuietJudge(),
+    });
+    backend.attach(arbor.windowControl());
+    backend.script([
+      { tool: "note_write", args: { title: "部署", summary: "上线步骤", body: "先灰度，再全量" } },
+      { tool: "send", args: { to: "qq:group:123", content: "已完成", cites: ["n1"] } },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    // The cite is a use the store cannot see, so the host records it: a note
+    // nobody cites, holds as evidence or reads earns nothing.
+    const scored = await notes.score();
+    assert.equal(scored.total, 1);
+    assert.equal(scored.items[0]?.ref, "n1@1");
+    assert.ok((scored.items[0]?.score ?? 0) > 0);
   });
 
   it("fills a note write's anchor in, so the model never declares one", async () => {

@@ -16,7 +16,6 @@
 import vm from "node:vm";
 import type { ModuleSpec, ToolResult, WindowRef } from "@4fu/arbor-interfaces";
 import { textOf } from "@4fu/arbor-prompt";
-import { boundResult } from "./bound.ts";
 import type { ToolServices } from "./host.ts";
 
 /** How long one script may run before it is stopped. */
@@ -41,6 +40,7 @@ export interface ScriptCatalog {
     modules: readonly string[];
     functions: readonly string[];
     skills: readonly { name: string; description: string; path?: string }[];
+    tools: readonly { name: string; description: string }[];
   };
   /** `tool_describe`: one function's signature. */
   describe(name: string): string | undefined;
@@ -83,7 +83,22 @@ export async function runScript(
   try {
     const compiled = new vm.Script(wrapped, { filename: "code_exec.js" });
     value = await compiled.runInContext(sandbox, { timeout: SCRIPT_TIMEOUT_MS });
-  } catch (error) {
+  } catch (error: unknown) {
+    // A script that outran the timeout gets its own rule: the message is the
+    // vm's, and the next action says what to do about a long one.
+    const timedOut = typeof error === "object" && error !== null && (error as { code?: string }).code === "ERR_SCRIPT_EXECUTION_TIMEOUT";
+    if (timedOut) {
+      return {
+        callId: "",
+        ok: false,
+        content: "",
+        error: {
+          rule: "script.timeout",
+          message: textOf(table, "refused.script_timeout", { ms: SCRIPT_TIMEOUT_MS }),
+          nextAction: textOf(table, "next.script_timeout"),
+        },
+      };
+    }
     const message = error instanceof Error ? error.message : String(error);
     return {
       callId: "",
@@ -97,15 +112,9 @@ export async function runScript(
     };
   }
   const text = value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value);
-  return {
-    callId: "",
-    ok: true,
-    content: await boundResult(text ?? "", {
-      workspace: context.workspace,
-      callId: context.call,
-      table,
-    }),
-  };
+  // The whole answer goes back to the script's caller; the cut happens once,
+  // at the one exit every direct call leaves by (docs/prompting.md).
+  return { callId: "", ok: true, content: text ?? "" };
 }
 
 /** One module's functions, as the globals a script calls. */

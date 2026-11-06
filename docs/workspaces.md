@@ -70,7 +70,8 @@ same host, so `read` and `bash` resolve the prefix `/env` onto the directory
 itself. Nothing is staged and nothing is copied: what a command reads at `/env`
 is the environment's own file, which is why it is read-only and a change goes
 through the environment's draft and `reload`
-([environment.md](environment.md#layout)).
+([environment.md](environment.md#layout)). The prefix is a string rewrite, not a
+mount, so it is a convenience for reading and not a boundary.
 
 ## What the agent does
 

@@ -198,7 +198,7 @@ describe("the environment", () => {
     const path = join(work, "settings.json");
     await writeFile(path, "[1, 2, 3]\n", "utf8");
     await assert.rejects(() => env.install([{ kind: "settings", name: "settings", path }]), (error: { rule?: string }) => {
-      assert.equal(error.rule, "env.draft.settings");
+      assert.equal(error.rule, "env.draft.settings.shape");
       return true;
     });
     assert.equal(await env.settings(), undefined);
@@ -233,7 +233,7 @@ describe("the environment", () => {
     await mkdir(path, { recursive: true });
     await writeFile(join(path, "broken.json"), `${JSON.stringify({ command: "definitely-not-a-command" }, null, 2)}\n`, "utf8");
     await assert.rejects(() => env.install([{ kind: "mcp", name: "broken", path }]), (error: { rule?: string; nextAction?: string }) => {
-      assert.equal(error.rule, "env.draft.mcp");
+      assert.equal(error.rule, "env.draft.mcp.start");
       assert.match(error.nextAction ?? "", /arbor-mcp\/SKILL.md 的「自测」一节/);
       return true;
     });

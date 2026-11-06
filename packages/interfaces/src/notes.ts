@@ -172,6 +172,8 @@ export interface NotesSnapshot {
   limit: number;
   nextCall: string;
   budget: ActiveSetBudget;
+  /** What the active notes cost against `budget.tokens`, estimated. */
+  tokens: number;
 }
 
 /** What changed since an epoch: the notes written after it. */

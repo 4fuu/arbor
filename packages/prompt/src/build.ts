@@ -139,10 +139,14 @@ export function reminderBlock(reminder: {
 }
 
 /** A tool's result, as data (docs/prompting.md#layers). */
-export function toolResultBlock(call: { callId: string; name: string }, content: string): Block {
+export function toolResultBlock(
+  call: { callId: string; name: string },
+  content: string,
+  status: "ok" | "failed" = "ok",
+): Block {
   return {
     kind: "tool_result",
-    fields: { callId: call.callId, name: call.name, content },
+    fields: { callId: call.callId, name: call.name, status, content },
   };
 }
 

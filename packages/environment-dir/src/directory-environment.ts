@@ -1,6 +1,6 @@
 /**
- * The default `Environment`: one shared directory, mounted read-only into every
- * window at `/env` (docs/environment.md).
+ * The default `Environment`: one shared directory, read-only for every window
+ * at `/env` (docs/environment.md).
  *
  * ```text
  * <root>/env/skills/<name>/            a skill, with its scripts beside it
@@ -42,8 +42,9 @@ import type {
   Supervisor,
 } from "@4fu/arbor-interfaces";
 import { StdioMcpServer } from "./mcp.ts";
+import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 
-/** What a window reads the environment at, which is mounted read-only. */
+/** What a window reads the environment at, which is read-only for it. */
 const ENV_PREFIX = "/env";
 
 /** The built-in skills, seeded read-only on first use. */
@@ -137,6 +138,12 @@ export interface DirectoryEnvironmentOptions {
   supervisor?: Supervisor;
   /** Where a secret's value comes from. A configuration names one, never holds it. */
   secretOf?: (name: string) => string | undefined;
+  /**
+   * One fixed string from the deployment's text table, so this implementation
+   * writes none of its own (docs/prompting.md#language-and-the-text-table).
+   * Defaults to the framework's own Chinese table.
+   */
+  text?: (key: string, args?: Record<string, string | number>) => string;
   /** The clock. Tests pass a fixed one. */
   now?: () => number;
 }
@@ -150,6 +157,8 @@ export class DirectoryEnvironment implements Environment {
   private readonly root: string;
   private readonly supervisor: Supervisor | undefined;
   private readonly secretOf: ((name: string) => string | undefined) | undefined;
+  /** The table every refusal this implementation raises is written from. */
+  private readonly text: (key: string, args?: Record<string, string | number>) => string;
   private readonly clock: () => number;
   private index: IndexFile = { revision: 0, items: [] };
   /** Every environment revision, oldest first. */
@@ -162,6 +171,7 @@ export class DirectoryEnvironment implements Environment {
     this.directory = join(options.root, "env");
     this.supervisor = options.supervisor;
     this.secretOf = options.secretOf;
+    this.text = options.text ?? ((key, args) => textOf(zhTextTable, key, args));
     this.clock = options.now ?? (() => Date.now());
   }
 
@@ -208,8 +218,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "invalid_input",
         rule: "env.empty",
-        message: "reload：install 和 remove 至少要给一个",
-        nextAction: "给出 install 或 remove 之一。",
+        message: this.text("refused.env.empty"),
+        nextAction: this.text("next.env.empty"),
       });
     }
     // Everything is staged and checked before anything is replaced, so a refusal
@@ -312,9 +322,9 @@ export class DirectoryEnvironment implements Environment {
     if (entry === undefined) {
       throw arborError({
         code: "not_found",
-        rule: "env.notfound",
-        message: `环境：没有 MCP 服务器 ${server}`,
-        nextAction: "用 env.list 查看当前安装的服务器。",
+        rule: "env.mcp.notfound",
+        message: this.text("refused.env.mcp.notfound", { name: server }),
+        nextAction: this.text("next.env.mcp.notfound"),
         details: { server },
       });
     }
@@ -323,8 +333,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "unavailable",
         rule: "mcp.url.unsupported",
-        message: `环境：MCP 服务器 ${server} 是一个远程地址，本实现只调用 stdio 服务器`,
-        nextAction: "把该服务器换成本地 command 形式，或给主机换一个 Environment 实现。",
+        message: this.text("refused.mcp.url.unsupported", { name: server }),
+        nextAction: this.text("next.mcp.url.unsupported"),
         details: { server },
       });
     }
@@ -364,8 +374,8 @@ export class DirectoryEnvironment implements Environment {
         throw arborError({
           code: "not_found",
           rule: "env.draft.missing",
-          message: `环境：草稿 ${draft.path} 不存在`,
-          nextAction: "用 workspace.ls 查看工作区里的草稿路径。",
+          message: this.text("refused.env.draft.missing", { path: draft.path }),
+          nextAction: this.text("next.env.draft.missing"),
           details: { path: draft.path },
         });
       }
@@ -415,7 +425,7 @@ export class DirectoryEnvironment implements Environment {
       if (draft.kind === "mcp") return { ok: true, value: await this.checkMcp(draft) };
       return { ok: true, value: await this.checkService(draft) };
     } catch (error: unknown) {
-      return { ok: false, error: errorInfo(error, draft) };
+      return { ok: false, error: errorInfo(this.text, error, draft) };
     }
   }
 
@@ -426,8 +436,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "invalid_input",
         rule: "env.draft.skill",
-        message: `环境：草稿 ${draft.name} 中没有 SKILL.md`,
-        nextAction: "读 /env/skills/arbor-skill/SKILL.md 的「结构」一节，按它补上 SKILL.md。",
+        message: this.text("refused.env.draft.skill", { name: draft.name }),
+        nextAction: this.text("next.env.draft.skill"),
         details: { name: draft.name },
       });
     }
@@ -435,9 +445,9 @@ export class DirectoryEnvironment implements Environment {
     if (lines[0]?.startsWith("# ") !== true) {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.skill",
-        message: `环境：技能 ${draft.name} 的第一行不是一级标题`,
-        nextAction: "读 /env/skills/arbor-skill/SKILL.md 的「结构」一节，把第一行写成 # 标题。",
+        rule: "env.draft.skill.title",
+        message: this.text("refused.env.draft.skill.title", { name: draft.name }),
+        nextAction: this.text("next.env.draft.skill.title"),
         details: { name: draft.name },
       });
     }
@@ -445,9 +455,9 @@ export class DirectoryEnvironment implements Environment {
     if (description === "") {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.skill",
-        message: `环境：技能 ${draft.name} 没有一行说明`,
-        nextAction: "读 /env/skills/arbor-skill/SKILL.md 的「结构」一节，在标题下写一行说明。",
+        rule: "env.draft.skill.line",
+        message: this.text("refused.env.draft.skill.line", { name: draft.name }),
+        nextAction: this.text("next.env.draft.skill.line"),
         details: { name: draft.name },
       });
     }
@@ -460,9 +470,9 @@ export class DirectoryEnvironment implements Environment {
     if (text === null) {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.settings",
-        message: `环境：草稿 ${draft.path} 中没有 ${draft.name}.json`,
-        nextAction: "读 /env/skills/arbor-settings/SKILL.md 的「结构」一节，按它写设置文件。",
+        rule: "env.draft.settings.missing",
+        message: this.text("refused.env.draft.settings.missing", { path: draft.path, name: draft.name }),
+        nextAction: this.text("next.env.draft.settings.missing"),
         details: { name: draft.name },
       });
     }
@@ -473,16 +483,18 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "invalid_input",
         rule: "env.draft.settings",
-        message: `环境：设置文件解析失败：${error instanceof Error ? error.message : String(error)}`,
-        nextAction: "读 /env/skills/arbor-settings/SKILL.md 的「结构」一节，修正 JSON 后重新调用 reload。",
+        message: this.text("refused.env.draft.settings", {
+          message: error instanceof Error ? error.message : String(error),
+        }),
+        nextAction: this.text("next.env.draft.settings"),
       });
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.settings",
-        message: "环境：设置文件必须是一个 JSON 对象",
-        nextAction: "读 /env/skills/arbor-settings/SKILL.md 的「结构」一节，按字段写成一个对象。",
+        rule: "env.draft.settings.shape",
+        message: this.text("refused.env.draft.settings.shape"),
+        nextAction: this.text("next.env.draft.settings.shape"),
       });
     }
   }
@@ -498,8 +510,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "invalid_input",
         rule: "env.draft.mcp",
-        message: `环境：MCP 服务器 ${draft.name} 的配置缺失或不是 JSON`,
-        nextAction: "读 /env/skills/arbor-mcp/SKILL.md 的「结构」一节，按它写配置文件。",
+        message: this.text("refused.env.draft.mcp", { name: draft.name }),
+        nextAction: this.text("next.env.draft.mcp"),
         details: { name: draft.name },
       });
     }
@@ -508,9 +520,9 @@ export class DirectoryEnvironment implements Environment {
     if (command === "" && stringField(config, "url") === "") {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.mcp",
-        message: `环境：MCP 服务器 ${draft.name} 的配置中没有 command 或 url`,
-        nextAction: "读 /env/skills/arbor-mcp/SKILL.md 的「结构」一节，补上 command 或 url。",
+        rule: "env.draft.mcp.command",
+        message: this.text("refused.env.draft.mcp.command", { name: draft.name }),
+        nextAction: this.text("next.env.draft.mcp.command"),
         details: { name: draft.name },
       });
     }
@@ -533,9 +545,9 @@ export class DirectoryEnvironment implements Environment {
     }).catch((error: unknown) => {
       throw arborError({
         code: "unavailable",
-        rule: "env.draft.mcp",
-        message: `环境：MCP 服务器 ${draft.name} 启动失败`,
-        nextAction: "读 /env/skills/arbor-mcp/SKILL.md 的「自测」一节，把服务器在本窗口工作区里跑通后再调用 reload。",
+        rule: "env.draft.mcp.start",
+        message: this.text("refused.env.draft.mcp.start", { name: draft.name }),
+        nextAction: this.text("next.env.draft.mcp.start"),
         details: { name: draft.name, upstream: error instanceof Error ? error.message : String(error) },
         cause: error,
       });
@@ -554,8 +566,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "invalid_input",
         rule: "env.draft.service",
-        message: `环境：服务 ${draft.name} 的配置缺失或不是 JSON`,
-        nextAction: "读 /env/skills/arbor-service/SKILL.md 的「结构」一节，按它写 svc.json。",
+        message: this.text("refused.env.draft.service", { name: draft.name }),
+        nextAction: this.text("next.env.draft.service"),
         details: { name: draft.name },
       });
     }
@@ -563,9 +575,9 @@ export class DirectoryEnvironment implements Environment {
     if (command === "") {
       throw arborError({
         code: "invalid_input",
-        rule: "env.draft.service",
-        message: `环境：服务 ${draft.name} 的配置中没有 command`,
-        nextAction: "读 /env/skills/arbor-service/SKILL.md 的「结构」一节，补上 command。",
+        rule: "env.draft.service.command",
+        message: this.text("refused.env.draft.service.command", { name: draft.name }),
+        nextAction: this.text("next.env.draft.service.command"),
         details: { name: draft.name },
       });
     }
@@ -573,8 +585,8 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "unavailable",
         rule: "env.supervisor.absent",
-        message: `环境：本主机没有配置服务监督器，无法安装服务 ${draft.name}`,
-        nextAction: "移除该服务项，或在配置了监督器的主机上安装它。",
+        message: this.text("refused.env.supervisor", { name: draft.name }),
+        nextAction: this.text("next.env.supervisor"),
         details: { name: draft.name },
       });
     }
@@ -654,9 +666,9 @@ export class DirectoryEnvironment implements Environment {
         await this.rollback(entry, previous);
         throw arborError({
           code: "unavailable",
-          rule: "env.draft.service",
-          message: `环境：服务 ${draft.draft.name} 没有通过健康检查`,
-          nextAction: "用 services.logs 查看服务的输出，修好后重新调用 reload。",
+          rule: "env.draft.service.health",
+          message: this.text("refused.env.draft.service.health", { name: draft.draft.name }),
+          nextAction: this.text("next.env.draft.service.health"),
           details: { name: draft.draft.name, upstream: error instanceof Error ? error.message : String(error) },
           cause: error,
         });
@@ -702,8 +714,12 @@ export class DirectoryEnvironment implements Environment {
       throw arborError({
         code: "conflict",
         rule: "env.draft.stale",
-        message: `环境：${installed.ref} 已被其他窗口更新到第 ${installed.revision} 版，草稿基于旧的 ${read} 版`,
-        nextAction: `读 ${BUILTIN_SKILL_PATH[draft.draft.kind]} 的「修订冲突」一节，把新旧内容合并进草稿，再重新调用 reload。`,
+        message: this.text("refused.env.stale", {
+          item: installed.ref,
+          revision: installed.revision,
+          read,
+        }),
+        nextAction: this.text("next.env.stale", { skill: BUILTIN_SKILL_PATH[draft.draft.kind] }),
         details: { item: installed.ref, revision: installed.revision, read },
       });
     }
@@ -719,8 +735,8 @@ export class DirectoryEnvironment implements Environment {
         throw arborError({
           code: "not_found",
           rule: "env.notfound",
-          message: `环境：没有环境项 ${wanted}`,
-          nextAction: "用 env.list 查看当前的环境项和它们的引用。",
+          message: this.text("refused.env.notfound", { item: wanted }),
+          nextAction: this.text("next.env.notfound"),
           details: { item: wanted },
         });
       }
@@ -728,8 +744,8 @@ export class DirectoryEnvironment implements Environment {
         throw arborError({
           code: "refused",
           rule: "env.readonly",
-          message: `环境：${entry.ref} 是框架内置的技能，只读`,
-          nextAction: "内置技能只读；要改就写一个自己的技能，用 env.list 看它的路径。",
+          message: this.text("refused.env.readonly", { item: entry.ref }),
+          nextAction: this.text("next.env.readonly"),
           details: { item: entry.ref },
         });
       }
@@ -860,14 +876,22 @@ async function discard(draft: StagedDraft): Promise<void> {
   await rm(draft.path, { recursive: true, force: true }).catch(() => {});
 }
 
-function errorInfo(error: unknown, draft: StagedDraft): ArborErrorInfo {
+function errorInfo(
+  text: (key: string, args?: Record<string, string | number>) => string,
+  error: unknown,
+  draft: StagedDraft,
+): ArborErrorInfo {
   const info = error as { code?: string; rule?: string; message?: string; nextAction?: string; details?: Record<string, unknown> };
   if (info.rule === undefined) {
     return {
       code: "invalid_input",
       rule: "env.draft",
-      message: `环境：草稿 ${draft.name} 无效：${error instanceof Error ? error.message : String(error)}`,
-      nextAction: "修正草稿后重新调用 reload。",
+      message: text("refused.env.draft", {
+        path: draft.path,
+        kind: draft.kind,
+        message: error instanceof Error ? error.message : String(error),
+      }),
+      nextAction: text("next.env.draft"),
     };
   }
   return {

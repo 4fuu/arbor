@@ -19,8 +19,7 @@ workspace. The framework does not manage or restrict them.
 
 ## Layout
 
-The environment is one shared directory, mounted read-only into
-every window at `/env`:
+The environment is one shared directory, read-only for every window at `/env`:
 
 ```text
 /env/skills/<name>/SKILL.md     a skill, with any scripts and files beside it
@@ -39,7 +38,10 @@ The environment is one shared directory on the host and a window's workspace is
 a directory on that same host, so `read` and `bash` resolve the prefix onto the
 directory itself. Nothing is staged and nothing is copied: what a command reads
 at `/env` is the environment's own file, which is why it is read-only and a
-change goes through the environment's own draft and `reload`.
+change goes through the environment's own draft and `reload`. The prefix is
+resolved by rewriting the path as a string, not by mounting the directory, so it
+is a convenience for reading and not a boundary: a command that builds its path
+another way reaches the same files. The workspace is only isolated by directory.
 
 Each item - one skill, one server, one service, the settings - has its own
 revision, so changes to different items never conflict. A window without a

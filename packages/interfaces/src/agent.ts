@@ -244,5 +244,11 @@ export interface ToolResult {
   ok: boolean;
   /** Stable fields, bounded, in the core's error shape when it failed. */
   content: string;
+  /**
+   * The tool that was called, as the prompt names it. A refusal carries it so
+   * the error line starts with the tool name; the catalog fills it on the way
+   * out, so a group that leaves it out still names the call.
+   */
+  tool?: string;
   error?: { rule: string; message: string; nextAction?: string; refs?: readonly Ref[] };
 }

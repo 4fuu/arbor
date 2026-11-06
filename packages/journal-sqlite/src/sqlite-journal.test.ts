@@ -354,16 +354,27 @@ describe("watermarks", () => {
     assert.deepEqual(await journal.targetsBehind("c1"), []);
   });
 
-  it("reports only the targets the window touched", async () => {
+  it("reports only what another window wrote after the window opened", async () => {
     const journal = memoryJournal();
-    await journal.append({ kind: "input", window: "c1", body: "one", targets: ["qq:group:1"] });
+    // The task and the outside events a window was opened for are not open
+    // work, and neither is the window's own `window_start`.
+    await journal.append({ kind: "input", body: "one", targets: ["qq:group:1"] });
+    await journal.append({ kind: "task", targets: ["qq:group:1"] });
+    await journal.append({ kind: "window_start", window: "c1", body: "opened", targets: ["qq:group:1"] });
     await journal.append({ kind: "input", window: "c2", body: "two", targets: ["qq:group:2"] });
+    assert.deepEqual(await journal.targetsBehind("c1"), []);
 
-    const behind = await journal.targetsBehind("c1");
-    assert.deepEqual(
-      behind.map((gap) => gap.target),
-      ["qq:group:1"],
-    );
+    // What another window wrote on the target after this one opened is.
+    await journal.append({ kind: "input", window: "c2", body: "three", targets: ["qq:group:1"] });
+    assert.deepEqual(await journal.targetsBehind("c1"), [
+      { target: "qq:group:1", latest: 5, watermark: 0, count: 1 },
+    ]);
+
+    // And so is what the host itself wrote there afterwards.
+    await journal.append({ kind: "input", body: "four", targets: ["qq:group:1"] });
+    assert.deepEqual(await journal.targetsBehind("c1"), [
+      { target: "qq:group:1", latest: 6, watermark: 0, count: 2 },
+    ]);
   });
 });
 

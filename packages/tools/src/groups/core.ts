@@ -107,11 +107,8 @@ export class CoreToolGroup implements ToolGroup {
     const table = this.services.table;
     const query = stringArg(request.args, "query");
     const scope = stringArg(request.args, "scope");
-    const outcome = await this.services.search(
-      window,
-      query,
-      scope === "" ? undefined : scope.split(",").map((part) => part.trim()),
-    );
+    const wanted = scope === "" ? undefined : scope.split(",").map((part) => part.trim());
+    const outcome = await this.services.search(window, query, wanted);
     const lines: string[] = [];
     for (const hit of outcome.hits) {
       lines.push(`${hit.ref} ${hit.kind} ${hit.summary}`);
@@ -123,8 +120,21 @@ export class CoreToolGroup implements ToolGroup {
       lines.push(`${live.window} ${live.doing}`);
     }
     const body = lines.length === 0 ? textOf(table, "result.search.empty") : lines.join("\n");
-    const total = textOf(table, "result.search.total", { total: outcome.total });
-    return { callId: request.callId, ok: true, content: `${body}\n${total}\n${outcome.nextCall}` };
+    // What was searched, how much there is, and how to reach the rest: a limit
+    // that shapes a result without refusing is reported every time
+    // (docs/prompting.md#rules-surface-where-they-bite).
+    const more = outcome.total - lines.length;
+    return {
+      callId: request.callId,
+      ok: true,
+      content: [
+        body,
+        textOf(table, "result.search.total", { total: outcome.total }),
+        textOf(table, "result.search.scope", { scope: outcome.scope.join("、") }),
+        ...(more > 0 ? [textOf(table, "result.search.more", { count: more })] : []),
+        outcome.nextCall,
+      ].join("\n"),
+    };
   }
 
   private notOwned(request: ToolCall): ToolResult {

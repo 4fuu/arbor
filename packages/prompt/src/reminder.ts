@@ -1,12 +1,14 @@
 /**
  * Usage reminders (docs/windows.md#usage-reminders).
  *
- * Host reminders are appended to an input, never to the prefix: at 15, 30 and
- * 50 % of the window, write down what a later window would need; at 60, 70 and
- * 80 %, also end the window with a handoff; a final one at
- * `window - 2 x reserve`. Each carries the real numbers, its place in the
- * series and the cost of ignoring it. Only the highest crossed tier is sent;
- * the lower ones it jumped over are recorded as sent with it.
+ * Host reminders are appended to an input, never to the prefix. The series has
+ * seven tiers, each with its own instruction: at 15, 30 and 50 % write down
+ * what a later window would need; at 60 % say what the boundary is; at 70 %
+ * open no new large task; at 80 % rotate before new work; a final one at
+ * `window - 2 x reserve` rotates now. Each carries the real numbers, its place
+ * in the series and, from 80 % on, the cost of ignoring it. Only the highest
+ * crossed tier is sent; the lower ones it jumped over are recorded as sent
+ * with it.
  */
 
 import type { TokenUsage } from "@4fu/arbor-interfaces";
@@ -15,8 +17,8 @@ import type { TokenUsage } from "@4fu/arbor-interfaces";
 export interface ReminderTier {
   /** The share of the window, in percent. */
   percent: number;
-  /** `note`, `handoff` or `final`. */
-  tier: "note" | "handoff" | "final";
+  /** The tier's key in the text table: `p15` … `p80`, or `final`. */
+  tier: "p15" | "p30" | "p50" | "p60" | "p70" | "p80" | "final";
   /** The share of the window's tokens at which this tier fires. */
   at: (usage: TokenUsage) => number;
 }
@@ -29,12 +31,12 @@ function atPercent(percent: number): (usage: TokenUsage) => number {
 
 /** The tiers in their fixed order. */
 export const REMINDER_TIERS: readonly ReminderTier[] = [
-  { percent: 15, tier: "note", at: atPercent(15) },
-  { percent: 30, tier: "note", at: atPercent(30) },
-  { percent: 50, tier: "note", at: atPercent(50) },
-  { percent: 60, tier: "handoff", at: atPercent(60) },
-  { percent: 70, tier: "handoff", at: atPercent(70) },
-  { percent: 80, tier: "handoff", at: atPercent(80) },
+  { percent: 15, tier: "p15", at: atPercent(15) },
+  { percent: 30, tier: "p30", at: atPercent(30) },
+  { percent: 50, tier: "p50", at: atPercent(50) },
+  { percent: 60, tier: "p60", at: atPercent(60) },
+  { percent: 70, tier: "p70", at: atPercent(70) },
+  { percent: 80, tier: "p80", at: atPercent(80) },
   {
     percent: 100,
     tier: "final",

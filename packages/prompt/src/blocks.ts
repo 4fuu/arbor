@@ -84,7 +84,7 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
   {
     kind: "reminder",
     tag: "reminder",
-    lines: ["reminder.numbers", "reminder.series", "reminder.tier.{tier}", "reminder.cost", "delivery.time"],
+    lines: ["reminder.head", "reminder.numbers", "reminder.series", "reminder.tier.{tier}", "reminder.cost.{tier}", "delivery.time"],
     fields: [
       { name: "tier", type: "string" },
       { name: "index", type: "number" },
@@ -99,10 +99,11 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
     kind: "tool_result",
     tag: "tool_result",
     data: true,
-    lines: ["tool_result.call"],
+    lines: ["tool_result.call", "tool_result.{status}"],
     fields: [
       { name: "callId", type: "string" },
       { name: "name", type: "string" },
+      { name: "status", type: "string" },
       { name: "content", type: "string" },
     ],
   },

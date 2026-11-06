@@ -461,14 +461,22 @@ export class SqliteJournal implements Journal {
       )
       .all(window) as Array<{ target: string }>;
 
+    const openedAt = await this.openedAt(window);
     const gaps: TargetGap[] = [];
     for (const row of touched) {
-      const latest = this.latestOn(row.target);
+      // What a window is behind on is what arrived after it opened and what
+      // another window wrote: the task and the outside events it was opened
+      // for, and the window's own `window_start`, are not open work
+      // (docs/windows.md#ending-and-continuing).
+      const latest = this.latestOn(row.target, window, openedAt);
       const watermark = (await this.watermark(window, row.target)) ?? 0;
       if (latest <= watermark) continue;
       const behind = this.db
-        .prepare("SELECT count(*) AS n FROM event_targets WHERE target = ? AND seq > ?")
-        .get(row.target, watermark) as { n: number };
+        .prepare(
+          `SELECT count(*) AS n FROM event_targets et JOIN events e ON e.seq = et.seq
+           WHERE et.target = ? AND et.seq > ? AND et.seq > ? AND e.window IS NOT ?`,
+        )
+        .get(row.target, watermark, openedAt, window) as { n: number };
       gaps.push({
         target: row.target,
         latest,
@@ -648,11 +656,27 @@ export class SqliteJournal implements Journal {
     return toNumber(row.n);
   }
 
-  private latestOn(target: string): number {
+  /**
+   * The newest event on a target that another window wrote after one window
+   * opened: what that window can still be behind on.
+   */
+  private latestOn(target: string, window: WindowRef, after: number): number {
     const row = this.db
-      .prepare("SELECT MAX(seq) AS latest FROM event_targets WHERE target = ?")
-      .get(target) as { latest: number | null } | undefined;
+      .prepare(
+        `SELECT MAX(et.seq) AS latest FROM event_targets et
+         JOIN events e ON e.seq = et.seq
+         WHERE et.target = ? AND et.seq > ? AND e.window IS NOT ?`,
+      )
+      .get(target, after, window) as { latest: number | null } | undefined;
     return row?.latest == null ? 0 : toNumber(row.latest);
+  }
+
+  /** The sequence of one window's own `window_start`, or 0 before it opened. */
+  private async openedAt(window: WindowRef): Promise<number> {
+    const row = this.db
+      .prepare("SELECT MIN(seq) AS seq FROM events WHERE window = ? AND kind = 'window_start'")
+      .get(window) as { seq: number | null } | undefined;
+    return row?.seq == null ? 0 : toNumber(row.seq);
   }
 
   /** Where a ref came from: the links that go out of it, strongest first. */

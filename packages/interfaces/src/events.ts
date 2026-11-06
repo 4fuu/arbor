@@ -180,7 +180,7 @@ export interface TraceNode {
 /** A target a window is behind on. */
 export interface TargetGap {
   target: Target;
-  /** The newest event on the target. */
+  /** The newest event on the target another window wrote after this one opened. */
   latest: number;
   /** The newest event on the target the window has seen. */
   watermark: number;

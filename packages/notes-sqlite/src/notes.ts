@@ -71,6 +71,7 @@ import { USE_WEIGHTS, applyJudgeShare, pickByBudget, scoreNotes } from "./score.
 import type { ScoredNote } from "./score.ts";
 import type { SubstringClause } from "./search.ts";
 import { holdingIds, substringClause } from "./search.ts";
+import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 
 /** A summary is at most this many characters (docs/memory.md). */
 export const SUMMARY_LIMIT = 200;
@@ -174,6 +175,12 @@ export interface SqliteNoteStoreOptions {
   now?: () => number;
   /** Usage loses half of its weight this often. 24 hours. */
   usageHalfLifeMs?: number;
+  /**
+   * One fixed string from the deployment's text table, so this implementation
+   * writes none of its own (docs/prompting.md#language-and-the-text-table).
+   * Defaults to the framework's own Chinese table.
+   */
+  text?: (key: string, args?: Record<string, string | number>) => string;
 }
 
 function toNumber(value: unknown): number {
@@ -216,19 +223,27 @@ export function deriveSummary(body: string): string {
   return characters.length <= SUMMARY_LIMIT ? flat : `${characters.slice(0, SUMMARY_LIMIT).join("")}…`;
 }
 
-function invalidNoteRef(call: string, ref: string): ArborError {
+function invalidNoteRef(
+  text: (key: string, args?: Record<string, string | number>) => string,
+  call: string,
+  ref: string,
+): ArborError {
   return arborError({
     code: "invalid_input",
     rule: `note.${call}.ref`,
-    message: `note.${call}: ${ref} is not a note ref`,
-    nextAction: "pass a note ref such as n012, or one of its revisions such as n012@3",
+    message: text("refused.note.ref", { ref }),
+    nextAction: text("next.note.ref"),
     details: { ref },
   });
 }
 
-function parseOrThrow(ref: string, call: string): { id: number; revision: number | null } {
+function parseOrThrow(
+  text: (key: string, args?: Record<string, string | number>) => string,
+  ref: string,
+  call: string,
+): { id: number; revision: number | null } {
   const parsed = parseNoteRef(ref);
-  if (parsed === null) throw invalidNoteRef(call, ref);
+  if (parsed === null) throw invalidNoteRef(text, call, ref);
   return parsed;
 }
 
@@ -295,6 +310,8 @@ export class SqliteNoteStore implements NoteStore {
   private readonly journal: Journal;
   private readonly clock: () => number;
   private readonly halfLifeMs: number;
+  /** The table every refusal this store raises is written from. */
+  private readonly text: (key: string, args?: Record<string, string | number>) => string;
   /** One write at a time: a write spans the notes database and the journal. */
   private writeQueue: Promise<unknown> = Promise.resolve();
   private closed = false;
@@ -306,6 +323,7 @@ export class SqliteNoteStore implements NoteStore {
     this.journal = options.journal;
     this.clock = options.now ?? (() => Date.now());
     this.halfLifeMs = options.usageHalfLifeMs ?? DEFAULT_HALF_LIFE_MS;
+    this.text = options.text ?? ((key, args) => textOf(zhTextTable, key, args));
   }
 
   // --- writes -------------------------------------------------------------
@@ -354,8 +372,8 @@ export class SqliteNoteStore implements NoteStore {
       throw arborError({
         code: isArborError(error) ? error.code : "internal",
         rule: "note.write.journal",
-        message: `note.write: ${noteRef} was not written because the journal refused the event (${detail})`,
-        nextAction: "fix what the journal refused, then write the note again",
+        message: this.text("refused.note.write.journal", { ref: noteRef, detail }),
+        nextAction: this.text("next.note.write.journal"),
         details: { upstream: detail },
         cause: error,
       });
@@ -372,36 +390,44 @@ export class SqliteNoteStore implements NoteStore {
 
   /** The rules a write has to meet before it touches the one copy. */
   private checkWrite(input: NoteWriteInput): void {
+    if (input.id !== undefined && input.id.trim() === "") {
+      throw arborError({
+        code: "invalid_input",
+        rule: "note.write.id",
+        message: this.text("refused.note.write.id"),
+        nextAction: this.text("next.note.write.id"),
+      });
+    }
     if (input.title.trim() === "") {
       throw arborError({
         code: "invalid_input",
         rule: "note.write.title",
-        message: "note.write: a note needs a title",
-        nextAction: "give the note a short title",
+        message: this.text("refused.note.write.title"),
+        nextAction: this.text("next.note.write.title"),
       });
     }
     if (input.delete !== true && input.body.trim() === "") {
       throw arborError({
         code: "invalid_input",
         rule: "note.write.body",
-        message: "note.write: a note needs a body",
-        nextAction: "write what the note holds in body; a delete needs no body",
+        message: this.text("refused.note.write.body"),
+        nextAction: this.text("next.note.write.body"),
       });
     }
     if (input.summary !== undefined && Array.from(input.summary).length > SUMMARY_LIMIT) {
       throw arborError({
         code: "invalid_input",
         rule: "note.write.summary",
-        message: `note.write: a summary is at most ${SUMMARY_LIMIT} characters`,
-        nextAction: `shorten the summary to at most ${SUMMARY_LIMIT} characters, or omit it`,
+        message: this.text("refused.note.write.summary", { limit: SUMMARY_LIMIT }),
+        nextAction: this.text("next.note.write.summary", { limit: SUMMARY_LIMIT }),
       });
     }
     if (input.id === undefined && input.expectedRevision !== undefined) {
       throw arborError({
         code: "invalid_input",
         rule: "note.write.expected_revision",
-        message: "note.write: a new note has no revision to name",
-        nextAction: "omit expectedRevision to write a new note, or pass the note's id to replace it",
+        message: this.text("refused.note.write.expected_revision"),
+        nextAction: this.text("next.note.write.expected_revision"),
       });
     }
   }
@@ -419,22 +445,22 @@ export class SqliteNoteStore implements NoteStore {
       created = true;
     } else {
       const parsed = parseNoteId(input.id);
-      if (parsed === null) throw invalidNoteRef("write", input.id);
+      if (parsed === null) throw invalidNoteRef(this.text, "write", input.id);
       previous = this.noteRow(parsed);
       if (previous === null) {
         throw arborError({
           code: "not_found",
           rule: "note.write.note",
-          message: `note.write: ${input.id} is not in the notes`,
-          nextAction: "omit id to write a new note, or look the note up with notes.search",
+          message: this.text("refused.note.write.note", { id: input.id }),
+          nextAction: this.text("next.note.write.note"),
         });
       }
       if (previous.status === "deleted") {
         throw arborError({
           code: "not_found",
           rule: "note.write.deleted",
-          message: `note.write: ${input.id} is deleted`,
-          nextAction: "its revisions still resolve by ref, but it cannot be written; write a new note instead",
+          message: this.text("refused.note.write.deleted", { id: input.id }),
+          nextAction: this.text("next.note.write.deleted"),
         });
       }
       const expected = input.expectedRevision;
@@ -442,16 +468,20 @@ export class SqliteNoteStore implements NoteStore {
         throw arborError({
           code: "invalid_input",
           rule: "note.write.revision",
-          message: `note.write: ${input.id} is at revision ${previous.revision}; a write names the revision it read`,
-          nextAction: `read the note and write again against revision ${previous.revision}`,
+          message: this.text("refused.note.write.revision", { id: input.id, revision: previous.revision }),
+          nextAction: this.text("next.note.write.revision", { revision: previous.revision }),
         });
       }
       if (expected > previous.revision) {
         throw arborError({
           code: "invalid_input",
-          rule: "note.write.revision",
-          message: `note.write: ${input.id}@${expected} does not exist; the note is at revision ${previous.revision}`,
-          nextAction: `read the note and write again against revision ${previous.revision}`,
+          rule: "note.write.revision.absent",
+          message: this.text("refused.note.write.revision.absent", {
+            id: input.id,
+            expected,
+            revision: previous.revision,
+          }),
+          nextAction: this.text("next.note.write.revision.absent", { revision: previous.revision }),
         });
       }
       if (expected < previous.revision) throw this.conflict(previous, expected);
@@ -466,9 +496,9 @@ export class SqliteNoteStore implements NoteStore {
       ) {
         throw arborError({
           code: "invalid_input",
-          rule: "note.write.summary",
-          message: `note.write: a replace that changes the body of ${input.id} names a summary`,
-          nextAction: `write a summary of at most ${SUMMARY_LIMIT} characters for the new body`,
+          rule: "note.write.replace_summary",
+          message: this.text("refused.note.write.replace_summary", { id: input.id }),
+          nextAction: this.text("next.note.write.replace_summary", { limit: SUMMARY_LIMIT }),
         });
       }
     }
@@ -604,8 +634,16 @@ export class SqliteNoteStore implements NoteStore {
     return arborError({
       code: "conflict",
       rule: "note.write.stale_revision",
-      message: `note.write: ${noteIdOf(note.id)} is at revision ${current}, not the revision ${read} you read; merge what changed and write again`,
-      nextAction: `read ${noteIdOf(note.id)}@${current} and the revisions since ${read}, merge them with this write, then write again against revision ${current}`,
+      message: this.text("refused.note.write.stale_revision", {
+        ref: noteRefOf(note.id, current),
+        current,
+        read,
+      }),
+      nextAction: this.text("next.note.write.stale_revision", {
+        ref: noteRefOf(note.id, current),
+        current,
+        read,
+      }),
       refs: [noteRefOf(note.id, current), ...revisions.map((revision) => revision.ref)],
       details: {
         conflict: { read, current, revisions },
@@ -618,7 +656,7 @@ export class SqliteNoteStore implements NoteStore {
 
   async read(ref: NoteRef, options?: { offset?: number; limit?: number }): Promise<NoteBody | null> {
     this.ensureOpen();
-    const parsed = parseOrThrow(ref, "read");
+    const parsed = parseOrThrow(this.text, ref, "read");
     const row =
       parsed.revision === null ? this.latestRevisionRow(parsed.id) : this.revisionRow(parsed.id, parsed.revision);
     if (row === null) return null;
@@ -641,7 +679,7 @@ export class SqliteNoteStore implements NoteStore {
 
   async revisions(ref: NoteRef): Promise<Page<NoteRevision>> {
     this.ensureOpen();
-    const parsed = parseOrThrow(ref, "revisions");
+    const parsed = parseOrThrow(this.text, ref, "revisions");
     const limit = DEFAULT_PAGE_LIMIT;
     const nextCall = `notes.revisions(${noteIdOf(parsed.id)}, offset=${limit})`;
     const note = this.noteRow(parsed.id);
@@ -688,7 +726,7 @@ export class SqliteNoteStore implements NoteStore {
 
   async context(ref: NoteRef): Promise<NoteContext | null> {
     this.ensureOpen();
-    const parsed = parseOrThrow(ref, "context");
+    const parsed = parseOrThrow(this.text, ref, "context");
     const note = this.noteRow(parsed.id);
     if (note === null) return null;
     const row = this.revisionRow(parsed.id, parsed.revision ?? note.revision);
@@ -731,6 +769,7 @@ export class SqliteNoteStore implements NoteStore {
         limit: items.length,
         nextCall: `notes.delta(${epoch.epoch})`,
         budget,
+        tokens: this.epochTokens(epoch.epoch),
       };
     });
   }
@@ -744,8 +783,8 @@ export class SqliteNoteStore implements NoteStore {
       throw arborError({
         code: "invalid_input",
         rule: "note.delta.epoch",
-        message: `note.delta: epoch ${since} is not in the notes`,
-        nextAction: "pass the epoch the window froze, or 0 for every note",
+        message: this.text("refused.note.delta.epoch", { since }),
+        nextAction: this.text("next.note.delta.epoch"),
         details: { since },
       });
     }
@@ -822,7 +861,7 @@ export class SqliteNoteStore implements NoteStore {
 
   async recordUse(input: NoteUseInput): Promise<void> {
     this.ensureOpen();
-    const parsed = parseOrThrow(input.ref, "recordUse");
+    const parsed = parseOrThrow(this.text, input.ref, "recordUse");
     // A use of a note that is not there names a ref that does not resolve; the
     // host's own append must not fail for it.
     if (this.noteRow(parsed.id) === null) return;
@@ -860,8 +899,8 @@ export class SqliteNoteStore implements NoteStore {
       throw arborError({
         code: "unavailable",
         rule: "note.closed",
-        message: "notes: the note store is closed",
-        nextAction: "open a note store before reading or writing",
+        message: this.text("refused.note.closed"),
+        nextAction: this.text("next.note.closed"),
       });
     }
   }
@@ -1087,6 +1126,14 @@ export class SqliteNoteStore implements NoteStore {
     const activate = this.db.prepare("UPDATE notes SET status = 'active' WHERE id = ?");
     for (const item of chosen) activate.run(item.note);
     return this.epochRow(epoch) as EpochRow;
+  }
+
+  /** What the active notes of one epoch cost, as the epoch froze them. */
+  private epochTokens(epoch: number): number {
+    const row = this.db
+      .prepare("SELECT COALESCE(SUM(tokens), 0) AS total FROM note_epoch_items WHERE epoch = ?")
+      .get(epoch) as { total: unknown } | undefined;
+    return row === undefined ? 0 : toNumber(row.total);
   }
 
   /** The active notes one epoch froze, by summary, sorted by id. */

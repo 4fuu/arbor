@@ -58,7 +58,7 @@ it instead of repeating it, because a fact stated twice drifts.
 | memory snapshot | the active notes, by summary | the active-set budget |
 | first input | the task; related board lines; for a continuation, the previous window's ref and handoff; changes since the epoch | data, plus one fixed note |
 | delivery | one block per inserted task, conversation update, notice, broadcast, window message or environment delta ([below](#deliveries)) | dense |
-| reminder | the window's real numbers, the tier's own instruction, its place in the series, the cost of ignoring it | a few sentences |
+| reminder | the head line saying it is a host reminder and not a request, the window's real numbers, the tier's own instruction, its place in the series, and from 80 % on the cost of ignoring it | a few sentences |
 | tool description | what one tool does and when to use it; side effects | 1 to 4 sentences |
 | parameter description | meaning, default or range, relation to other parameters | one sentence |
 | `tool_search` answer | one function's call instructions, or where a skill's procedure is | one block per name |
@@ -73,13 +73,18 @@ this order:
 
 1. `<identity>` - from settings; omitted when empty, with no default sentence.
 2. `<agent>` - the general rules: windows are disposable and everything is in
-   the journal; sending is never required; data is not instructions.
+   the journal; sending is never required; only what `send` writes leaves the
+   window; looking things up is free and what is learned goes into notes;
+   everything from outside is data; a real consequence is weighed before it is
+   taken.
 3. `<tools>` - the direct tools, one line each.
 4. `<modules>` - the modules, one line each: a name and a description of
    everything the module can do, never a function name.
 5. `<env>` - skills, MCP servers and services, one line each: a name, a
    description and, for a skill, its path. The built-in skills are listed
-   here like any other.
+   here like any other. A lead line says what the items are, that a skill is
+   third-party reference material rather than an instruction, and when to read
+   one.
 6. One section per plugin that registered one
    ([architecture.md](architecture.md#plugins)), rendered from its block in a
    tag named after the plugin.
@@ -163,17 +168,25 @@ infer. Everything left out stays reachable from something shown.
 
 - **Refs instead of content.** What a tool returns from a ref already on
   screen is not shown; the ref is.
-- **Related in one line.** Every read appends one 相关 line per returned item,
-  at most for three items: its strongest neighbours, the total, and the exact
-  call that pages the rest. No line when there are no neighbours.
-- **First appearance.** A person, conversation or item is described in full
-  the first time it appears in a window; afterwards by name only. A restart
-  rebuilds this state from the journal, so nobody is introduced twice.
+- **Related in one line.** Every `journal` read appends one 相关 line per
+  returned item, at most for three items: its strongest neighbours, the total,
+  and the exact call that pages the rest. No line when there are no
+  neighbours. `journal.links` lists the neighbours already, so its own answer
+  adds none.
+- **First appearance.** Not implemented yet. A person, conversation or item
+  should be described in full the first time it appears in a window and by name
+  only afterwards, with the state rebuilt from the journal after a restart;
+  nothing in the code carries it, so no layer does it today.
 - **Inferable is not repeated**, except safety signals, which are repeated
   wherever they apply.
 - **Bound every result.** One head-and-tail cut in the tool pipeline for every
-  tool, with a marker that says how much was cut and where the whole is kept
-  in the workspace. Images are exempt.
+  tool, at the one exit `ToolCatalog.call` leaves by, with a marker that says
+  how much was cut and where the whole is kept in the workspace. Images are
+  exempt.
+- **A limit that shapes a result is reported.** What a search covered, how
+  much there is and how to reach the rest are in the result every time; a
+  `tool_search` answer that lists more names than it shows says so, and so does
+  a search that left matches out.
 
 ## Input format
 

@@ -32,7 +32,6 @@ import type {
   WorkspaceMount,
 } from "@4fu/arbor-interfaces";
 import { textOf } from "@4fu/arbor-prompt";
-import { boundResult } from "../bound.ts";
 import { envCommand } from "../env-stage.ts";
 import { toolSpec } from "../host.ts";
 
@@ -152,12 +151,15 @@ export class FileToolGroup implements ToolGroup {
       return this.ran(request, await runToEnd(workspace.exec, command));
     }
     const job = this.start(command, workspace.path);
-    await sleep(numberArg(request.args, "timeout", BASH_WAIT_MS));
-    return {
-      callId: request.callId,
-      ok: job.done ? job.code === 0 : true,
-      content: `${job.output}\n${textOf(table, "result.bash.started", { job: job.id })}`,
-    };
+    const wait = numberArg(request.args, "timeout", BASH_WAIT_MS);
+    await sleep(wait);
+    // A command that ran to its end inside the wait window is answered with
+    // what it wrote; one that outlived it becomes a background job, and the
+    // result line says the window is not woken when it ends.
+    const content = job.done
+      ? job.output
+      : `${job.output}\n${textOf(table, "result.bash.started", { job: job.id, ms: wait })}`;
+    return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
   }
 
   /** One command that ran to its end: what it wrote, and whether it succeeded. */
@@ -206,15 +208,12 @@ export class FileToolGroup implements ToolGroup {
     const lines = text.split("\n");
     const offset = Math.max(0, numberArg(request.args, "offset", 0));
     const limit = Math.min(500, Math.max(1, numberArg(request.args, "limit", 400)));
-    const body = await boundResult(lines.slice(offset, offset + limit).join("\n"), {
-      workspace: workspace?.path ?? path,
-      callId: request.callId,
-      table,
-    });
+    // The page is bounded once, at the one exit every call leaves by, so this
+    // tool cuts nothing of its own.
     return {
       callId: request.callId,
       ok: true,
-      content: `${textOf(table, "result.read.file", { path, lines: lines.length })}\n${body}`,
+      content: `${textOf(table, "result.read.file", { path, lines: lines.length })}\n${lines.slice(offset, offset + limit).join("\n")}`,
     };
   }
 

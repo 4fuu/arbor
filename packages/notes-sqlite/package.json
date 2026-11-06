@@ -33,7 +33,8 @@
   },
   "dependencies": {
     "@4fu/arbor-errors": "workspace:*",
-    "@4fu/arbor-interfaces": "workspace:*"
+    "@4fu/arbor-interfaces": "workspace:*",
+    "@4fu/arbor-prompt": "workspace:*"
   },
   "devDependencies": {
     "@4fu/arbor-journal-sqlite": "workspace:*",

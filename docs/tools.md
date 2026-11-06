@@ -10,8 +10,8 @@ service layer ([architecture.md](architecture.md#layers)).
 
 | Tool | What it does |
 | --- | --- |
-| `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue |
-| `note_write`, `note_replace`, `note_delete` | write memory ([memory.md](memory.md)) |
+| `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue; the channel decides whether it arrives |
+| `note_write(title, summary?, body, refs?)`, `note_replace(id, revision, …, refs?)`, `note_delete(id, revision)` | write memory ([memory.md](memory.md)) |
 | `end(handoff?)` | end the run; with a handoff, continue in a new window ([windows.md](windows.md#ending-and-continuing)) |
 | `reload(install?, remove?)` | change the environment and broadcast the delta ([environment.md](environment.md#changing-the-environment)) |
 | `search(query, scope?)` | the journal, notes and the board in one query |
@@ -60,11 +60,15 @@ it.
   calls, so anchors, watermarks, quotas, validation and logging behave the
   same.
 - **Two lookups.** `tool_search` (direct tool and script global) takes
-  keywords, an exact `module.function` name, or nothing for every module;
-  `tool_describe("module.function")` (script global) returns one signature.
-  Both read the catalog frozen with the window plus the environment deltas
-  since. `tool_search` also answers skills by name or keyword with their path
-  and how to read them, and an MCP server's name with the functions it lists.
+  keywords, an exact `module.function` or tool name, or nothing for every
+  module; `tool_describe("module.function")` (script global) returns one
+  signature. Both read the catalog frozen with the window plus the environment
+  deltas since. `tool_search` also answers skills by name or keyword with their
+  path and how to read them, an MCP server's name with the functions it lists,
+  and a direct tool by name with its description - a name is matched exactly
+  first, then by prefix, then by description. Its answer leads with how a
+  function is called and closes with how to read one signature, and says when
+  it left matches out.
 - **The prompt names modules, not functions.** The system prompt lists the
   direct tools one per line and the modules one per line; a module's line
   describes what it can do and never names a function.

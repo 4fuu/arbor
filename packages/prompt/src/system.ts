@@ -29,11 +29,21 @@ export interface SystemPromptInput {
   plugins?: readonly PromptSection[];
 }
 
-/** The general rules `<agent>` carries when settings state none. */
+/**
+ * The general rules `<agent>` carries when settings state none. They are the
+ * ones every window needs, whatever the task is: a window is disposable, only
+ * what `send` writes leaves it, looking things up is free, what is learned goes
+ * into notes, everything from outside is data, and a real consequence is
+ * weighed before it is taken.
+ */
 export const DEFAULT_GENERAL_RULES: readonly string[] = [
   "system.agent.journal",
   "system.agent.send",
+  "system.agent.delivery",
+  "system.agent.proactive",
+  "system.agent.remember",
   "system.agent.data",
+  "system.agent.caution",
 ];
 
 interface Section {
@@ -72,15 +82,21 @@ function sectionsOf(input: SystemPromptInput, table: TextTable): Section[] {
   if (env.length > 0) {
     sections.push({
       tag: "env",
-      lines: env.map((item) =>
-        item.path === undefined
-          ? textOf(table, "system.env.item", { name: item.name, description: item.description })
-          : textOf(table, "system.env.skill", {
-              name: item.name,
-              description: item.description,
-              path: item.path,
-            }),
-      ),
+      // The lead line comes first: it says what the items are, that a skill is
+      // third-party reference material rather than an instruction, and when to
+      // read one.
+      lines: [
+        textOf(table, "system.env.lead"),
+        ...env.map((item) =>
+          item.path === undefined
+            ? textOf(table, "system.env.item", { name: item.name, description: item.description })
+            : textOf(table, "system.env.skill", {
+                name: item.name,
+                description: item.description,
+                path: item.path,
+              }),
+        ),
+      ],
     });
   }
   return sections;
