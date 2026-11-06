@@ -21,6 +21,48 @@ import { textOf } from "@4fu/arbor-prompt";
 /** The shortest value the scrubber replaces. */
 export const MIN_SECRET_LENGTH = 4;
 
+/**
+ * The shortest value of a host variable that is scrubbed by its name alone. It
+ * is longer than a configured secret's minimum because no one chose it: a short
+ * value under a matching name is more likely ordinary text than a credential.
+ */
+const MIN_HOST_CREDENTIAL_LENGTH = 8;
+
+/** The name segments that mark a host variable as a credential. */
+const CREDENTIAL_SEGMENTS = new Set([
+  "KEY",
+  "APIKEY",
+  "TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "PASS",
+  "CREDENTIAL",
+  "CREDENTIALS",
+]);
+
+/**
+ * The host variables that look like credentials. A child process inherits the
+ * host's whole environment, so a credential the host carries for itself - the
+ * model provider's key, a registry token - is one `env` away from the model
+ * even when no configuration names it. A name counts when one of its
+ * `_`-separated segments is a credential word (`NPM_TOKEN`, `DEEPSEEK_API_KEY`,
+ * `AWS_SECRET_ACCESS_KEY`), which leaves `SSH_AUTH_SOCK`, `PWD` and the like
+ * alone. A credential under any other name is covered by naming it in
+ * `settings.secrets`.
+ */
+export function hostCredentialNames(env: Record<string, string | undefined>): string[] {
+  return Object.entries(env)
+    .filter(([name, value]) => {
+      if (value === undefined || value.length < MIN_HOST_CREDENTIAL_LENGTH) return false;
+      return name
+        .toUpperCase()
+        .split("_")
+        .some((segment) => CREDENTIAL_SEGMENTS.has(segment));
+    })
+    .map(([name]) => name);
+}
+
 /** One configured secret, by the name its configuration gave it. */
 export interface NamedSecret {
   name: string;

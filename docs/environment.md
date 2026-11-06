@@ -19,15 +19,13 @@ workspace. The framework does not manage or restrict them.
 
 ### What a subprocess gets
 
-A subprocess never inherits the host's own environment. Every MCP server,
-every resident service and every command a window runs is given the minimum
-it needs to run - `PATH`, `HOME` and the user's name and shell, the locale and
-time zone, `TERM`, `TMPDIR`, the proxy variables, the system variables Windows
-programs need, and the directory it works in, which rides on `ARBOR_WORKSPACE`
-(the full list is `MINIMUM_KEYS` in `packages/tools/src/child-env.ts`) - plus what its own configuration adds:
-the item's own `env`, and the secrets it names by name. Nothing else the host
-carries reaches it, so a variable no configuration named stays outside every
-window's reach, which is what "secrets injected by name" means in practice.
+Every MCP server, every resident service and every command a window runs
+inherits the host's whole environment, plus the directory it works in, which
+rides on `ARBOR_WORKSPACE`, and what its own configuration adds: the item's own
+`env`, and the secrets it names by name. Nothing is withheld from a subprocess.
+Protection is one layer, chosen on purpose: the secret scrub replaces every
+secret value in whatever reaches the model or the journal
+([architecture.md](architecture.md#secret-values)).
 
 `bash` is the one command path: its environment is built in one place, so a
 `Workspace` implementation that needs more for the commands in its windows -

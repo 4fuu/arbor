@@ -201,7 +201,13 @@ one `/env`, and every window can read all of it.
 ### Secret values
 
 A configuration names its secrets and never holds their values
-([environment.md](environment.md#what-the-model-can-change)). The host resolves
+([environment.md](environment.md#what-the-model-can-change)). A subprocess
+inherits the host's whole environment, so the host's own credentials are
+scrubbed too: every host variable whose name has a credential segment
+(`KEY`, `APIKEY`, `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `PASS`,
+`CREDENTIAL`, `CREDENTIALS`, split on `_`) and a value of at least eight
+characters, such as `NPM_TOKEN` or `DEEPSEEK_API_KEY`. A credential under any
+other name is covered by naming it in `settings.secrets`. The host resolves
 each name - through `Arbor`'s `secretOf`, `process.env` by default - and
 replaces every form a value can take: the raw value, its base64 and its
 URL-encoded form, longest first. The replacement is the one placeholder the

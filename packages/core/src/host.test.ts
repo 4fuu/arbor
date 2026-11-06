@@ -1233,6 +1233,30 @@ describe("secrets", () => {
     assert.ok(!(backend.opened[0]?.firstInput ?? "").includes(VALUE));
   });
 
+  it("replaces a credential the host carries for itself, though no configuration names it", async () => {
+    // A child process inherits the host's environment, so the host's own key is
+    // one `env` away from the model. A host variable under a credential-like
+    // name is scrubbed; one under an ordinary name is not.
+    process.env.ARBOR_TEST_PROVIDER_API_KEY = "sk-host-provider-0002";
+    process.env.ARBOR_TEST_PLAIN = "plain-value-0003";
+    try {
+      const { arbor, journal, backend } = await host({
+        groups: [new EchoGroup("key sk-host-provider-0002 plain plain-value-0003")],
+      });
+      backend.script([{ tool: "echo", args: {} }, { text: "完成" }]);
+      const record = await arbor.open(task);
+      await backend.finished();
+
+      const body = (await journal.list({ window: record.window, kinds: ["tool_result"] })).items[0]?.body ?? "";
+      assert.ok(!body.includes("sk-host-provider-0002"), "the host's own credential is gone");
+      assert.ok(body.includes("[hidden:ARBOR_TEST_PROVIDER_API_KEY]"));
+      assert.ok(body.includes("plain-value-0003"), "an ordinary host variable is left alone");
+    } finally {
+      delete process.env.ARBOR_TEST_PROVIDER_API_KEY;
+      delete process.env.ARBOR_TEST_PLAIN;
+    }
+  });
+
   it("leaves a value too short to be a secret alone", async () => {
     const { arbor, journal, backend } = await secretHost([new EchoGroup("abc")]);
     backend.script([{ tool: "echo", args: {} }, { text: "完成" }]);

@@ -125,7 +125,7 @@ import { HookRunner } from "./hooks.ts";
 import { HookedJournal } from "./hooked-journal.ts";
 import { RefAllocator } from "./refs.ts";
 import { DEFAULT_RETRY_MS, RuleScheduler } from "./scheduler.ts";
-import { SecretScrub } from "./scrub.ts";
+import { hostCredentialNames, SecretScrub } from "./scrub.ts";
 import type { PromptEpoch } from "./snapshot.ts";
 import { SnapshotBuilder } from "./snapshot.ts";
 
@@ -552,7 +552,13 @@ export class Arbor {
 
   /** Read the named secrets again, so a settings change reaches the scrub. */
   private refreshSecrets(settings: Settings | undefined): void {
-    this.secrets.refresh(settings?.secrets ?? [], this.secretOf);
+    // The configured names, and every host variable that looks like a
+    // credential: a child process inherits the host's environment, so those
+    // are as reachable as a configured one (docs/architecture.md#secret-values).
+    const host = hostCredentialNames(process.env);
+    const names = [...new Set([...(settings?.secrets ?? []), ...host])];
+    const hostNames = new Set(host);
+    this.secrets.refresh(names, (name) => this.secretOf(name) ?? (hostNames.has(name) ? process.env[name] : undefined));
   }
 
   /** What a window read, so `reload` knows which revision its draft is based on. */

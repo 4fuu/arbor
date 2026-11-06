@@ -133,7 +133,7 @@ describe("the supervisor", () => {
     await host.supervisor.stop("healthy");
   });
 
-  it("gives a service the minimum environment, its own env and the secrets it names", async () => {
+  it("gives a service the host environment, its own env and the secrets it names", async () => {
     const host = await harness({
       secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? "sk-svc-test" : undefined),
     });
@@ -150,15 +150,16 @@ describe("the supervisor", () => {
       const page = await host.supervisor.logs("reporting", { tail: 5 });
       const line = page.items.find((one) => one.startsWith("{"));
       const reported = JSON.parse(line ?? "{}") as Record<string, string>;
-      // The minimum a child process needs, and the directory it works in.
+      // The host's environment, and the directory it works in.
       assert.ok(reported.PATH !== undefined, "a service can find programs");
       assert.ok(reported.HOME !== undefined);
       assert.equal(reported.ARBOR_WORKSPACE, host.root, "the workspace is the service's own directory");
       // What the service's own configuration adds, and the secret it names.
       assert.equal(reported.SERVICE_MODE, "gray");
       assert.equal(reported.ARBOR_TEST_SECRET, "sk-svc-test");
-      // Nothing the host carries beyond that.
-      assert.equal(reported.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+      // The host's own environment is inherited; the scrub, not the
+      // environment, keeps a secret value from the model.
+      assert.equal(reported.ARBOR_TEST_HOST_ONLY, "host-only", "the host's own environment is inherited");
       await host.supervisor.stop("reporting");
     } finally {
       delete process.env.ARBOR_TEST_HOST_ONLY;

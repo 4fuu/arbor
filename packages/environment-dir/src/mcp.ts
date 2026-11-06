@@ -67,9 +67,8 @@ export class StdioMcpServer {
     }
     this.child = spawn(options.command, [...(options.args ?? [])], {
       cwd: options.dir,
-      // A server gets the minimum a child process needs, its own directory, its
-      // own `env` and the secrets it names - never the host's environment
-      // (docs/environment.md#what-a-subprocess-gets).
+      // A server gets the host's environment, its own directory, its own `env`
+      // and the secrets it names (docs/environment.md#what-a-subprocess-gets).
       env: childEnvironment({ workspace: options.dir, env: options.env, secrets }),
       stdio: ["pipe", "pipe", "pipe"],
     });

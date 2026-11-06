@@ -43,8 +43,8 @@ const BASH_WAIT_MS = 20000;
 const JOB_BUFFER = 200000;
 
 /**
- * The environment one command runs with: the minimum a child process needs, the
- * window's own directory, and the extra environment the workspace
+ * The environment one command runs with: the host's environment, the window's
+ * own directory, and the extra environment the workspace
  * implementation asks for. This is the one place a command's environment is
  * built, so everything a deployment adds to it is added here
  * (docs/environment.md#what-a-subprocess-gets).
@@ -289,11 +289,10 @@ export class FileToolGroup implements ToolGroup {
   private start(command: string, cwd: string, extraEnv?: Record<string, string>): Job {
     const id = `b${this.nextJob}`;
     this.nextJob += 1;
-    // The one place a command's environment is built: the minimum a child
-    // process needs, the window's own directory, and the extra environment the
-    // workspace implementation asks for - the ovnfs workspace's `ARBOR_WINDOW`
-    // and git hook path. A command never inherits the host's own environment,
-    // and the extra variables reach no MCP server and no service
+    // The one place a command's environment is built: the host's environment,
+    // the window's own directory, and the extra environment the workspace
+    // implementation asks for - the ovnfs workspace's `ARBOR_WINDOW` and git
+    // hook path. The extra variables reach no MCP server and no service
     // (docs/environment.md#what-a-subprocess-gets).
     const child = spawn("/bin/sh", ["-c", command], { cwd, env: bashEnvironment(cwd, extraEnv) });
     let end = (): void => {};

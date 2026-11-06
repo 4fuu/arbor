@@ -571,13 +571,10 @@ describe("tool catalog", () => {
     assert.equal(missing.error?.rule, "bash.job.not_found");
   });
 
-  it("gives a command the minimum environment, and never the host's own", async () => {
+  it("gives a command the host's environment and the window's directory", async () => {
     const { catalog, root } = await harness();
     // A variable the host carries and no configuration named.
     process.env.ARBOR_TEST_HOST_ONLY = "host-only";
-    // The proxy is part of the minimum: without it nothing behind one can fetch.
-    const proxy = process.env.HTTPS_PROXY;
-    process.env.HTTPS_PROXY = "http://proxy.test:3128";
     try {
       const result = await run(catalog, "bash", { command: "env", timeout: 5000 });
       assert.equal(result.ok, true);
@@ -587,17 +584,15 @@ describe("tool catalog", () => {
           .filter((line) => line.includes("="))
           .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
       ) as Record<string, string>;
-      // The minimum a child process needs, and the window's own directory.
+      // The host's environment, and the window's own directory.
       assert.ok(reported.PATH !== undefined, "a command can find programs");
       assert.ok(reported.HOME !== undefined);
-      assert.equal(reported.HTTPS_PROXY, "http://proxy.test:3128", "a command reaches the network through the host's proxy");
       assert.equal(reported.ARBOR_WORKSPACE, join(root, "ws1"), "the workspace is the window's own directory");
-      // Nothing the host carries beyond that.
-      assert.equal(reported.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+      // The host's own environment is inherited; the scrub, not the
+      // environment, keeps a secret value from the model.
+      assert.equal(reported.ARBOR_TEST_HOST_ONLY, "host-only", "the host's own environment is inherited");
     } finally {
       delete process.env.ARBOR_TEST_HOST_ONLY;
-      if (proxy === undefined) delete process.env.HTTPS_PROXY;
-      else process.env.HTTPS_PROXY = proxy;
     }
   });
 

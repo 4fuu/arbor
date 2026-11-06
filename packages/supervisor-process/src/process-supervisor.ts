@@ -213,9 +213,8 @@ export class ProcessSupervisor implements Supervisor {
     const command = quotaCommand(spec);
     const child = spawn(command.bin, command.args, {
       ...(spec.dir === undefined ? {} : { cwd: spec.dir }),
-      // A service gets the minimum a child process needs, its own directory,
-      // its own `env` and the secrets it names - never the host's environment
-      // (docs/environment.md#what-a-subprocess-gets).
+      // A service gets the host's environment, its own directory, its own
+      // `env` and the secrets it names (docs/environment.md#what-a-subprocess-gets).
       env: childEnvironment({ workspace: spec.dir, env: spec.env, secrets }),
       stdio: ["ignore", "pipe", "pipe"],
     });

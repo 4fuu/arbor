@@ -248,7 +248,7 @@ describe("the environment", () => {
     assert.equal(await env.call("weather", "weather.forecast", { city: "上海" }), "上海 晴");
   });
 
-  it("gives an MCP server the minimum environment, its own env and its secrets", async () => {
+  it("gives an MCP server the host environment, its own env and its secrets", async () => {
     const { env, root, work } = await environment({
       secretOf: (name) => (name === "ARBOR_TEST_SECRET" ? "sk-mcp-test" : undefined),
     });
@@ -275,15 +275,16 @@ describe("the environment", () => {
       const revision = await env.install([{ kind: "mcp", name: "weather", path }]);
       assert.equal(revision.changes[0]?.change, "added");
       const answer = JSON.parse(await env.call("weather", "weather.env", {})) as Record<string, string>;
-      // The minimum a child process needs, and the item's own directory.
+      // The host's environment, and the item's own directory.
       assert.ok(answer.PATH !== undefined, "a server can find programs");
       assert.ok(answer.HOME !== undefined);
       assert.equal(answer.ARBOR_WORKSPACE, join(root, "env/mcp/weather"), "the workspace is the item's own directory");
       // What the item's own configuration adds, and the secret it names.
       assert.equal(answer.MCP_MODE, "gray");
       assert.equal(answer.ARBOR_TEST_SECRET, "sk-mcp-test");
-      // Nothing the host carries beyond that.
-      assert.equal(answer.ARBOR_TEST_HOST_ONLY, undefined, "the host's own environment is not inherited");
+      // The host's own environment is inherited; the scrub, not the
+      // environment, keeps a secret value from the model.
+      assert.equal(answer.ARBOR_TEST_HOST_ONLY, "host-only", "the host's own environment is inherited");
     } finally {
       delete process.env.ARBOR_TEST_HOST_ONLY;
     }
