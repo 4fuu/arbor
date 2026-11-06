@@ -16,14 +16,17 @@
  * which directory a continuation uses.
  *
  * It isolates by directory only. Another window's directory is a path on this
- * host, which a command may name and a read may open; `write` and `edit` refuse
- * a path outside the window's own directory, and nothing here stops `bash`.
- * That is not a security boundary, and the docs say so: real isolation comes
- * from an implementation that owns its execution environment.
+ * host, which a command may name and `read`, `write` and `edit` may open and
+ * change; nothing here refuses a path outside the window's own directory, and
+ * nothing here stops `bash`. What keeps one window out of another's directory
+ * is the prompt text `workspace.path` answers with, not a rule this
+ * implementation enforces. That is not a security boundary, and the docs say
+ * so: real isolation comes from an implementation that owns its execution
+ * environment.
  */
 
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { arborError } from "@4fu/arbor-errors";
 import type {
   TextTable,
@@ -66,10 +69,8 @@ export class DirectoryWorkspace implements Workspace {
    * which is what a window reads it by.
    */
   async pathOfWindow(window: WindowRef): Promise<string | undefined> {
-    const wanted = windowNumber(window);
-    if (wanted <= 0) return undefined;
-    const path = this.workspacePath(`ws${wanted}` as WorkspaceRef);
-    return (await isDirectory(path)) ? path : undefined;
+    const ref = await this.refOf(window);
+    return ref === undefined ? undefined : this.workspacePath(ref);
   }
 
   async mount(ref: WorkspaceRef): Promise<WorkspaceMount> {
@@ -81,20 +82,13 @@ export class DirectoryWorkspace implements Workspace {
         // A relative path is inside this workspace. An absolute one is read
         // where it is on this host, which is how another window's directory is
         // read (docs/workspaces.md).
-        const target = this.inside(resolved, path) ?? (isAbsolute(path) ? normalize(path) : undefined);
-        if (target === undefined) return null;
-        return readFile(target, "utf8").catch(() => null);
+        return readFile(hostPath(resolved, path), "utf8").catch(() => null);
       },
       writeFile: async (path: string, text: string) => {
-        const target = this.inside(resolved, path);
-        if (target === undefined) {
-          throw arborError({
-            code: "refused",
-            rule: "file.outside_workspace",
-            message: `workspace: ${path} 在目录之外`,
-            nextAction: "改用目录内的相对路径。",
-          });
-        }
+        // Nothing is refused: a relative path is this workspace's own, an
+        // absolute one is written where it names on this host
+        // (docs/workspaces.md#another-windows-directory).
+        const target = hostPath(resolved, path);
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, text, "utf8");
       },
@@ -114,6 +108,18 @@ export class DirectoryWorkspace implements Workspace {
     await rm(this.workspacePath(workspace), { recursive: true, force: true });
   }
 
+  /**
+   * The workspace a window's chain already has, or `undefined` when it has
+   * none. The host asks for it to reclaim a chain's directory after the
+   * retention period (docs/workspaces.md#lifecycle).
+   */
+  async refOf(window: WindowRef): Promise<WorkspaceRef | undefined> {
+    const wanted = windowNumber(window);
+    if (wanted <= 0) return undefined;
+    const ref = `ws${wanted}` as WorkspaceRef;
+    return (await isDirectory(this.workspacePath(ref))) ? ref : undefined;
+  }
+
   /** The directory a window works in, for the file tools. */
   pathOf(ref: WorkspaceRef): string {
     return this.workspacePath(ref);
@@ -126,13 +132,6 @@ export class DirectoryWorkspace implements Workspace {
    */
   groups(table: TextTable): readonly ToolGroup[] {
     return [new WorkspacePathGroup(this, table)];
-  }
-
-  /** A path inside a directory, or `undefined` when it escapes it. */
-  private inside(root: string, path: string): string | undefined {
-    if (path === "") return undefined;
-    const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
-    return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
   }
 
   private workspacePath(ref: WorkspaceRef): string {
@@ -189,6 +188,16 @@ async function isDirectory(path: string): Promise<boolean> {
 
 function windowNumber(window: WindowRef): number {
   return Number(/^c(\d+)$/.exec(window)?.[1] ?? 0);
+}
+
+/**
+ * Where a path names on this host: itself when it is absolute, under `root`
+ * when it is not. Nothing is refused, because the owner asked for no
+ * restriction on where a window reads or writes
+ * (docs/workspaces.md#another-windows-directory).
+ */
+function hostPath(root: string, path: string): string {
+  return isAbsolute(path) ? normalize(path) : resolve(root, path);
 }
 
 async function assertDirectory(path: string, ref: string): Promise<void> {

@@ -277,6 +277,11 @@ export class Arbor {
   private readonly scrub: ((text: string) => string) | undefined;
   /** The queue id of the next input that waits for a window. */
   private nextQueueId = 0;
+  /**
+   * The chains whose last window ended and whose directory is waiting out the
+   * retention period, by the window the chain started from.
+   */
+  private readonly retentionTimers = new Map<WindowRef, Timer>();
   /** The plugins this host runs, in the order they registered. */
   private readonly plugins: Plugin[] = [];
   /** The channels those plugins registered, in the order they registered. */
@@ -600,6 +605,24 @@ export class Arbor {
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window)) continue;
       await this.continueWindow(event.window, { midTaskReset: true });
+    }
+    // A chain whose last window ended before this restart keeps its directory
+    // for the retention period that end started, not one this restart starts:
+    // the journal says when the chain's last window ended, so a restart in the
+    // middle of the period still reclaims on time
+    // (docs/workspaces.md#lifecycle).
+    const continued = new Set<WindowRef>();
+    for (const event of started.items) {
+      if (event.window === null) continue;
+      const previous = continuedWindow(event.body);
+      if (previous !== undefined) continued.add(previous);
+    }
+    for (const event of ended.items) {
+      // A window another window continues is not its chain's last, and one a
+      // `close` stopped comes back as the continuation this start opened.
+      if (event.window === null || continued.has(event.window)) continue;
+      if (readString(event, "reason") === "host_restart") continue;
+      await this.retire(event.window, event.time);
     }
     // The scheduled tasks come back from the journal, so a restart does not
     // lose a schedule that has not fired yet. The records are replayed in
@@ -1079,6 +1102,11 @@ export class Arbor {
       this.timers.clearTimeout(this.retryTimer);
       this.retryTimer = undefined;
     }
+    // A closed host reclaims nothing: a chain's retention deadline is counted
+    // from the end the journal recorded, and the next `start` picks it up from
+    // there (docs/workspaces.md#lifecycle).
+    for (const timer of this.retentionTimers.values()) this.timers.clearTimeout(timer);
+    this.retentionTimers.clear();
     this.held.length = 0;
     this.closed = true;
     this.scheduler.close?.();
@@ -1384,7 +1412,12 @@ export class Arbor {
     // A window a `close` stopped goes on at the next `start`, not here: closing
     // a host starts no new turn (docs/windows.md#restart).
     const continues = wanted !== undefined || reason === "hard_limit";
-    if (!continues) return;
+    // The chain's last window ended: its directory waits out the retention
+    // period and is then reclaimed (docs/workspaces.md#lifecycle).
+    if (!continues) {
+      await this.retire(record.window, this.clock());
+      return;
+    }
     await this.continueWindow(record.window, {
       ...(wanted === undefined ? {} : { handoff: wanted }),
       midTaskReset: reason === "hard_limit",
@@ -1491,6 +1524,31 @@ export class Arbor {
     if (record.mount !== undefined) await record.mount.release().catch(() => {});
   }
 
+  /**
+   * A chain's last window ended: its directory stays where it is for the
+   * retention period, and the host reclaims it once that has passed. A restart
+   * keeps the deadline, because the end it is counted from is in the journal
+   * (docs/workspaces.md#lifecycle). This is a setting, not a task for a model:
+   * with no `workspaces.retentionMs` nothing is reclaimed.
+   */
+  private async retire(window: WindowRef, endedAt: number): Promise<void> {
+    const workspace = this.options.workspace;
+    const retentionMs = this.retentionMs();
+    if (workspace === undefined || retentionMs === undefined) return;
+    const root = await this.chainRoot(window);
+    if (this.retentionTimers.has(root)) return;
+    const ref = await workspace.refOf(root);
+    // A chain no window ever touched files in has no directory to reclaim.
+    if (ref === undefined) return;
+    this.retentionTimers.set(
+      root,
+      this.timers.setTimeout(() => {
+        this.retentionTimers.delete(root);
+        void workspace.reclaim(ref).catch(() => {});
+      }, Math.max(0, endedAt + retentionMs - this.clock())),
+    );
+  }
+
   /** A window that never reached a model still ends, and its work goes on. */
   private async fail(record: WindowRecord, error: unknown): Promise<void> {
     this.disarm(record);
@@ -1505,6 +1563,7 @@ export class Arbor {
     });
     this.board.close(record.window);
     this.windows.delete(record.window);
+    await this.retire(record.window, this.clock());
   }
 
   /** The task a window was opened for, so its continuation names it. */
@@ -2001,6 +2060,16 @@ export class Arbor {
 
   private idleSeconds(): number {
     return this.current()?.window?.idleSeconds ?? DEFAULT_IDLE_SECONDS;
+  }
+
+  /**
+   * How long a chain's directory is kept after its last window ended, before
+   * the host reclaims it. `undefined` when the setting names no period, and
+   * then nothing is ever reclaimed (docs/workspaces.md#lifecycle).
+   */
+  private retentionMs(): number | undefined {
+    const retentionMs = this.current()?.workspaces?.retentionMs;
+    return typeof retentionMs === "number" && retentionMs > 0 ? retentionMs : undefined;
   }
 
   private limits(): OpenWindowRequest["limits"] {

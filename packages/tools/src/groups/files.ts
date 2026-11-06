@@ -19,7 +19,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import type {
   CallContext,
   DirectToolSpec,
@@ -225,8 +225,7 @@ export class FileToolGroup implements ToolGroup {
     const workspace = await this.mount(window);
     if (workspace === undefined) return this.absent(request);
     const text = stringArg(request.args, "text");
-    const written = await this.writeText(workspace, path, text);
-    if (written === false) return this.outside(request, path);
+    await this.writeText(workspace, path, text);
     return {
       callId: request.callId,
       ok: true,
@@ -246,8 +245,7 @@ export class FileToolGroup implements ToolGroup {
     if (text === null) return this.missing(request, "edit.missing", path);
     const count = text.split(old).length - 1;
     if (count === 0) return this.noMatch(request, path, old);
-    const written = await this.writeText(workspace, path, text.split(old).join(next));
-    if (written === false) return this.outside(request, path);
+    await this.writeText(workspace, path, text.split(old).join(next));
     return {
       callId: request.callId,
       ok: true,
@@ -261,28 +259,18 @@ export class FileToolGroup implements ToolGroup {
    */
   private async readText(workspace: WorkspaceMount, path: string): Promise<string | null> {
     if (workspace.readFile !== undefined) return workspace.readFile(path);
-    const target = insidePath(workspace.path, path);
-    if (target === undefined) return null;
-    return readFile(target, "utf8").catch(() => null);
+    return readFile(hostPath(workspace.path, path), "utf8").catch(() => null);
   }
 
-  /** Write one file, or answer `false` when the path escapes the workspace. */
-  private async writeText(workspace: WorkspaceMount, path: string, text: string): Promise<boolean> {
+  /** Write one file, creating its directory. */
+  private async writeText(workspace: WorkspaceMount, path: string, text: string): Promise<void> {
     if (workspace.writeFile !== undefined) {
-      try {
-        await workspace.writeFile(path, text);
-        return true;
-      } catch (error: unknown) {
-        const rule = (error as { rule?: string }).rule;
-        if (rule === "file.outside_workspace") return false;
-        throw error;
-      }
+      await workspace.writeFile(path, text);
+      return;
     }
-    const target = insidePath(workspace.path, path);
-    if (target === undefined) return false;
+    const target = hostPath(workspace.path, path);
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, text, "utf8");
-    return true;
   }
 
   private start(command: string, cwd: string): Job {
@@ -334,10 +322,6 @@ export class FileToolGroup implements ToolGroup {
     return this.refusal(request, "edit.no_match", "edit.nomatch", { path, old });
   }
 
-  private outside(request: ToolCall, path: string): ToolResult {
-    return this.refusal(request, "file.outside_workspace", "read.outside", { path });
-  }
-
   /** The environment is mounted read-only, so nothing there is written. */
   private readonly(request: ToolCall, path: string): ToolResult {
     return this.refusal(request, "env.readonly_path", "env.readonly_path", { path });
@@ -367,11 +351,14 @@ export class FileToolGroup implements ToolGroup {
   }
 }
 
-/** A path inside the workspace, or `undefined` when it escapes it. */
-function insidePath(root: string, path: string): string | undefined {
-  if (path === "") return undefined;
-  const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
-  return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
+/**
+ * Where a path names on this host: itself when it is absolute, under the
+ * workspace when it is not. Nothing is refused, because the owner asked for no
+ * restriction on where a window reads or writes
+ * (docs/workspaces.md#another-windows-directory).
+ */
+function hostPath(root: string, path: string): string {
+  return isAbsolute(path) ? normalize(path) : resolve(root, path);
 }
 
 /**

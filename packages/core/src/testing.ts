@@ -56,16 +56,20 @@ const FINISHED_TIMEOUT_MS = 10_000;
 export class ManualTimers {
   private next = 1;
   private readonly pending = new Map<number, () => void>();
+  /** The delay each waiting timer was armed with, so a test reads a deadline. */
+  private readonly waits = new Map<number, number>();
 
-  setTimeout(handler: () => void, _ms: number): { id: unknown } {
+  setTimeout(handler: () => void, ms: number): { id: unknown } {
     const id = this.next;
     this.next += 1;
     this.pending.set(id, handler);
+    this.waits.set(id, ms);
     return { id };
   }
 
   clearTimeout(timer: { id: unknown }): void {
     this.pending.delete(Number(timer.id));
+    this.waits.delete(Number(timer.id));
   }
 
   /** How many timers are waiting. */
@@ -73,10 +77,16 @@ export class ManualTimers {
     return this.pending.size;
   }
 
+  /** The delay each waiting timer was armed with, in the order they were armed. */
+  delays(): readonly number[] {
+    return [...this.waits.values()];
+  }
+
   /** Fire every waiting timer. */
   fireAll(): void {
     const handlers = [...this.pending.values()];
     this.pending.clear();
+    this.waits.clear();
     for (const handler of handlers) handler();
   }
 }

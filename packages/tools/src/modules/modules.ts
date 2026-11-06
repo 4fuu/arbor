@@ -9,7 +9,7 @@
  */
 
 import { readdir, readFile } from "node:fs/promises";
-import { isAbsolute, join, normalize, resolve, sep } from "node:path";
+import { isAbsolute, join, normalize, resolve } from "node:path";
 import type {
   Block,
   CallContext,
@@ -877,8 +877,7 @@ export class WorkspaceModuleGroup implements ToolGroup {
     if (listed !== null) {
       return { callId: request.callId, ok: listed.exitCode === 0, content: listed.stdout.trim() };
     }
-    const target = joinInside(workspace.path, path);
-    if (target === undefined) return this.outside(request);
+    const target = hostPath(workspace.path, path);
     const entries = await readdirSafe(target);
     return {
       callId: request.callId,
@@ -954,19 +953,6 @@ export class WorkspaceModuleGroup implements ToolGroup {
     };
   }
 
-  private outside(request: ToolCall): ToolResult {
-    return {
-      callId: request.callId,
-      ok: false,
-      content: "",
-      error: {
-        rule: "file.outside_workspace",
-        message: textOf(this.services.table, "refused.read.outside", { path: stringArg(request.args, "path") }),
-        nextAction: textOf(this.services.table, "next.read.outside"),
-      },
-    };
-  }
-
   private notOwned(request: ToolCall): ToolResult {
     return {
       callId: request.callId,
@@ -1011,10 +997,14 @@ function quote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-function joinInside(root: string, path: string): string | undefined {
-  if (path === "") return undefined;
-  const wanted = isAbsolute(path) ? normalize(path) : resolve(root, path);
-  return wanted === root || wanted.startsWith(root + sep) ? wanted : undefined;
+/**
+ * Where a path names on this host: itself when it is absolute, under the
+ * workspace when it is not. Nothing is refused, because the owner asked for no
+ * restriction on where a window reads or writes
+ * (docs/workspaces.md#another-windows-directory).
+ */
+function hostPath(root: string, path: string): string {
+  return isAbsolute(path) ? normalize(path) : resolve(root, path);
 }
 
 async function readdirSafe(path: string): Promise<{ name: string; directory: boolean }[]> {

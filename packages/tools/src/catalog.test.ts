@@ -473,7 +473,7 @@ describe("tool catalog", () => {
     assert.ok(result.error?.message.includes("boom"));
   });
 
-  it("reads, writes and edits inside the window's own workspace only", async () => {
+  it("reads, writes and edits in the window's own workspace, and an absolute path anywhere", async () => {
     const { catalog, root, refOf } = await harness();
     const written = await run(catalog, "write", { path: "src/app.ts", text: "export const a = 1" });
     assert.equal(written.ok, true);
@@ -490,9 +490,20 @@ describe("tool catalog", () => {
     assert.equal(missing.ok, false);
     assert.equal(missing.error?.rule, "edit.no_match");
 
-    const outside = await run(catalog, "write", { path: "../escape.txt", text: "x" });
-    assert.equal(outside.ok, false);
-    assert.equal(outside.error?.rule, "file.outside_workspace");
+    // Nothing refuses a path outside the window's own directory: the owner asked
+    // for no restriction, and the prompt text alone says a directory belongs to
+    // another window.
+    const outsideRoot = await mkdtemp(join(tmpdir(), "arbor-tools-outside-"));
+    try {
+      const target = join(outsideRoot, "escape.txt");
+      const escaped = await run(catalog, "write", { path: target, text: "outside the workspace" });
+      assert.equal(escaped.ok, true);
+      assert.equal(await readFile(target, "utf8"), "outside the workspace");
+      const readOutside = await run(catalog, "read", { path: target });
+      assert.ok(readOutside.content.includes("outside the workspace"));
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
   });
 
   it("runs bash in the workspace and follows a long command with bash_output", async () => {

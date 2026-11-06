@@ -14,6 +14,7 @@
   "defaultTier": "fast",
   "window": { "idleSeconds": 300, "contextTokens": 200000, "reserveTokens": 4000 },
   "snapshot": { "minIntervalMs": 600000 },
+  "workspaces": { "retentionMs": 604800000 },
   "judge": { "modes": { "route": "on", "notice": "shadow" }, "maxCandidates": 8 },
   "secrets": ["BOT_TOKEN"]
 }
@@ -24,6 +25,7 @@
 - `modelTiers`、`defaultTier`：每一层映射到后端能跑的一个模型。
 - `window`：空闲秒数、上下文预算、预留 token。
 - `snapshot.minIntervalMs`：系统提示和记忆快照最多多久重建一次。
+- `workspaces.retentionMs`：窗口链最后一个窗口结束后，它的工作区目录再保留多久由主机回收；不设就不回收。
 - `judge.modes`：每个决策是 `on`、`off` 还是 `shadow`。
 - `secrets`：允许使用的秘密的名字，只写名字，不写值。
 

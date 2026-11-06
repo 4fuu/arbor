@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type { Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
 import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
-import { ManualTimers, ScriptedBackend } from "./testing.ts";
+import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 
 /**
  * A judge that answers nothing, so a test never reaches a service. Every
@@ -64,7 +65,15 @@ class ProbeGroup implements ToolGroup {
 }
 
 /** One scripted window: the host sees a backend it can drive by hand. */
-async function host(options: { workspace?: boolean; environment?: boolean } = {}): Promise<{
+async function host(
+  options: {
+    workspace?: boolean;
+    environment?: boolean;
+    /** The retention period the host reclaims a chain's directory after. */
+    retentionMs?: number;
+    now?: () => number;
+  } = {},
+): Promise<{
   arbor: Arbor;
   journal: SqliteJournal;
   timers: ManualTimers;
@@ -83,10 +92,11 @@ async function host(options: { workspace?: boolean; environment?: boolean } = {}
     journal,
     backend,
     timers,
-    now: () => 1700000000000,
+    now: options.now ?? (() => 1700000000000),
     judge: new QuietJudge(),
     ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
     ...(environment === undefined ? {} : { environment }),
+    ...(options.retentionMs === undefined ? {} : { settings: { workspaces: { retentionMs: options.retentionMs } } }),
     groups: [probe],
   });
   backend.attach(arbor.windowControl());
@@ -758,5 +768,146 @@ describe("one window end to end", () => {
     const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => at });
     await reopened.start();
     assert.equal((await reopened.services.schedules()).length, 0);
+  });
+});
+
+/**
+ * The retention period (docs/workspaces.md#lifecycle): a chain's directory is
+ * kept once its last window has ended, and reclaimed when the period has
+ * passed - which a restart has to keep, because the end it is counted from is
+ * in the journal.
+ */
+
+describe("workspace retention", () => {
+  const retentionMs = 60_000;
+
+  /** One window that wrote a file and then ended its run, as the model asked. */
+  async function endedChain(
+    options: { retentionMs?: number; now?: () => number } = {},
+  ): Promise<{ arbor: Arbor; journal: SqliteJournal; backend: ScriptedBackend; timers: ManualTimers; root: string }> {
+    const { arbor, journal, backend, timers, root } = await host(options);
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "写完了" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    // The window's own run is what records the end and arms the deadline, so
+    // waiting for it is waiting for both.
+    await record.running;
+    return { arbor, journal, backend, timers, root };
+  }
+
+  /**
+   * Let the reclaim a fired timer started run to its end. The bound is a
+   * deadline, not a number of yields: the reclaim is real filesystem work, and
+   * a loop of yields expires on a loaded machine long before it has finished.
+   */
+  async function untilRemoved(path: string): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (existsSync(path) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(existsSync(path), false);
+  }
+
+  it("reclaims the chain's directory once the retention period has passed", async () => {
+    const { timers, root } = await endedChain({ retentionMs });
+    // The chain's last window ended, so one deadline is waiting; the directory
+    // is still there while the period runs.
+    assert.deepEqual(timers.delays(), [retentionMs]);
+    assert.ok(existsSync(join(root, "ws1")));
+
+    timers.fireAll();
+    await untilRemoved(join(root, "ws1"));
+  });
+
+  it("keeps the directory when no retention period is set", async () => {
+    const { timers, root } = await endedChain();
+    assert.equal(timers.size, 0);
+    timers.fireAll();
+    await turn();
+    assert.ok(existsSync(join(root, "ws1")));
+  });
+
+  it("has nothing to reclaim for a chain that never touched files", async () => {
+    const { arbor, backend, timers } = await host({ retentionMs });
+    backend.script([{ text: "没有文件" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    await record.running;
+    assert.equal(timers.size, 0);
+  });
+
+  it("keeps the deadline across a restart, counted from the end the journal recorded", async () => {
+    const { arbor, journal, backend, root } = await endedChain({ retentionMs });
+    // `close` leaves nothing armed and reclaims nothing.
+    await arbor.close();
+    assert.ok(existsSync(join(root, "ws1")));
+    // The end the journal recorded is what the retention period is counted
+    // from; the clock a host runs with is not the journal's own.
+    const ended = await journal.list({ kinds: ["window_end"], limit: 1 });
+    const endedAt = ended.items[0]?.time ?? 0;
+
+    // The restart lands inside the retention period, so what is left of it is
+    // what is armed: 60 s from the end, not 60 s from this start.
+    const inside = new ManualTimers();
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers: inside,
+      now: () => endedAt + retentionMs / 2,
+      workspace: new DirectoryWorkspace({ root }),
+      settings: { workspaces: { retentionMs } },
+    });
+    backend.attach(reopened.windowControl());
+    await reopened.start();
+    assert.equal(inside.size, 1);
+    assert.deepEqual(inside.delays(), [retentionMs / 2]);
+
+    // Past the period, the same start reclaims the directory on its own.
+    const due = new ManualTimers();
+    const later = new Arbor({
+      journal,
+      backend,
+      timers: due,
+      now: () => endedAt + retentionMs + 1,
+      workspace: new DirectoryWorkspace({ root }),
+      settings: { workspaces: { retentionMs } },
+    });
+    backend.attach(later.windowControl());
+    await later.start();
+    assert.equal(due.size, 1);
+    assert.deepEqual(due.delays(), [0]);
+    due.fireAll();
+    await untilRemoved(join(root, "ws1"));
+  });
+
+  it("leaves a chain its continuation is still working in alone", async () => {
+    const { arbor, journal, backend, timers, root } = await host({ retentionMs });
+    backend.script([{ tool: "write", args: { path: "notes.txt", text: "work in progress" } }, { text: "还没做完" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    // The end carries a handoff, so the chain goes on in a new window; its
+    // steps are scripted before the end that opens it.
+    backend.script([{ tool: "read", args: { path: "notes.txt" } }, { text: "读到了" }]);
+    await arbor.end(record.window, {
+      topics: ["CI"],
+      progress: ["构建修了一半"],
+      pending: ["跑测试"],
+      agreements: [],
+      refs: [],
+    });
+    await backend.finished();
+    await record.running;
+    // The continuation's run has ended and it waits for a related input, so
+    // the one timer waiting is its idle one: no retention deadline is armed
+    // while a window of the chain is live.
+    assert.deepEqual(timers.delays(), [300_000]);
+    assert.ok(existsSync(join(root, "ws1")));
+    const continued = await journal.list({ kinds: ["window_start"], limit: 5 });
+    assert.equal(continued.items.at(-1)?.window, "c2");
   });
 });

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { describe, it } from "node:test";
 import { isArborError } from "@4fu/arbor-errors";
 import type { EventRef } from "@4fu/arbor-interfaces";
 import { SqliteJournal } from "./sqlite-journal.ts";
+import { SCHEMA_VERSION, readMeta } from "./schema.ts";
 
 function memoryJournal(now?: () => number): SqliteJournal {
   return new SqliteJournal({ path: ":memory:", now });
@@ -88,6 +90,71 @@ describe("append", () => {
       assert.equal(event.ref, "r2");
       assert.equal((await second.list({})).total, 2);
       await second.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("opens a version-1 database, migrating the events table it has", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "arbor-journal-v1-"));
+    try {
+      const path = join(directory, "journal.db");
+      // The schema as version 1 left it: the `snapshot` column `events` carried
+      // before the workspace snapshots were dropped, with an index on it.
+      const old = new DatabaseSync(path);
+      old.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      old.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '1')`);
+      old.exec(`CREATE TABLE events (
+         seq INTEGER PRIMARY KEY AUTOINCREMENT,
+         window TEXT,
+         time INTEGER NOT NULL,
+         kind TEXT NOT NULL,
+         external TEXT,
+         body TEXT,
+         snapshot TEXT,
+         redacted TEXT
+       )`);
+      old.exec(`CREATE UNIQUE INDEX events_external ON events (external) WHERE external IS NOT NULL`);
+      old.exec(`CREATE INDEX events_window ON events (window, seq)`);
+      old.exec(`CREATE INDEX events_kind ON events (kind, seq)`);
+      old.exec(`CREATE INDEX events_snapshot ON events (snapshot)`);
+      old.prepare(`INSERT INTO events (window, time, kind, body, snapshot) VALUES (?, ?, ?, ?, ?)`)
+        .run("c1", 1_700_000_000_000, "input", "第一批", "ws1");
+      old.close();
+
+      const journal = new SqliteJournal({ path, now: () => 1_700_000_001_000 });
+      const stored = await journal.get("r1" as EventRef);
+      assert.equal(stored?.window, "c1");
+      assert.equal(stored?.body, "第一批");
+
+      // The dropped column and its index are gone, and the version says so.
+      const migrated = new DatabaseSync(path);
+      const columns = (migrated.prepare("PRAGMA table_info(events)").all() as { name: string }[]).map(
+        (column) => column.name,
+      );
+      assert.ok(!columns.includes("snapshot"));
+      assert.equal(readMeta(migrated, "schema_version"), String(SCHEMA_VERSION));
+      migrated.close();
+
+      // The one global order carries on from where the old database left off.
+      const next = await journal.append({ kind: "input", window: "c1", body: "第二批" });
+      assert.equal(next.ref, "r2");
+      assert.equal((await journal.list({})).total, 2);
+      await journal.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a database a newer build wrote", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "arbor-journal-v9-"));
+    try {
+      const path = join(directory, "journal.db");
+      const future = new DatabaseSync(path);
+      future.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      future.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '9')`);
+      future.close();
+      assert.throws(() => new SqliteJournal({ path }), /journal schema 9 is newer than this build \(2\)/);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

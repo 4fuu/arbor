@@ -102,6 +102,15 @@ export interface Workspace {
   reclaim(workspace: WorkspaceRef): Promise<void>;
 
   /**
+   * The workspace a window's chain already has, or `undefined` when it has
+   * none - the window never touched files, or the directory was reclaimed. The
+   * host asks for it to reclaim a chain's directory once its last window has
+   * ended and the retention period has passed, which a restart has to survive
+   * (docs/workspaces.md#lifecycle).
+   */
+  refOf(window: WindowRef): Promise<WorkspaceRef | undefined>;
+
+  /**
    * What this implementation adds to the catalog: tool groups built from the
    * table the host renders with.
    *

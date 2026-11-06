@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -37,19 +37,24 @@ describe("directory workspace", () => {
     assert.equal(await again.create("c2"), "ws2");
   });
 
-  it("reads and writes through the mount, and refuses a path outside the directory", async () => {
+  it("reads and writes through the mount, at any path the host has", async () => {
     const { workspace } = await fixture();
     const ref = await workspace.create("c1");
     const mount = await workspace.mount(ref);
     await mount.writeFile?.("src/app.ts", "export const a = 1");
     assert.equal(await mount.readFile?.("src/app.ts"), "export const a = 1");
     assert.equal(await mount.readFile?.("missing.ts"), null);
-    await assert.rejects(async () => {
-      await mount.writeFile?.("../escape.txt", "x");
-    }, (error: { rule?: string }) => {
-      assert.equal(error.rule, "file.outside_workspace");
-      return true;
-    });
+    // Nothing refuses a path outside the window's own directory: the owner asked
+    // for no restriction, and the prompt text alone says a directory belongs to
+    // another window.
+    const outsideRoot = await mkdtemp(join(tmpdir(), "arbor-ws-outside-"));
+    try {
+      const target = join(outsideRoot, "escape.txt");
+      await mount.writeFile?.(target, "x");
+      assert.equal(await mount.readFile?.(target), "x");
+    } finally {
+      await rm(outsideRoot, { recursive: true, force: true });
+    }
     await mount.release();
   });
 
@@ -91,7 +96,10 @@ describe("directory workspace", () => {
     const { root, workspace } = await fixture();
     const ref = await workspace.create("c1");
     await write(root, ref, "a.txt", "one");
+    // The ref the window's chain has is what the host reclaims by.
+    assert.equal(await workspace.refOf("c1"), ref);
     await workspace.reclaim(ref);
+    assert.equal(await workspace.refOf("c1"), undefined);
     await assert.rejects(() => workspace.mount(ref), (error: { rule?: string }) => {
       assert.equal(error.rule, "workspace.not_found");
       return true;

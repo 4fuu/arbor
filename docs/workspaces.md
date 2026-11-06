@@ -34,11 +34,13 @@ implementation reports against a workspace's directory.
 
 The built-in workspace isolates by directory only, and it is not a security
 boundary: another window's directory is a path on the same host, which a
-command may name and a read may open. `write` and `edit` refuse a path outside
-the window's own directory, and nothing stops `bash`. Real isolation comes from
-an implementation that owns its execution environment - a sandbox, a container
-per window - which implements `Workspace` itself and registers it; the core
-knows nothing about what an implementation does beyond the interface
+command may name and `read`, `write` and `edit` may open and change. Nothing
+refuses a path outside the window's own directory - not `read`, not `write`,
+not `edit`, not `workspace.ls`, and not `bash`. What keeps one window out of
+another's directory is prompt text, and prompt text only. Real isolation comes
+from an implementation that owns its execution environment - a sandbox, a
+container per window - which implements `Workspace` itself and registers it; the
+core knows nothing about what an implementation does beyond the interface
 ([architecture.md](architecture.md#interfaces)).
 
 Within that limit, the built-in workspace answers the question directly.
@@ -51,8 +53,10 @@ workspace.path("c41")
 /data/workspaces/ws41（窗口 c41 的工作区，属于其他窗口：只读，不要修改）
 ```
 
-The window then reads it with `read`, by that path. A window that never touched
-files has no directory, and the call says so.
+The window then works with it by that path - reads it with `read`, and may write
+to it with `write`, `edit` or `bash`: nothing stops it, and that sentence is the
+only guard there is. A window that never touched files has no directory, and the
+call says so.
 
 The capability belongs to the implementation, not to the core: an
 implementation that can show other workspaces registers its own module function
@@ -89,7 +93,13 @@ dispatching ([coordination.md](coordination.md#the-board)).
 - When the last window of a continuation chain ends, the directory stays
   where it is. Whether work was pushed before the end is the agent's
   responsibility; nothing in the directory is lost either way.
-- After a retention period the host reclaims the chain's directory by itself.
-  This is a setting, not a task for a model.
+- After `workspaces.retentionMs` the host reclaims the chain's directory by
+  itself, once the chain's last window has ended. This is a setting, not a task
+  for a model: with no retention period set, nothing is ever reclaimed.
+- The period is counted from the end the journal recorded, not from the host's
+  start, so a restart in the middle of it reclaims on time instead of starting
+  the wait over. The host asks the implementation which workspace the chain has
+  - `Workspace.refOf(window)` - and reclaims that; a chain no window ever
+  touched files in has no directory and nothing to reclaim.
 
 A deployment that never works with files needs no workspace.

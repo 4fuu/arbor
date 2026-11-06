@@ -25,7 +25,7 @@
 import type { DatabaseSync } from "node:sqlite";
 
 /** Bumped when a change makes an existing database unusable. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** A bare cite is weaker than a link the host declared. */
 export const IMPLICIT_CITE_WEIGHT = 0.5;
@@ -119,7 +119,29 @@ const STATEMENTS: readonly string[] = [
   `CREATE VIRTUAL TABLE IF NOT EXISTS ${WORD_TABLE} USING fts5(body, tokenize = 'unicode61')`,
 ];
 
-/** Create the schema when it is missing, and check the version when it is not. */
+/**
+ * Version 2 dropped the `snapshot` column from `events`: the workspace
+ * snapshots it named are gone with the plain-directory workspace
+ * (docs/workspaces.md). Every event, every ref and every index that does not
+ * name the column stays, so a version-1 database opens where it left off
+ * instead of being rebuilt.
+ */
+function migrateToVersion2(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(events)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "snapshot")) return;
+  // An index that names the column has to go before the column does.
+  const indexes = db.prepare("PRAGMA index_list(events)").all() as { name: string }[];
+  for (const index of indexes) {
+    const keys = db.prepare(`PRAGMA index_info(${JSON.stringify(index.name)})`).all() as {
+      name: string | null;
+    }[];
+    if (!keys.some((key) => key.name === "snapshot")) continue;
+    db.exec(`DROP INDEX ${JSON.stringify(index.name)}`);
+  }
+  db.exec("ALTER TABLE events DROP COLUMN snapshot");
+}
+
+/** Create the schema when it is missing, migrate an older one, and record the version. */
 export function createSchema(db: DatabaseSync): void {
   // The version lives in the one table that has to exist before anything else.
   db.exec(
@@ -129,15 +151,14 @@ export function createSchema(db: DatabaseSync): void {
      )`,
   );
   const version = readMeta(db, "schema_version");
-  if (version !== null && Number(version) !== SCHEMA_VERSION) {
+  if (version !== null && Number(version) > SCHEMA_VERSION) {
     throw new Error(
-      `journal schema ${version} is not supported by this build (${SCHEMA_VERSION}); migrate or rebuild the database`,
+      `journal schema ${version} is newer than this build (${SCHEMA_VERSION}); upgrade arbor, or migrate the database`,
     );
   }
+  if (Number(version) === SCHEMA_VERSION - 1) migrateToVersion2(db);
   for (const statement of STATEMENTS) db.exec(statement);
-  if (version === null) {
-    db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
-  }
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
 }
 
 export function readMeta(db: DatabaseSync, key: string): string | null {
