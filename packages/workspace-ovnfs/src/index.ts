@@ -59,17 +59,17 @@ export async function openOvnfs(options: OpenOvnfsOptions): Promise<OvnfsWorkspa
   try {
     version = await cli.version();
   } catch (error) {
-    warn(`ovnfs: 找不到可执行的二进制（${error instanceof Error ? error.message : String(error)}），回退到普通目录工作区。`);
+    warn(`ovnfs: no runnable binary (${error instanceof Error ? error.message : String(error)}); falling back to the directory workspace.`);
     return null;
   }
   if (!version.includes(OVNFS_PIN.replace(/^v/, ""))) {
-    warn(`ovnfs: 期望 ${OVNFS_PIN}，实际「${version}」。`);
+    warn(`ovnfs: expected ${OVNFS_PIN}, found "${version}".`);
   }
 
   try {
     await cli.start();
   } catch (error) {
-    warn(`ovnfs: 守护进程启动失败（${error instanceof Error ? error.message : String(error)}），回退到普通目录工作区。`);
+    warn(`ovnfs: the daemon did not start (${error instanceof Error ? error.message : String(error)}); falling back to the directory workspace.`);
     return null;
   }
 

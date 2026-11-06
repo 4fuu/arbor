@@ -98,6 +98,7 @@ export const zhTextTable: TextTable = {
   "continuation.reason": "继续窗口 {window} 未完成的工作。",
   "continuation.tasks": "未完成的任务：{openTasks}",
   "continuation.effects": "已产生的效果：{effects}",
+  "continuation.checkout.dirty": "（未合回）",
   "continuation.checkouts": "上个窗口链开着的检出：{checkouts}（标注「未合回」的还有改动没用 apply 合回，按需继续或合回）。",
 
   // ---- results and refusals the tools report -----------------------------

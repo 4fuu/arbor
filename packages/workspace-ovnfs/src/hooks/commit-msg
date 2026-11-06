@@ -5,15 +5,29 @@
 # whatever hooks path the repository configured. It therefore chains to the
 # repository's own commit-msg hook first - read straight from the repository's
 # config file, which the environment override cannot reach - and only then
-# appends the Arbor-Window trailer. A repository with no commit-msg hook of its
-# own is left untouched apart from the trailer, and a hook that rejects the
-# commit stops this one, so the trailer is never added to a refused commit.
+# appends the Arbor-Window trailer. In an ovnfs checkout the repository's own
+# hooks directory is found through the private gitdir's alternates file. A
+# repository with no commit-msg hook of its own is left untouched apart from
+# the trailer, and a hook that rejects the commit stops this one, so the
+# trailer is never added to a refused commit.
 set -u
 
 msg="$1"
 
 gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || gitdir=""
 if [ -n "$gitdir" ] && [ -f "$gitdir/config" ]; then
+  # An ovnfs checkout's private gitdir copies HEAD, refs, config and index but
+  # not hooks/; it borrows the repository's objects through an alternates file,
+  # so the repository's own gitdir is the parent of the objects it points at.
+  repo_gitdir="$gitdir"
+  if git config --file "$gitdir/config" ovnfs.checkout >/dev/null 2>&1 && [ -f "$gitdir/objects/info/alternates" ]; then
+    objects=$(head -n 1 "$gitdir/objects/info/alternates")
+    case "$objects" in
+      /*) ;;
+      *) objects="$gitdir/objects/$objects" ;;
+    esac
+    repo_gitdir=$(dirname "$objects")
+  fi
   own_path=$(git config --file "$gitdir/config" core.hooksPath 2>/dev/null || true)
   if [ -n "$own_path" ]; then
     case "$own_path" in
@@ -21,7 +35,7 @@ if [ -n "$gitdir" ] && [ -f "$gitdir/config" ]; then
       *) top=$(git rev-parse --show-toplevel 2>/dev/null || echo "$gitdir"); own_dir="$top/$own_path" ;;
     esac
   else
-    own_dir="$gitdir/hooks"
+    own_dir="$repo_gitdir/hooks"
   fi
   own_hook="$own_dir/commit-msg"
   if [ -x "$own_hook" ]; then

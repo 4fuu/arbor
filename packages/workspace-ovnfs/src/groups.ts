@@ -124,7 +124,7 @@ export class OvnfsWorkspaceGroup implements ToolGroup {
       .map((one) =>
         textOf(this.table, "result.workspace.list.line", {
           name: one.name,
-          dirty: one.dirty ? "（未合回）" : "",
+          dirty: one.dirty ? textOf(this.table, "result.workspace.list.dirty") : "",
           path: one.path,
         }),
       )

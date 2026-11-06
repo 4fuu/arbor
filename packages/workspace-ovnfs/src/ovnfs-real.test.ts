@@ -90,10 +90,20 @@ describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
       const workspace = await openOvnfs({ source, state: join(root, "state"), mount: join(root, "checkouts") });
       assert.ok(workspace !== null);
 
+      // The repository's own commit-msg hook, in its default hooks directory,
+      // which the checkout's private gitdir does not copy.
+      const ownHook = join(source, ".git", "hooks", "commit-msg");
+      writeFileSync(ownHook, '#!/bin/sh\necho "Repo-Hook: ran" >> "$1"\n', { mode: 0o755 });
+
       const path = await workspace.openCheckout("c1", "c1-app", source);
       await writeFile(join(path, "feature.txt"), "a feature\n");
-      execFileSync("git", ["add", "."], { cwd: path });
-      execFileSync("git", ["commit", "--quiet", "-m", "add feature"], { cwd: path });
+      const env = { ...process.env, ...workspace.bashEnv("c1") };
+      execFileSync("git", ["add", "."], { cwd: path, env });
+      execFileSync("git", ["commit", "--quiet", "-m", "add feature"], { cwd: path, env });
+      // The repository's own hook ran, and then the trailer was added.
+      const message = execFileSync("git", ["log", "-1", "--format=%B"], { cwd: path }).toString();
+      assert.match(message, /Repo-Hook: ran/);
+      assert.match(message, /Arbor-Window: c1/);
 
       const reply = await workspace.applyCheckout("c1", "c1-app", "arbor/c1");
       assert.equal(reply.branch, "arbor/c1");

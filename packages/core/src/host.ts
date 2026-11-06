@@ -1551,7 +1551,7 @@ export class Arbor {
         : [
             dataBlock(
               textOf(this.table, "continuation.checkouts", {
-                checkouts: checkouts.map((one) => `${one.name}${one.dirty ? "（未合回）" : ""}`).join("、"),
+                checkouts: checkouts.map((one) => `${one.name}${one.dirty ? textOf(this.table, "continuation.checkout.dirty") : ""}`).join("、"),
               }),
             ),
           ];

@@ -32,11 +32,11 @@ A window that wants to change files opens its own **checkout** of the project
 subfolder it needs and works there:
 
 ```text
-ovnfs new <项目子目录> --name <本窗口引用>-<简称>   # open a checkout, print its path
-cd <检出的路径>                                    # work in it
-ovnfs diff <检出名>                                # what changed
-ovnfs apply <检出名>                               # merge it back into the shared folder
-ovnfs rm <检出名>                                  # remove the checkout
+ovnfs new <project dir> --name <window ref>-<short name>   # open a checkout, print its path
+cd <checkout path>                                        # work in it
+ovnfs diff <name>                                         # what changed
+ovnfs apply <name>                                        # merge it back into the shared folder
+ovnfs rm <name>                                           # remove the checkout
 ```
 
 The checkout is named after the window that opened it (`<window ref>-<short
@@ -51,7 +51,9 @@ the shared folder or open a new checkout. In a git repository, open the checkout
 at the repository's own subfolder - not a parent folder - so it gets the private
 git directory `apply --branch` needs: commit inside the checkout, then
 `apply <name> --branch arbor/<name>` brings the commits back as a branch.
-Never commit in the shared folder.
+A branch apply moves commits only: it leaves the shared folder's working files
+alone, and the checkout still differs from its base, so the window removes it
+with `rm` before `end` accepts. Never commit in the shared folder.
 
 Path classes decide what a checkout captures: `source` paths are captured and
 merged back; `cache` (`node_modules` and build outputs) and `local` (`.env` and
