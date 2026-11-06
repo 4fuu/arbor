@@ -41,6 +41,19 @@ function gitRepo(dir: string): void {
   execFileSync("git", ["commit", "--quiet", "-m", "base"], { cwd: dir });
 }
 
+/**
+ * Stop the test's own daemon, which unmounts its checkouts directory, then
+ * remove everything. Removing a still-mounted directory fails with EBUSY.
+ */
+async function cleanup(root: string): Promise<void> {
+  try {
+    execFileSync("ovnfs", ["--state", join(root, "state"), "--mount", join(root, "checkouts"), "stop"], { stdio: "ignore" });
+  } catch {
+    // No daemon was started, or it already stopped.
+  }
+  await rm(root, { recursive: true, force: true });
+}
+
 describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
   it("opens a checkout of a repository and applies a change back into the folder", async () => {
     const root = await mkdtemp(join(tmpdir(), "arbor-ovnfs-real-"));
@@ -65,7 +78,7 @@ describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
 
       await workspace.removeCheckout("c1-app");
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await cleanup(root);
     }
   });
 
@@ -90,7 +103,7 @@ describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
 
       await workspace.removeCheckout("c1-app");
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await cleanup(root);
     }
   });
 
@@ -121,7 +134,7 @@ describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
       await workspace.removeCheckout("c2-parent").catch(() => {});
       await workspace.removeCheckout("c2-repoA").catch(() => {});
     } finally {
-      await rm(root, { recursive: true, force: true });
+      await cleanup(root);
     }
   });
 });
