@@ -7,7 +7,7 @@
  */
 
 import type { EventRef, MessageRef, TaskRef, WindowRef } from "@4fu/arbor-interfaces";
-import type { Journal } from "@4fu/arbor-interfaces";
+import type { EventKind, EventPage, Journal } from "@4fu/arbor-interfaces";
 
 export interface RefSeed {
   window: number;
@@ -26,6 +26,17 @@ export function highestOf(refs: readonly string[], prefix: string): number {
   return highest;
 }
 
+/**
+ * The newest events of some kinds. A list page runs in the global order from
+ * the oldest event, and refs only grow, so the highest ref is on the last page.
+ */
+async function latest(journal: Journal, kinds: EventKind[]): Promise<EventPage> {
+  const limit = 200;
+  const first = await journal.list({ kinds, limit });
+  if (first.total <= first.items.length) return first;
+  return journal.list({ kinds, limit, offset: first.total - limit });
+}
+
 /** One allocator per kind, seeded from the journal. */
 export class RefAllocator {
   private window: number;
@@ -40,9 +51,9 @@ export class RefAllocator {
 
   /** Seed the allocator from the journal, so a restart continues the order. */
   static async from(journal: Journal): Promise<RefAllocator> {
-    const started = await journal.list({ kinds: ["window_start"], limit: 200 });
-    const tasks = await journal.list({ kinds: ["input", "task", "schedule"], limit: 200 });
-    const messages = await journal.list({ kinds: ["window_message"], limit: 200 });
+    const started = await latest(journal, ["window_start"]);
+    const tasks = await latest(journal, ["input", "task", "schedule"]);
+    const messages = await latest(journal, ["window_message"]);
     return new RefAllocator({
       window: highestOf(
         started.items.map((event) => event.window ?? ""),

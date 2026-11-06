@@ -17,6 +17,7 @@ import type {
   Unsubscribe,
 } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
+import { RefAllocator } from "./refs.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 
 /**
@@ -1136,5 +1137,18 @@ describe("task sources", () => {
     const tasks = await arbor.tasks();
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0]?.reason, "群里连续来了 2 条消息");
+  });
+});
+
+describe("refs across a restart", () => {
+  it("continues after the newest ref, however many the journal holds", async () => {
+    // More windows than one list page, so a seed read from the oldest page
+    // would hand out a ref an earlier window already has.
+    const journal = new SqliteJournal({ path: ":memory:" });
+    for (let n = 1; n <= 250; n += 1) {
+      await journal.append({ kind: "window_start", window: `c${n}` });
+    }
+    const refs = await RefAllocator.from(journal);
+    assert.equal(refs.nextWindow(), "c251");
   });
 });
