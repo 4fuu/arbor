@@ -14,8 +14,8 @@
  * instruction names the state path it judges and does not restate the state,
  * and the criteria describe every outcome. Extra criteria a plugin registered
  * (packages/interfaces/src/judge.ts, `JudgeCriteria`) are appended to every
- * criterion as an owner rule, the way qqnt-gui-driver's Jev wrapper does it:
- * they steer the wording, and never enter the state.
+ * criterion as an owner rule: they steer the wording, and never enter the
+ * state.
  */
 
 import type {

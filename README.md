@@ -203,4 +203,4 @@ without mise is expected to carry Node 24 or newer and pnpm 12 already.
 
 ## License
 
-[MIT](LICENSE).
+MIT. The `LICENSE` file lands with the first release.

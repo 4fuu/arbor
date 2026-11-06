@@ -6,8 +6,8 @@
  * must not post all of it. The bounds here are the judge's own, computed in
  * code, and every cut is reported in the state as a labelled fact
  * (`dropped_content`, `dropped_candidates`, `dropped_older`) so a question
- * never reads a silence that is only a cut - the rule qqnt-gui-driver's
- * jev-context.ts states for its shared recent context.
+ * never reads a silence that is only a cut - the rule a shared recent context
+ * states the same way.
  *
  * Nothing is cut in half. A list whose newest items matter most - a task's
  * content blocks - keeps the newest whole items that fit; a list whose leading

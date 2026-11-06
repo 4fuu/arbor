@@ -80,14 +80,12 @@
 | one resident window per conversation or issue | a busy conversation is still one serial line |
 | contexts forked from a running window | a forked transcript is used once, so its prefix rarely pays off in the cache, and the fork inherits the parent's usage |
 
-## What carries over from the QQ project
+## What carries over from an earlier agent
 
-The design generalizes mechanisms built and run in
-[qqnt-gui-driver](https://github.com/4fuu/qqnt-gui-driver) (temporary link,
-removed once arbor is built), which ran one window at a time for many
-sources:
+The design generalizes mechanisms that were built and run first in a
+single-window agent serving several outside sources:
 
-| QQ project | arbor |
+| The earlier agent | arbor |
 | --- | --- |
 | one append-only event log | one journal, shared by concurrent windows |
 | rotating windows with a frozen prefix | disposable windows with a standard prefix |

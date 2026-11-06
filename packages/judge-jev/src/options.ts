@@ -4,11 +4,9 @@
  *
  * Jev is TypeSafe AI's System One classifier: one request carries one state and
  * several typed questions about it, and every answer comes back with its score
- * or its probability (qqnt-gui-driver, docs/agent-design.md section 1 and
- * apps/bot/src/jev.ts, where the same wrapper was built first). It is not a
- * chat model and not a pi provider: it is reached over HTTP with a bearer key,
- * so this package holds no model catalog of its own and adds no dependency on
- * the agent backend.
+ * or its probability. It is not a chat model and not a pi provider: it is
+ * reached over HTTP with a bearer key, so this package holds no model catalog
+ * of its own and adds no dependency on the agent backend.
  *
  * A setting here names a secret and never holds its value
  * (docs/architecture.md#data-placement): `apiKeyEnv` is the name of the

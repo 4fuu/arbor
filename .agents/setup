@@ -1,9 +1,12 @@
 #!/bin/sh
-# Prepare a fresh orb for arbor.
+# Prepare a fresh machine for arbor.
 #
-# Node runs the TypeScript sources directly, so there is no build step: the only
-# setup is installing the workspace dependencies and running the checks once, so
-# a broken environment fails here instead of in a later stage.
+# Node runs the TypeScript sources directly and every package's exports points
+# at them, so the checks need no build: the setup installs the workspace
+# dependencies and runs the checks once, so a broken environment fails here
+# instead of in a later stage. `pnpm build` is run after them, because a machine
+# that cannot produce what publishing needs is not a working environment either
+# (docs/release.md).
 #
 # The toolchain has two paths. A machine with mise takes Node and pnpm from the
 # repository's mise.toml, which installs them under ~/.local/share/mise; that is
@@ -36,3 +39,4 @@ echo "pnpm $(pnpm --version)"
 pnpm install --frozen-lockfile
 
 pnpm check
+pnpm build
