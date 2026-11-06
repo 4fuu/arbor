@@ -3,7 +3,8 @@
  * Pack or publish every package from its `dist` directory.
  *
  *   node scripts/publish.mjs              `npm pack --dry-run` for each package
- *   node scripts/publish.mjs --publish    `npm stage publish` for each one; a
+ *   node scripts/publish.mjs --publish    `npm publish` for each one
+ *   node scripts/publish.mjs --stage      `npm stage publish` for each one; a
  *                                         maintainer approves each stage with 2FA
  *
  * The repository's own `package.json` files point their `exports` at the
@@ -29,7 +30,8 @@ import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildablePackages, filesUnder } from "./workspace.mjs";
 
-const publish = process.argv.includes("--publish");
+const stage = process.argv.includes("--stage");
+const publish = stage || process.argv.includes("--publish");
 const dryRun = !publish;
 const root = new URL("..", import.meta.url);
 
@@ -127,21 +129,17 @@ function packCommand() {
 }
 
 /**
- * What a release runs: `npm stage publish` from the same place. The version
- * waits on the registry until a maintainer approves it with 2FA, so the token
- * a release runs with can be a stage-only one (docs/release.md).
+ * What a release runs, from the same place: `npm publish`, or with `--stage`
+ * `npm stage publish`, where the version waits on the registry until a
+ * maintainer approves it with 2FA, so a stage-only token is enough
+ * (docs/release.md).
  */
 function publishCommand() {
-  return ["npm", ["stage", "publish"]];
+  return stage ? ["npm", ["stage", "publish"]] : ["npm", ["publish", "--access", "public"]];
 }
 
-/**
- * A calendar version carries today's date in `Asia/Hong_Kong`, so a stale one
- * is refused. A plain `MAJOR.MINOR.PATCH` version, such as the first release's
- * `0.1.0`, names no date.
- */
+/** A release carries today's date in `Asia/Hong_Kong`, so a stale version is refused. */
 function checkDate(version) {
-  if (!/^\d{4}\./.test(version)) return;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Hong_Kong",
     year: "numeric",
@@ -181,7 +179,7 @@ const packages = await buildablePackages();
 if (packages.length === 0) throw new Error("no package carries a tsconfig.build.json");
 const version = releaseVersion(packages);
 if (publish) checkDate(version);
-console.log(`${dryRun ? "packing" : "staging"} ${packages.length} packages at ${version}`);
+console.log(`${dryRun ? "packing" : stage ? "staging" : "publishing"} ${packages.length} packages at ${version}`);
 
 for (const package_ of packages) {
   await checkBuild(package_);
