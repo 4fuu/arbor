@@ -23,9 +23,8 @@ whole host end to end: the HTTP test channel takes a webhook in, carries a
 window's sends out, and serves the page a person drives it from. The host API
 comes next.
 
-No release is published yet. The first one follows the repository going public
-and uses calendar versions under the `@4fu` scope
-([docs/release.md](docs/release.md)).
+No release is published yet. Releases use calendar versions under the `@4fu`
+scope ([docs/release.md](docs/release.md)).
 
 ## Core ideas
 
@@ -172,7 +171,7 @@ deployment can see what it would be taking on before it adopts one.
 | [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, continuity, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |
 | [docs/prompting.md](docs/prompting.md) | how every model-facing text is written: layers, notes, deliveries, errors, judge questions, terms |
-| [docs/release.md](docs/release.md) | calendar versioning, the release workflow, how a package is published |
+| [docs/release.md](docs/release.md) | calendar versioning, the manual release steps, how a package is published |
 
 ## Repository layout
 
@@ -203,4 +202,4 @@ without mise is expected to carry Node 24 or newer and pnpm 12 already.
 
 ## License
 
-MIT. The `LICENSE` file lands with the first release.
+MIT, see [LICENSE](LICENSE).

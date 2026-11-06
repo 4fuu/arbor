@@ -1,57 +1,70 @@
 # Release process
 
+A release is run by hand, usually by an agent asked to "release arbor". No
+workflow publishes; `ci.yml` only checks every push to `main` and every pull
+request.
+
+## Versions
+
 arbor versions use a calendar version in the form `YYYY.MDD.REVISION`, using
 the date in `Asia/Hong_Kong`. The month is not padded, the day is two digits,
 and the first release of a day uses revision zero. For example, `2026.1106.0`
-is the first release on 2026-11-06.
+is the first release on 2026-11-06, and `2026.1106.1` is the second that day.
 
 Every package is published at the same version, so one version is set across
-all of them and one tag releases all of them.
+all of them and one tag marks all of them.
 
-## Prepare a release
+## Before you start
 
-On `main`, set the version and run the full verification path:
+- Work on a clean checkout of `main`, up to date with `origin/main`, and
+  confirm the latest CI run on it passed (`gh run list --branch main -L 1`).
+- npm must be signed in as a member of the `4fu` organization. In an
+  environment that holds the token as `NPM_TOKEN`, point npm at a private
+  config that names the variable, never its value:
+
+  ```bash
+  printf '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n' > /tmp/arbor-npmrc
+  export NPM_CONFIG_USERCONFIG=/tmp/arbor-npmrc
+  npm whoami          # must answer an account with publish rights on @4fu
+  ```
+
+  The single quotes keep `${NPM_TOKEN}` literal; npm expands it when it reads
+  the file. Delete `/tmp/arbor-npmrc` when the release is done.
+- Pick the version: today's date in `Asia/Hong_Kong`
+  (`TZ=Asia/Hong_Kong date +%Y.%-m%d`), then the next revision not already on
+  the registry (`npm view @4fu/arbor-core versions`).
+
+## Release
 
 ```bash
 node scripts/set-version.mjs 2026.1106.0
-pnpm check      # typecheck and test every package, on the sources
-pnpm build      # emit dist for every package
-node scripts/publish.mjs   # what each tarball would contain
+pnpm install --frozen-lockfile
+pnpm check                        # typecheck and test every package, on the sources
+pnpm build                        # emit dist for every package
+node scripts/publish.mjs          # dry run: what each tarball would contain
+node scripts/publish.mjs --publish
 ```
 
 `scripts/set-version.mjs` writes the version into every `package.json`,
-including the repository's own root. The workspace links in
-`pnpm-lock.yaml` carry no version, so nothing else changes and
-`pnpm install --frozen-lockfile` stays valid.
+including the repository's own root, and checks its form. The workspace links
+in `pnpm-lock.yaml` carry no version, so nothing else changes.
+`scripts/publish.mjs --publish` refuses a version that does not carry today's
+date in `Asia/Hong_Kong`, then publishes each package in turn.
 
-Then push the tag. The release workflow is what checks the version against the
-date, so a version set for a later day is refused rather than published:
+Then record the release in Git:
 
 ```bash
+git commit -am "Release 2026.1106.0"
 git tag v2026.1106.0
-git push origin v2026.1106.0
+git push origin main v2026.1106.0
 ```
 
-## What the workflow does
-
-`release.yml` runs on a `v<version>` tag, and on `workflow_dispatch` from
-`main` to resume the release its tag names:
-
-1. **validate.** The version comes from the tag. It must match
-   `YYYY.MDD.REVISION`, it must match today's date in `Asia/Hong_Kong`, and
-   every package must carry exactly it. A re-run from `main` is only accepted
-   when the tag `v<version>` points at the commit being built.
-2. **verify.** A clean checkout installs with `--frozen-lockfile` and runs
-   `pnpm typecheck` and `pnpm test`.
-3. **publish.** The same checkout builds, packs every package as a dry run, and
-   then publishes each one with `npm publish --provenance`. The workflow holds
-   `id-token: write` for the provenance attestation and reads the registry
-   token from the `NPM_TOKEN` repository secret, which it writes into npm's own
-   configuration without ever printing it.
-
-`ci.yml` runs the same install, typecheck, test, build and pack steps on every
-push to `main` and every pull request, so a broken release is caught before a
-tag exists.
+If a publish stops partway, the packages before it are already on the
+registry and a published version can never be reused. Fix the cause, then
+publish each remaining package from its `dist` with
+`npm publish --access public` (running the script again stops at the first
+package already published). Check the result with `npm view @4fu/arbor-<name> version` for
+every package.
 
 ## How a package is published
 
@@ -68,7 +81,9 @@ and packs or publishes from there:
   nothing outside the repository;
 - `license`, `repository`, `engines`, `description` and
   `publishConfig.access` are carried over from the package's own manifest
-  unchanged.
+  unchanged;
+- the repository's `README.md` (or the package's own) and `LICENSE` are copied
+  in.
 
 The root package stays private and is never published. Every published package
 is public under the `@4fu` scope, which is why each carries
@@ -76,9 +91,8 @@ is public under the `@4fu` scope, which is why each carries
 
 ## Notes
 
-- **Provenance needs a public repository.** npm builds the attestation against
-  the public repository, so the first release has to land after the repository
-  is public.
+- **No provenance.** A provenance attestation needs a supported CI runner, so
+  a release run by hand publishes without one.
 - **The optional peer.** `@4fu/arbor-journal-sqlite` takes
   `@4fu/arbor-segmenter-jieba` as an optional peer: installed, the journal's
   word index uses jieba's segmentation; absent, it falls back to a

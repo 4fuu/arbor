@@ -11,9 +11,9 @@
  *
  * Every package is published at the same version, so one version is set
  * everywhere - the packages and the repository's own root - and the workspace
- * links in `pnpm-lock.yaml` carry no version, so nothing else changes. The
- * release workflow is what checks the version against the date in
- * `Asia/Hong_Kong` (docs/release.md); this script only checks the form.
+ * links in `pnpm-lock.yaml` carry no version, so nothing else changes.
+ * `scripts/publish.mjs --publish` is what checks the version against the date
+ * in `Asia/Hong_Kong` (docs/release.md); this script only checks the form.
  */
 
 import { readFile, writeFile } from "node:fs/promises";

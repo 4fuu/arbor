@@ -3,7 +3,7 @@
  * Pack or publish every package from its `dist` directory.
  *
  *   node scripts/publish.mjs              `npm pack --dry-run` for each package
- *   node scripts/publish.mjs --publish    `npm publish --provenance` for each one
+ *   node scripts/publish.mjs --publish    `npm publish` for each one
  *
  * The repository's own `package.json` files point their `exports` at the
  * TypeScript sources, because that is what development runs: Node strips the
@@ -125,9 +125,24 @@ function packCommand() {
   return ["npm", ["pack", "--dry-run"]];
 }
 
-/** What a release runs: `npm publish`, with provenance, from the same place. */
+/** What a release runs: `npm publish` from the same place. */
 function publishCommand() {
-  return ["npm", ["publish", "--provenance", "--access", "public"]];
+  return ["npm", ["publish", "--access", "public"]];
+}
+
+/** A release carries today's date in `Asia/Hong_Kong`, so a stale version is refused. */
+function checkDate(version) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Hong_Kong",
+    year: "numeric",
+    month: "numeric",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const part = (type) => parts.find((one) => one.type === type).value;
+  const today = `${part("year")}.${part("month")}${part("day")}`;
+  if (!version.startsWith(`${today}.`)) {
+    throw new Error(`version ${version} is not today's date in Asia/Hong_Kong (${today}); set ${today}.<revision>`);
+  }
 }
 
 /** Every entry point the package declares, as the file it is built into. */
@@ -155,6 +170,7 @@ async function checkBuild(package_) {
 const packages = await buildablePackages();
 if (packages.length === 0) throw new Error("no package carries a tsconfig.build.json");
 const version = releaseVersion(packages);
+if (publish) checkDate(version);
 console.log(`${dryRun ? "packing" : "publishing"} ${packages.length} packages at ${version}`);
 
 for (const package_ of packages) {
