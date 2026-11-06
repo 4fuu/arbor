@@ -6,8 +6,8 @@
  * continues the one global order instead of starting a second one.
  */
 
-import type { EventRef, MessageRef, TaskRef, WindowRef } from "@arbor/interfaces";
-import type { Journal } from "@arbor/interfaces";
+import type { EventRef, MessageRef, TaskRef, WindowRef } from "@4fu/arbor-interfaces";
+import type { Journal } from "@4fu/arbor-interfaces";
 
 export interface RefSeed {
   window: number;

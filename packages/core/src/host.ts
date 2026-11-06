@@ -82,10 +82,10 @@ import type {
   WindowState,
   Workspace,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import { arborError } from "@arbor/errors";
+} from "@4fu/arbor-interfaces";
+import { arborError } from "@4fu/arbor-errors";
 import { isAbsolute, join } from "node:path";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@arbor/interfaces";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
 import {
   REMINDER_TIERS,
   REMINDER_SERIES,
@@ -100,9 +100,9 @@ import {
   textOf,
   usedPercent,
   zhTextTable,
-} from "@arbor/prompt";
-import { Jev, scrubJson } from "@arbor/judge-jev";
-import type { JevDecisionLog } from "@arbor/judge-jev";
+} from "@4fu/arbor-prompt";
+import { Jev, scrubJson } from "@4fu/arbor-judge-jev";
+import type { JevDecisionLog } from "@4fu/arbor-judge-jev";
 import {
   callContext,
   type EnvCatalog,
@@ -112,8 +112,8 @@ import {
   type TaskRecord,
   type ToolServices,
   type TaskSummary,
-} from "@arbor/tools";
-import { ToolCatalog } from "@arbor/tools";
+} from "@4fu/arbor-tools";
+import { ToolCatalog } from "@4fu/arbor-tools";
 import { Board, hostBody, readString, type BoardEntry } from "./board.ts";
 import { Coordinator, type CoordinationHost } from "./coordination.ts";
 import { Dispatcher, type DecisionRecord, type DispatchHost, type DispatchResult } from "./dispatch.ts";
@@ -1818,7 +1818,7 @@ export class Arbor {
     await this.journal.append({ kind: "board_line", window, body: hostBody({ doing }) });
   }
 
-  private async expect(window: WindowRef, item?: string, description?: string): Promise<import("@arbor/interfaces").Expectation> {
+  private async expect(window: WindowRef, item?: string, description?: string): Promise<import("@4fu/arbor-interfaces").Expectation> {
     const ref = this.refs.nextMessage();
     const expectation = {
       kind: item === undefined ? ("described" as const) : ("exact" as const),

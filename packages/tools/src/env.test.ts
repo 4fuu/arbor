@@ -12,8 +12,8 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
   CallContext,
   Environment,
@@ -26,8 +26,8 @@ import type {
   ToolResult,
   WindowRef,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import { zhTextTable } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { zhTextTable } from "@4fu/arbor-prompt";
 import { ToolCatalog } from "./catalog.ts";
 import type { EnvCatalog, ReloadOutcome, ToolServices } from "./host.ts";
 

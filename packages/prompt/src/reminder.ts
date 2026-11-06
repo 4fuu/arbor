@@ -9,7 +9,7 @@
  * the lower ones it jumped over are recorded as sent with it.
  */
 
-import type { TokenUsage } from "@arbor/interfaces";
+import type { TokenUsage } from "@4fu/arbor-interfaces";
 
 /** One tier of the series. `tier` names the instruction in the text table. */
 export interface ReminderTier {

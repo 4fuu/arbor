@@ -8,7 +8,7 @@ import {
   fauxAssistantMessage,
 } from "@earendil-works/pi-ai";
 import type { Models } from "@earendil-works/pi-ai";
-import type { OpenWindowRequest, ToolCall, ToolResult } from "@arbor/interfaces";
+import type { OpenWindowRequest, ToolCall, ToolResult } from "@4fu/arbor-interfaces";
 import { PiAgentBackend, type WindowControl } from "./backend.ts";
 
 const LIMITS = { contextTokens: 200000, reserveTokens: 4000, idleSeconds: 300 };

@@ -14,7 +14,7 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
-import type { ActiveSetBudget } from "@arbor/interfaces";
+import type { ActiveSetBudget } from "@4fu/arbor-interfaces";
 
 /** What a window's own use of a note is worth against a bare cite. */
 export const USE_WEIGHTS = { cite: 1, evidence: 1, read: 0.25 } as const;

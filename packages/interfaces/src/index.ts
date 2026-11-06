@@ -1,5 +1,5 @@
 /**
- * @arbor/interfaces - every replaceable interface, and the core's own shapes.
+ * @4fu/arbor-interfaces - every replaceable interface, and the core's own shapes.
  *
  * No pi type or SQL row crosses an interface; the core only sees
  * its own shapes (docs/architecture.md#interfaces). Each interface ships with

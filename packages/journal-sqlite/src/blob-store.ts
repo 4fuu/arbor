@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { BlobContent, BlobInfo, BlobInput, BlobRef, BlobStore } from "@arbor/interfaces";
+import type { BlobContent, BlobInfo, BlobInput, BlobRef, BlobStore } from "@4fu/arbor-interfaces";
 
 /** What a store needs to know about one stored blob. */
 export interface BlobEntry {

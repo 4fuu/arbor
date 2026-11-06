@@ -15,7 +15,7 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import type { Ref, ServiceSpec, ServiceStatus } from "@arbor/interfaces";
+import type { Ref, ServiceSpec, ServiceStatus } from "@4fu/arbor-interfaces";
 import { ProcessSupervisor } from "./process-supervisor.ts";
 
 /** A service that answers its health check and then keeps running. */

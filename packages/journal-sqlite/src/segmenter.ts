@@ -2,7 +2,7 @@
  * Word segmentation for the journal's word index (docs/journal.md#search).
  *
  * The spec calls for jieba segmentation with BM25, and the default is jieba
- * when `@arbor/segmenter-jieba` is installed: `resolveSegmenter` loads it, and
+ * when `@4fu/arbor-segmenter-jieba` is installed: `resolveSegmenter` loads it, and
  * the journal uses what it returns when the caller names no segmenter. The
  * package is an optional peer dependency, so a deployment that leaves it out
  * keeps working.
@@ -15,10 +15,10 @@
  */
 
 import { createRequire } from "node:module";
-import type { Segmenter } from "@arbor/interfaces";
+import type { Segmenter } from "@4fu/arbor-interfaces";
 
 /** The package that holds the jieba segmenter, when a deployment installed it. */
-const JIEBA_PACKAGE = "@arbor/segmenter-jieba";
+const JIEBA_PACKAGE = "@4fu/arbor-segmenter-jieba";
 
 /** CJK unified ideographs, extensions, compatibility, kana and hangul. */
 function isCjk(codePoint: number): boolean {

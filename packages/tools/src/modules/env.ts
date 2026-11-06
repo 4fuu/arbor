@@ -18,8 +18,8 @@ import type {
   ToolCall,
   ToolGroup,
   ToolResult,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import type { ToolServices } from "../host.ts";
 import { moduleSpec } from "../host.ts";
 

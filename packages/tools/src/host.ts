@@ -45,7 +45,7 @@ import type {
   WindowRef,
   Workspace,
   WorkspaceMount,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 /** One window the host knows about, for `windows.list` and the board. */
 export interface LiveWindow {

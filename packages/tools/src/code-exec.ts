@@ -14,8 +14,8 @@
  */
 
 import vm from "node:vm";
-import type { ModuleSpec, ToolResult, WindowRef } from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+import type { ModuleSpec, ToolResult, WindowRef } from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import { boundResult } from "./bound.ts";
 import type { ToolServices } from "./host.ts";
 

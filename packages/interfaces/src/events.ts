@@ -13,7 +13,7 @@ import type {
   Target,
   WindowRef,
 } from "./refs.ts";
-import type { ArborErrorInfo } from "@arbor/errors";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
 
 /** What an append carries. The journal assigns `ref`, `seq` and, when omitted, `time`. */
 export interface EventInput {

@@ -26,8 +26,8 @@ import type {
   Ref,
   Target,
   WindowRef,
-} from "@arbor/interfaces";
-import { arborError } from "@arbor/errors";
+} from "@4fu/arbor-interfaces";
+import { arborError } from "@4fu/arbor-errors";
 import {
   broadcastBlock,
   conversationUpdateBlock,
@@ -35,7 +35,7 @@ import {
   environmentDeltaBlock,
   noticeBlock,
   windowMessageBlock,
-} from "@arbor/prompt";
+} from "@4fu/arbor-prompt";
 import type { Dispatcher } from "./dispatch.ts";
 import { MAX_REPLY_HOPS } from "./dispatch.ts";
 import type { WindowRecord } from "./host.ts";

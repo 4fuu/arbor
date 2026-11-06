@@ -7,7 +7,7 @@
  * prefix must not: the time, the targets, the numbers.
  */
 
-import type { Block, BoardLine, Handoff, Ref, TaskRef, WindowRef } from "@arbor/interfaces";
+import type { Block, BoardLine, Handoff, Ref, TaskRef, WindowRef } from "@4fu/arbor-interfaces";
 import {
   boardLineBlock,
   continuationBlocks,

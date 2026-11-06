@@ -13,9 +13,9 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DirectoryEnvironment } from "@arbor/environment-dir";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
   EnvDraft,
   LogPage,
@@ -26,10 +26,10 @@ import type {
   Supervisor,
   ToolResult,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import type { Hooks } from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
+import type { Hooks } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
-import { callContext } from "@arbor/tools";
+import { callContext } from "@4fu/arbor-tools";
 import { ManualTimers, ScriptedBackend } from "./testing.ts";
 
 /** A tiny MCP server that lists one function and answers it. */

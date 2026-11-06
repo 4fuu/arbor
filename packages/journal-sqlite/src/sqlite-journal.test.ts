@@ -3,8 +3,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { isArborError } from "@arbor/errors";
-import type { EventRef } from "@arbor/interfaces";
+import { isArborError } from "@4fu/arbor-errors";
+import type { EventRef } from "@4fu/arbor-interfaces";
 import { SqliteJournal } from "./sqlite-journal.ts";
 
 function memoryJournal(now?: () => number): SqliteJournal {

@@ -4,10 +4,17 @@
   "version": "0.0.0",
   "type": "module",
   "description": "arbor: a framework for an agent without sessions",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git"
+  },
   "scripts": {
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "check": "pnpm typecheck && pnpm test"
+    "check": "pnpm typecheck && pnpm test",
+    "build": "node scripts/build.mjs",
+    "pack": "node scripts/publish.mjs"
   },
   "engines": {
     "node": ">=24"

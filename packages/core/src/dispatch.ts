@@ -49,9 +49,9 @@ import type {
   TaskInput,
   TaskRef,
   WindowRef,
-} from "@arbor/interfaces";
-import { taskBlock } from "@arbor/prompt";
-import { atHardLimit } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { taskBlock } from "@4fu/arbor-prompt";
+import { atHardLimit } from "@4fu/arbor-prompt";
 import type { WindowRecord } from "./host.ts";
 
 /**

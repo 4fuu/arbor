@@ -1,5 +1,5 @@
 /**
- * @arbor/journal-sqlite - the default `Journal` and `BlobStore`.
+ * @4fu/arbor-journal-sqlite - the default `Journal` and `BlobStore`.
  */
 
 export { SqliteJournal, deriveLinks, parseEventRef, eventRefOf, summaryOf } from "./sqlite-journal.ts";

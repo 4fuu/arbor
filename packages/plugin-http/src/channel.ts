@@ -25,8 +25,8 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { arborError } from "@arbor/errors";
-import { dataBlock } from "@arbor/prompt";
+import { arborError } from "@4fu/arbor-errors";
+import { dataBlock } from "@4fu/arbor-prompt";
 import type {
   BoardLine,
   Channel,
@@ -38,7 +38,7 @@ import type {
   SendResult,
   Target,
   Unsubscribe,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 /** How large a request body may be. 1 MiB is far more than a test message. */
 const MAX_BODY_BYTES = 1024 * 1024;

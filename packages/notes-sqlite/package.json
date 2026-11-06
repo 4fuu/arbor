@@ -1,5 +1,5 @@
 {
-  "name": "@arbor/notes-sqlite",
+  "name": "@4fu/arbor-notes-sqlite",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,16 +10,33 @@
       "default": "./src/index.ts"
     }
   },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/notes-sqlite"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@arbor/errors": "workspace:*",
-    "@arbor/interfaces": "workspace:*"
+    "@4fu/arbor-errors": "workspace:*",
+    "@4fu/arbor-interfaces": "workspace:*"
   },
   "devDependencies": {
-    "@arbor/journal-sqlite": "workspace:*",
+    "@4fu/arbor-journal-sqlite": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

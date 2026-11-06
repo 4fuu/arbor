@@ -1,5 +1,5 @@
 /**
- * @arbor/workspace-dir - the plain-directory `Workspace`.
+ * @4fu/arbor-workspace-dir - the plain-directory `Workspace`.
  *
  * One directory per window, under one root, created on first use; a
  * continuation works in its predecessor's directory in place, under the same

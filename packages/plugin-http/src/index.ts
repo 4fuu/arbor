@@ -1,5 +1,5 @@
 /**
- * @arbor/plugin-http - the HTTP test channel, and the first plugin the host
+ * @4fu/arbor-plugin-http - the HTTP test channel, and the first plugin the host
  * runs end to end (docs/architecture.md#plugins).
  *
  * The channel is the adapter: a webhook in, a window's sends out, and a page a

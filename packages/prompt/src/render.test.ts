@@ -15,7 +15,7 @@ import {
   toolResultBlock,
   zhTextTable,
 } from "./index.ts";
-import type { DirectToolSpec } from "@arbor/interfaces";
+import type { DirectToolSpec } from "@4fu/arbor-interfaces";
 
 const TIME = Date.UTC(2026, 10, 5, 7, 42, 35);
 

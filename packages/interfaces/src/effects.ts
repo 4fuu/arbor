@@ -11,7 +11,7 @@
 
 import type { Block } from "./blocks.ts";
 import type { ExternalRef, Ref, Target, WindowRef } from "./refs.ts";
-import type { ArborErrorInfo } from "@arbor/errors";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
 
 export type EffectKind = "send" | (string & {});
 

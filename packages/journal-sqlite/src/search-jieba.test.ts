@@ -1,20 +1,20 @@
 /**
  * Search with the jieba segmenter (docs/journal.md#search).
  *
- * `@arbor/segmenter-jieba` is an optional peer, so it is loaded at run time and
+ * `@4fu/arbor-segmenter-jieba` is an optional peer, so it is loaded at run time and
  * these tests skip when it is not installed: the approximation's tests in
  * search.test.ts are the ones that run then.
  */
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Segmenter } from "@arbor/interfaces";
+import type { Segmenter } from "@4fu/arbor-interfaces";
 import { fallbackSegmenter } from "./segmenter.ts";
 import { SqliteJournal } from "./sqlite-journal.ts";
 
 let jieba: Segmenter | null = null;
 try {
-  jieba = (await import("@arbor/segmenter-jieba")).jiebaSegmenter;
+  jieba = (await import("@4fu/arbor-segmenter-jieba")).jiebaSegmenter;
 } catch {
   jieba = null;
 }
@@ -55,7 +55,7 @@ async function fixture(): Promise<SqliteJournal> {
 }
 
 describe("search with the jieba segmenter", {
-  skip: jieba === null ? "@arbor/segmenter-jieba is not installed" : false,
+  skip: jieba === null ? "@4fu/arbor-segmenter-jieba is not installed" : false,
 }, () => {
   it("finds a Chinese phrase where it appears, and the words elsewhere", async () => {
     const journal = await fixture();

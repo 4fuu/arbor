@@ -11,9 +11,9 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ParameterSpec, ToolResult } from "@arbor/interfaces";
-import type { Renderer } from "@arbor/prompt";
-import { errorBlock } from "@arbor/prompt";
+import type { ParameterSpec, ToolResult } from "@4fu/arbor-interfaces";
+import type { Renderer } from "@4fu/arbor-prompt";
+import { errorBlock } from "@4fu/arbor-prompt";
 
 /** One parameter's JSON Schema, from its `ParameterSpec`. */
 export function parameterSchema(parameter: ParameterSpec): Record<string, unknown> {

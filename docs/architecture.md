@@ -33,14 +33,14 @@ interface and registering it; nothing else changes.
 | `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
-| `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@arbor/workspace-dir](../packages/workspace-dir)) |
+| `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@4fu/arbor-workspace-dir](../packages/workspace-dir)) |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
-| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@arbor/plugin-http](../packages/plugin-http)) |
+| `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@4fu/arbor-plugin-http](../packages/plugin-http)) |
 | `TaskSource` | turn outside events into tasks, batching them | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
-| `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory ([@arbor/environment-dir](../packages/environment-dir)) |
-| `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor ([@arbor/supervisor-process](../packages/supervisor-process)) |
+| `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory ([@4fu/arbor-environment-dir](../packages/environment-dir)) |
+| `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor ([@4fu/arbor-supervisor-process](../packages/supervisor-process)) |
 | `Scheduler` | insertion timing, backpressure, scheduled tasks | simple rules ([dispatch.md](dispatch.md)) |
 
 Besides the interfaces, hooks let a deployment add policy without replacing
@@ -118,7 +118,7 @@ or a whole domain such as a chat channel or a code host:
   the plugin recorded stay in the journal and their refs keep resolving.
 
 The first plugin is the HTTP test channel
-([@arbor/plugin-http](../packages/plugin-http)): a webhook in, sends out, and a
+([@4fu/arbor-plugin-http](../packages/plugin-http)): a webhook in, sends out, and a
 page a person drives the whole host from. It registers a `Channel`, the
 `EffectExecutor` that carries a window's `send` out through it, a prompt section
 and one judge criterion, and adds no direct tool or code mode module of its own.

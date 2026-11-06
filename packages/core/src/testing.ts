@@ -22,8 +22,8 @@ import type {
   WindowRef,
   WindowSession,
   WindowState,
-} from "@arbor/interfaces";
-import type { EventRef } from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
+import type { EventRef } from "@4fu/arbor-interfaces";
 
 /** One step of a scripted run. */
 export type Step =

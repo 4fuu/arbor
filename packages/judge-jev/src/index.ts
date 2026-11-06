@@ -1,5 +1,5 @@
 /**
- * @arbor/judge-jev - the default `Judge`.
+ * @4fu/arbor-judge-jev - the default `Judge`.
  *
  * Jev is TypeSafe AI's System One classifier (qqnt-gui-driver,
  * docs/agent-design.md section 1 and apps/bot/src/jev.ts, where the same

@@ -24,8 +24,8 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { arborError } from "@arbor/errors";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@arbor/interfaces";
+import { arborError } from "@4fu/arbor-errors";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
 import type {
   AroundOptions,
   BlobStore,
@@ -50,7 +50,7 @@ import type {
   TraceNode,
   TraceOptions,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import type { BlobRegistry } from "./blob-store.ts";
 import { FsBlobStore, blobIdOf } from "./blob-store.ts";
 import { indexText, resolveSegmenter } from "./segmenter.ts";

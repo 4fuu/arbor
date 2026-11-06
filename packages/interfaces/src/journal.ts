@@ -63,7 +63,7 @@ export interface BlobStore {
 
 /**
  * Word segmentation for the word index. The default is jieba's dictionary
- * segmentation when `@arbor/segmenter-jieba` is installed, and the
+ * segmentation when `@4fu/arbor-segmenter-jieba` is installed, and the
  * per-character-and-bigram approximation when it is not
  * (docs/journal.md#search); a deployment replaces either by implementing this
  * and registering it.

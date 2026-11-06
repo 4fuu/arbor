@@ -11,8 +11,8 @@
  * from an implementation that owns its execution environment.
  */
 
-import type { ModuleSpec, TextTable, ToolCall, ToolGroup, ToolResult } from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+import type { ModuleSpec, TextTable, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import type { DirectoryWorkspace } from "./directory-workspace.ts";
 
 /** `workspace.path`: the directory of a window's workspace, by its window. */

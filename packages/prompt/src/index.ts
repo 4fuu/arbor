@@ -1,5 +1,5 @@
 /**
- * @arbor/prompt - typed blocks, the one deterministic renderer and the
+ * @4fu/arbor-prompt - typed blocks, the one deterministic renderer and the
  * framework's own text (docs/prompting.md).
  *
  * No component writes prompt text. Everything that reaches a model is a typed

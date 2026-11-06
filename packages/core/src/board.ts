@@ -8,9 +8,9 @@
  * lines without asking a model.
  */
 
-import type { BoardLine, Expectation, Ref, Target, WindowRef, WindowState } from "@arbor/interfaces";
-import type { TokenUsage } from "@arbor/interfaces";
-import type { Event } from "@arbor/interfaces";
+import type { BoardLine, Expectation, Ref, Target, WindowRef, WindowState } from "@4fu/arbor-interfaces";
+import type { TokenUsage } from "@4fu/arbor-interfaces";
+import type { Event } from "@4fu/arbor-interfaces";
 
 /** What the host knows about one live window, for its board line. */
 export interface BoardEntry {

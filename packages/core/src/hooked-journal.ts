@@ -26,8 +26,8 @@ import type {
   TraceNode,
   TraceOptions,
   WindowRef,
-} from "@arbor/interfaces";
-import type { Journal } from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
+import type { Journal } from "@4fu/arbor-interfaces";
 import type { HookRunner } from "./hooks.ts";
 
 export class HookedJournal implements Journal {

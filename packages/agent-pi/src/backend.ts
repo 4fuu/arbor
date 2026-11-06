@@ -27,9 +27,9 @@ import type {
   ToolCall,
   ToolResult,
   WindowSession,
-} from "@arbor/interfaces";
-import { arborError } from "@arbor/errors";
-import { Renderer } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { arborError } from "@4fu/arbor-errors";
+import { Renderer } from "@4fu/arbor-prompt";
 import { PiWindowSession } from "./session.ts";
 import { piTool } from "./tools.ts";
 

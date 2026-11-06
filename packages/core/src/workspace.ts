@@ -9,8 +9,8 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Workspace } from "@arbor/interfaces";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import type { Workspace } from "@4fu/arbor-interfaces";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 
 export interface OpenWorkspaceOptions {
   /** Where every window's directory lives. The system temporary directory by default. */

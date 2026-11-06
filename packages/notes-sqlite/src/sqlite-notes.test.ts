@@ -3,9 +3,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { isArborError } from "@arbor/errors";
-import type { Event, EventInput, EventRef, NoteId, NoteRef } from "@arbor/interfaces";
-import { SqliteJournal } from "@arbor/journal-sqlite";
+import { isArborError } from "@4fu/arbor-errors";
+import type { Event, EventInput, EventRef, NoteId, NoteRef } from "@4fu/arbor-interfaces";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { SqliteNoteStore } from "./notes.ts";
 
 /** A store and its journal, sharing one fixed clock. */

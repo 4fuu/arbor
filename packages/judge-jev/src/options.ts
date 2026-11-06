@@ -22,7 +22,7 @@
  * `unavailable` error when it cannot.
  */
 
-import type { JudgeDecisionKind, JudgeMode } from "@arbor/interfaces";
+import type { JudgeDecisionKind, JudgeMode } from "@4fu/arbor-interfaces";
 
 /** The classifier model, and the service that serves it. */
 export const JEV_MODEL_ID = "jev-latest";

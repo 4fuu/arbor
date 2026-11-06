@@ -1,5 +1,5 @@
 /**
- * @arbor/tools - the entry points: direct tools, code mode modules and the one
+ * @4fu/arbor-tools - the entry points: direct tools, code mode modules and the one
  * catalog that routes both through the service layer (docs/tools.md).
  *
  * Decisions and plain commands are direct tools, declared to the model and

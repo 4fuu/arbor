@@ -10,13 +10,13 @@ importers:
 
   packages/agent-pi:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@arbor/prompt':
+      '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
       '@earendil-works/pi-agent-core':
@@ -35,38 +35,38 @@ importers:
 
   packages/core:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@arbor/judge-jev':
+      '@4fu/arbor-judge-jev':
         specifier: workspace:*
         version: link:../judge-jev
-      '@arbor/prompt':
+      '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
-      '@arbor/tools':
+      '@4fu/arbor-tools':
         specifier: workspace:*
         version: link:../tools
-      '@arbor/workspace-dir':
+      '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
     devDependencies:
-      '@arbor/agent-pi':
+      '@4fu/arbor-agent-pi':
         specifier: workspace:*
         version: link:../agent-pi
-      '@arbor/environment-dir':
+      '@4fu/arbor-environment-dir':
         specifier: workspace:*
         version: link:../environment-dir
-      '@arbor/journal-sqlite':
+      '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
-      '@arbor/notes-sqlite':
+      '@4fu/arbor-notes-sqlite':
         specifier: workspace:*
         version: link:../notes-sqlite
-      '@arbor/supervisor-process':
+      '@4fu/arbor-supervisor-process':
         specifier: workspace:*
         version: link:../supervisor-process
       '@types/node':
@@ -78,17 +78,17 @@ importers:
 
   packages/environment-dir:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
-      '@arbor/tools':
+      '@4fu/arbor-tools':
         specifier: workspace:*
         version: link:../tools
-      '@arbor/workspace-dir':
+      '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
       '@types/node':
@@ -106,7 +106,7 @@ importers:
 
   packages/interfaces:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
     devDependencies:
@@ -116,14 +116,14 @@ importers:
 
   packages/journal-sqlite:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
-      '@arbor/segmenter-jieba':
+      '@4fu/arbor-segmenter-jieba':
         specifier: workspace:*
         version: link:../segmenter-jieba
       '@types/node':
@@ -135,10 +135,10 @@ importers:
 
   packages/judge-jev:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
@@ -151,14 +151,14 @@ importers:
 
   packages/notes-sqlite:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
-      '@arbor/journal-sqlite':
+      '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
       '@types/node':
@@ -170,38 +170,38 @@ importers:
 
   packages/plugin-http:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@arbor/prompt':
+      '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
     devDependencies:
-      '@arbor/agent-pi':
+      '@4fu/arbor-agent-pi':
         specifier: workspace:*
         version: link:../agent-pi
-      '@arbor/core':
+      '@4fu/arbor-core':
         specifier: workspace:*
         version: link:../core
-      '@arbor/environment-dir':
+      '@4fu/arbor-environment-dir':
         specifier: workspace:*
         version: link:../environment-dir
-      '@arbor/journal-sqlite':
+      '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
-      '@arbor/judge-jev':
+      '@4fu/arbor-judge-jev':
         specifier: workspace:*
         version: link:../judge-jev
-      '@arbor/notes-sqlite':
+      '@4fu/arbor-notes-sqlite':
         specifier: workspace:*
         version: link:../notes-sqlite
-      '@arbor/supervisor-process':
+      '@4fu/arbor-supervisor-process':
         specifier: workspace:*
         version: link:../supervisor-process
-      '@arbor/workspace-dir':
+      '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
       '@types/node':
@@ -213,10 +213,10 @@ importers:
 
   packages/prompt:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
@@ -229,7 +229,7 @@ importers:
 
   packages/segmenter-jieba:
     dependencies:
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
       '@node-rs/jieba':
@@ -245,10 +245,10 @@ importers:
 
   packages/supervisor-process:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
     devDependencies:
@@ -261,20 +261,20 @@ importers:
 
   packages/tools:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@arbor/prompt':
+      '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
     devDependencies:
-      '@arbor/journal-sqlite':
+      '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
-      '@arbor/workspace-dir':
+      '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
       '@types/node':
@@ -286,13 +286,13 @@ importers:
 
   packages/workspace-dir:
     dependencies:
-      '@arbor/errors':
+      '@4fu/arbor-errors':
         specifier: workspace:*
         version: link:../errors
-      '@arbor/interfaces':
+      '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@arbor/prompt':
+      '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
     devDependencies:

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { isArborError } from "@arbor/errors";
+import { isArborError } from "@4fu/arbor-errors";
 import type {
   ActiveSetAnswer,
   ActiveSetState,
@@ -20,7 +20,7 @@ import type {
   RouteAnswer,
   RouteState,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 import { Jev, isJevUnavailable } from "./jev.ts";
 import type { JevDecisionLog, JevOptions } from "./options.ts";

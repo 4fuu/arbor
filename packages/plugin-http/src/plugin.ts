@@ -28,7 +28,7 @@ import type {
   EffectResult,
   Plugin,
   TextTable,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import type { HttpChannel } from "./channel.ts";
 
 /** The block kind this plugin's prompt section renders. */

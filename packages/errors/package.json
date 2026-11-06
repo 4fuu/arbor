@@ -1,5 +1,5 @@
 {
-  "name": "@arbor/errors",
+  "name": "@4fu/arbor-errors",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,6 +9,23 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/errors"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

@@ -33,8 +33,8 @@ import type {
   ToolGroup,
   ToolResult,
   WindowRef,
-} from "@arbor/interfaces";
-import { formatTime, textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { formatTime, textOf } from "@4fu/arbor-prompt";
 import type { LiveWindow, TaskSummary, ToolServices } from "../host.ts";
 import { moduleSpec, refused } from "../host.ts";
 import { envCommand } from "../env-stage.ts";

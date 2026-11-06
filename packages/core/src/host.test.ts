@@ -3,11 +3,11 @@ import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryEnvironment } from "@arbor/environment-dir";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import type { Judge, JudgeAnswer, JudgeRequest } from "@arbor/interfaces";
-import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@arbor/interfaces";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
+import type { Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
+import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend } from "./testing.ts";
 
@@ -425,7 +425,7 @@ describe("one window end to end", () => {
 
   it("lists the notes module and its active set when a NoteStore is configured", async () => {
     const journal = new SqliteJournal({ path: ":memory:" });
-    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const { SqliteNoteStore } = await import("@4fu/arbor-notes-sqlite");
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();
@@ -599,7 +599,7 @@ describe("one window end to end", () => {
 
   it("fills a note write's anchor in, so the model never declares one", async () => {
     const journal = new SqliteJournal({ path: ":memory:" });
-    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const { SqliteNoteStore } = await import("@4fu/arbor-notes-sqlite");
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();
@@ -626,7 +626,7 @@ describe("one window end to end", () => {
 
   it("refuses a note write against a revision that has moved on", async () => {
     const journal = new SqliteJournal({ path: ":memory:" });
-    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const { SqliteNoteStore } = await import("@4fu/arbor-notes-sqlite");
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const timers = new ManualTimers();
     const backend = new ScriptedBackend();

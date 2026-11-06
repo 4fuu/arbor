@@ -100,7 +100,7 @@ substring hits first, and each carries its ref and window.
 The word index segments with jieba's dictionary, cut in search mode: a long
 word is also indexed as the words inside it, and punctuation and spaces are not
 words, so a query that carries them still matches. The default segments this
-way through `@arbor/segmenter-jieba`, which `@arbor/journal-sqlite` takes as an
+way through `@4fu/arbor-segmenter-jieba`, which `@4fu/arbor-journal-sqlite` takes as an
 optional peer dependency. When that package is not installed, or its prebuilt
 binary does not load on the platform, the word index falls back to segmenting
 Chinese, Japanese and Korean text per character and per bigram and every other

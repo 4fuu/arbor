@@ -8,9 +8,9 @@
  * repeat it: the event is the record that it happened.
  */
 
-import type { Effect, EffectExecutor, EffectResult, EventRef, Ref, Target, WindowRef } from "@arbor/interfaces";
-import type { Journal } from "@arbor/interfaces";
-import type { Block } from "@arbor/interfaces";
+import type { Effect, EffectExecutor, EffectResult, EventRef, Ref, Target, WindowRef } from "@4fu/arbor-interfaces";
+import type { Journal } from "@4fu/arbor-interfaces";
+import type { Block } from "@4fu/arbor-interfaces";
 import type { HookRunner } from "./hooks.ts";
 
 /** What a `send` hands the queue. */

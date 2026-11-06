@@ -3,7 +3,7 @@
  * channel and start the server.
  *
  * ```sh
- * DEEPSEEK_API_KEY=… JEV_API_KEY=… pnpm --filter @arbor/plugin-http start
+ * DEEPSEEK_API_KEY=… JEV_API_KEY=… pnpm --filter @4fu/arbor-plugin-http start
  * ```
  *
  * Every module is the default one - the SQLite journal and notes, Jev, the
@@ -33,13 +33,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Arbor, openWorkspace } from "@arbor/core";
-import { DirectoryEnvironment } from "@arbor/environment-dir";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { SqliteNoteStore } from "@arbor/notes-sqlite";
-import { ProcessSupervisor } from "@arbor/supervisor-process";
-import { PiAgentBackend } from "@arbor/agent-pi";
-import type { Settings } from "@arbor/interfaces";
+import { Arbor, openWorkspace } from "@4fu/arbor-core";
+import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { SqliteNoteStore } from "@4fu/arbor-notes-sqlite";
+import { ProcessSupervisor } from "@4fu/arbor-supervisor-process";
+import { PiAgentBackend } from "@4fu/arbor-agent-pi";
+import type { Settings } from "@4fu/arbor-interfaces";
 import { HttpChannel } from "./channel.ts";
 import { httpPlugin } from "./plugin.ts";
 

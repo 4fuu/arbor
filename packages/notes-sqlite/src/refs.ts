@@ -7,7 +7,7 @@
  * storage.
  */
 
-import type { EventRef, NoteId, NoteRef, Ref, WindowRef } from "@arbor/interfaces";
+import type { EventRef, NoteId, NoteRef, Ref, WindowRef } from "@4fu/arbor-interfaces";
 
 export function noteIdOf(id: number): NoteId {
   return `n${id}`;

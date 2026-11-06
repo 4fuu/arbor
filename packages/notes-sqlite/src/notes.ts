@@ -26,9 +26,9 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
-import type { ArborError } from "@arbor/errors";
-import { arborError, isArborError } from "@arbor/errors";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@arbor/interfaces";
+import type { ArborError } from "@4fu/arbor-errors";
+import { arborError, isArborError } from "@4fu/arbor-errors";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
 import type {
   ActiveCandidate,
   ActiveSetBudget,
@@ -55,7 +55,7 @@ import type {
   SnapshotOptions,
   Target,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { bodyDiff } from "./diff.ts";
 import {
   noteIdOf,

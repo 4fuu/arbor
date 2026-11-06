@@ -10,7 +10,7 @@
  * - the output is deterministic, so the same blocks always give the same bytes.
  */
 
-import type { Block, BlockFieldSpec, BlockKindSpec, BlockValue, TextTable } from "@arbor/interfaces";
+import type { Block, BlockFieldSpec, BlockKindSpec, BlockValue, TextTable } from "@4fu/arbor-interfaces";
 import { BUILTIN_BLOCK_KINDS } from "./blocks.ts";
 import { formatText, zhTextTable, type TextArgs } from "./text.ts";
 

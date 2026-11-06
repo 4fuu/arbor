@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { Segmenter } from "@arbor/interfaces";
+import type { Segmenter } from "@4fu/arbor-interfaces";
 import { fallbackSegmenter, indexText, resolveSegmenter } from "./segmenter.ts";
 
 /** What a journal resolves when the caller names no segmenter. */
@@ -43,7 +43,7 @@ describe("fallback segmenter", () => {
 
 describe("segmenter resolution", () => {
   it("resolves jieba when the package loads", {
-    skip: resolved === fallbackSegmenter ? "@arbor/segmenter-jieba is not installed, or does not load here" : false,
+    skip: resolved === fallbackSegmenter ? "@4fu/arbor-segmenter-jieba is not installed, or does not load here" : false,
   }, () => {
     // The workspace installs the optional peer, so the default segments with
     // the dictionary: two words, not the seven character and bigram segments
@@ -53,7 +53,7 @@ describe("segmenter resolution", () => {
 
   it("falls back when jieba cannot be loaded", () => {
     const missing = (): Segmenter | null => {
-      throw new Error("Cannot find module '@arbor/segmenter-jieba'");
+      throw new Error("Cannot find module '@4fu/arbor-segmenter-jieba'");
     };
 
     assert.equal(resolveSegmenter(missing), fallbackSegmenter);

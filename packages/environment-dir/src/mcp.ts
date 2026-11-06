@@ -15,8 +15,8 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable } from "node:stream";
-import { arborError } from "@arbor/errors";
-import type { FunctionSpec } from "@arbor/interfaces";
+import { arborError } from "@4fu/arbor-errors";
+import type { FunctionSpec } from "@4fu/arbor-interfaces";
 
 /** The MCP protocol version this client speaks. */
 const PROTOCOL_VERSION = "2024-11-05";

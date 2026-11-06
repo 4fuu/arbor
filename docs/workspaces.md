@@ -17,7 +17,7 @@ agent does the rest.
    long commands, and a disk quota per workspace.
 
 The default `Workspace` is a plain directory
-([@arbor/workspace-dir](../packages/workspace-dir)): every window's directory
+([@4fu/arbor-workspace-dir](../packages/workspace-dir)): every window's directory
 lives under one root the host names, `bash` runs on the host in it, and a
 background job runs there too, through the host's own process API, so a
 command that outlives `bash`'s wait window keeps running after the call that

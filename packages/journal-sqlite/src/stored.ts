@@ -7,8 +7,8 @@
  * string that is not a ref.
  */
 
-import { arborError } from "@arbor/errors";
-import type { BlobRef, ExternalRef, Ref, WindowRef } from "@arbor/interfaces";
+import { arborError } from "@4fu/arbor-errors";
+import type { BlobRef, ExternalRef, Ref, WindowRef } from "@4fu/arbor-interfaces";
 
 const PATTERNS: readonly RegExp[] = [
   /^r\d+$/, // an event

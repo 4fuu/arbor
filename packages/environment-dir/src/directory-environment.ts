@@ -24,7 +24,7 @@
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { arborError, type ArborErrorInfo } from "@arbor/errors";
+import { arborError, type ArborErrorInfo } from "@4fu/arbor-errors";
 import type {
   EnvDelta,
   EnvDraft,
@@ -40,7 +40,7 @@ import type {
   ServiceSpec,
   Settings,
   Supervisor,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { StdioMcpServer } from "./mcp.ts";
 
 /** What a window reads the environment at, which is mounted read-only. */

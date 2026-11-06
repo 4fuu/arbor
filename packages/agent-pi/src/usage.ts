@@ -7,7 +7,7 @@
  * few turns; the footprint is what the tiers and the hard limit are about.
  */
 
-import type { TokenUsage } from "@arbor/interfaces";
+import type { TokenUsage } from "@4fu/arbor-interfaces";
 import type { Usage as PiUsage } from "@earendil-works/pi-ai";
 
 /** The tokens one provider request carried. */

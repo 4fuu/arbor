@@ -6,7 +6,7 @@
  * by id, no timestamps and no counters. Lists show summaries, never bodies.
  */
 
-import type { Block, NoteSummary } from "@arbor/interfaces";
+import type { Block, NoteSummary } from "@4fu/arbor-interfaces";
 import type { Renderer } from "./render.ts";
 
 /** `n012` sorts by its number, so `n9` comes before `n10`. */

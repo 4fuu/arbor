@@ -1,5 +1,5 @@
 {
-  "name": "@arbor/environment-dir",
+  "name": "@4fu/arbor-environment-dir",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,17 +10,34 @@
       "default": "./src/index.ts"
     }
   },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/environment-dir"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@arbor/errors": "workspace:*",
-    "@arbor/interfaces": "workspace:*"
+    "@4fu/arbor-errors": "workspace:*",
+    "@4fu/arbor-interfaces": "workspace:*"
   },
   "devDependencies": {
-    "@arbor/tools": "workspace:*",
-    "@arbor/workspace-dir": "workspace:*",
+    "@4fu/arbor-tools": "workspace:*",
+    "@4fu/arbor-workspace-dir": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

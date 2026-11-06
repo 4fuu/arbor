@@ -7,7 +7,7 @@
  * parameter and field names, refs and enum values.
  */
 
-import type { TextTable } from "@arbor/interfaces";
+import type { TextTable } from "@4fu/arbor-interfaces";
 
 /** Placeholders a table entry may carry, filled by the renderer. */
 export type TextArgs = Record<string, string | number>;

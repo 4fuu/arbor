@@ -1,5 +1,5 @@
 {
-  "name": "@arbor/journal-sqlite",
+  "name": "@4fu/arbor-journal-sqlite",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,24 +10,41 @@
       "default": "./src/index.ts"
     }
   },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/journal-sqlite"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@arbor/errors": "workspace:*",
-    "@arbor/interfaces": "workspace:*"
+    "@4fu/arbor-errors": "workspace:*",
+    "@4fu/arbor-interfaces": "workspace:*"
   },
   "peerDependencies": {
-    "@arbor/segmenter-jieba": "workspace:*"
+    "@4fu/arbor-segmenter-jieba": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@arbor/segmenter-jieba": {
+    "@4fu/arbor-segmenter-jieba": {
       "optional": true
     }
   },
   "devDependencies": {
-    "@arbor/segmenter-jieba": "workspace:*",
+    "@4fu/arbor-segmenter-jieba": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"
   }

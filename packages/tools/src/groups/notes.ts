@@ -16,8 +16,8 @@ import type {
   ToolGroup,
   ToolResult,
   WindowRef,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import { toolSpec, type ToolServices } from "../host.ts";
 
 export class NoteToolGroup implements ToolGroup {
@@ -128,7 +128,7 @@ export class NoteToolGroup implements ToolGroup {
     }
   }
 
-  private answer(request: ToolCall, ref: string, table: import("@arbor/interfaces").TextTable): ToolResult {
+  private answer(request: ToolCall, ref: string, table: import("@4fu/arbor-interfaces").TextTable): ToolResult {
     return { callId: request.callId, ok: true, content: textOf(table, "result.note_written", { ref }) };
   }
 

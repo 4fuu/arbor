@@ -10,7 +10,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { SqliteJournal } from "@arbor/journal-sqlite";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import type {
   Delivery,
   ExternalRef,
@@ -24,7 +24,7 @@ import type {
   Settings,
   TaskInput,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 
@@ -483,7 +483,7 @@ describe("model tiers", () => {
 describe("the active set", () => {
   it("adds the judge's bounded share, and never drops what the rule score picked", async () => {
     const journal = new SqliteJournal({ path: ":memory:" });
-    const { SqliteNoteStore } = await import("@arbor/notes-sqlite");
+    const { SqliteNoteStore } = await import("@4fu/arbor-notes-sqlite");
     const notes = new SqliteNoteStore({ path: ":memory:", journal });
     const backend = new ScriptedBackend();
     const timers = new ManualTimers();

@@ -25,14 +25,14 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from "@arbor/agent-pi/testing";
-import { PiAgentBackend } from "@arbor/agent-pi";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryEnvironment } from "@arbor/environment-dir";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import { Jev } from "@arbor/judge-jev";
-import type { Judge, Settings } from "@arbor/interfaces";
-import { Arbor } from "@arbor/core";
+} from "@4fu/arbor-agent-pi/testing";
+import { PiAgentBackend } from "@4fu/arbor-agent-pi";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
+import { Jev } from "@4fu/arbor-judge-jev";
+import type { Judge, Settings } from "@4fu/arbor-interfaces";
+import { Arbor } from "@4fu/arbor-core";
 import { HttpChannel } from "./channel.ts";
 import { httpPlugin } from "./plugin.ts";
 

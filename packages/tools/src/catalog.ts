@@ -18,8 +18,8 @@ import type {
   ToolCall,
   ToolGroup,
   ToolResult,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import { directToolIn, runScript, type CodeExecContext, type ScriptCatalog } from "./code-exec.ts";
 import type { ToolServices } from "./host.ts";
 import { CoreToolGroup } from "./groups/core.ts";

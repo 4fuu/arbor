@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { TokenUsage } from "@arbor/interfaces";
+import type { TokenUsage } from "@4fu/arbor-interfaces";
 import {
   REMINDER_SERIES,
   REMINDER_TIERS,

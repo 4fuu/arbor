@@ -1,4 +1,4 @@
-# @arbor/plugin-http
+# @4fu/arbor-plugin-http
 
 The HTTP test channel: the first plugin that runs the whole host end to end
 ([docs/architecture.md#plugins](../../docs/architecture.md#plugins)).
@@ -10,7 +10,7 @@ different channel in composes the same stack the same way.
 ## Run it
 
 ```sh
-DEEPSEEK_API_KEY=… JEV_API_KEY=… pnpm --filter @arbor/plugin-http start
+DEEPSEEK_API_KEY=… JEV_API_KEY=… pnpm --filter @4fu/arbor-plugin-http start
 ```
 
 Then open the address it prints (127.0.0.1:8787 by default), pick or create a
@@ -74,7 +74,7 @@ servers and skills in `/env`, which the model reads, changes and reinstalls with
 ## Test it
 
 ```sh
-pnpm --filter @arbor/plugin-http test
+pnpm --filter @4fu/arbor-plugin-http test
 ```
 
 The test composes the whole stack - the SQLite journal and notes, the directory

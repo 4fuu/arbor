@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
   CallContext,
   Channel,
@@ -17,8 +17,8 @@ import type {
   TaskRef,
   ToolResult,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import { Renderer, dataBlock, zhTextTable } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { Renderer, dataBlock, zhTextTable } from "@4fu/arbor-prompt";
 import { ToolCatalog } from "./catalog.ts";
 import type { LiveWindow, TaskSummary, ToolServices } from "./host.ts";
 import { handoffOf } from "./groups/core.ts";

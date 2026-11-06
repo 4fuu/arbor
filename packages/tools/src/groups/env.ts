@@ -26,8 +26,8 @@ import type {
   ToolResult,
   WindowRef,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import type { ReloadOutcome, ToolServices } from "../host.ts";
 import { refused, toolSpec } from "../host.ts";
 

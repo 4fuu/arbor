@@ -17,7 +17,7 @@
 import type { FunctionSpec } from "./agent.ts";
 import type { EnvItemName, EnvItemRef, EnvRef } from "./refs.ts";
 import type { Settings } from "./settings.ts";
-import type { ArborErrorInfo } from "@arbor/errors";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
 
 export type EnvItemKind = "skill" | "mcp" | "service" | "settings";
 

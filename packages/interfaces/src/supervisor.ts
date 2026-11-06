@@ -11,7 +11,7 @@
 
 import type { Ref } from "./refs.ts";
 import type { Page } from "./events.ts";
-import type { ArborErrorInfo } from "@arbor/errors";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
 
 export type ServiceState =
   | "starting"

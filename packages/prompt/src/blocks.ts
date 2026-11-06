@@ -10,7 +10,7 @@
  * place and the renderer stays a pure function of its blocks.
  */
 
-import type { BlockKindSpec } from "@arbor/interfaces";
+import type { BlockKindSpec } from "@4fu/arbor-interfaces";
 
 /** The kinds the core defines. Everything a model reads is one of these. */
 export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [

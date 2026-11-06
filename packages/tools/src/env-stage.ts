@@ -19,7 +19,7 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
-import type { StagedFile, WorkspaceMount } from "@arbor/interfaces";
+import type { StagedFile, WorkspaceMount } from "@4fu/arbor-interfaces";
 
 /** The environment as the file tools read it: the prefix and the host directory. */
 export interface EnvPaths {

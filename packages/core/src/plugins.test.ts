@@ -15,9 +15,9 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import type { Block, BlockKindSpec, Effect, Note, Plugin, TextTable } from "@arbor/interfaces";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
+import type { Block, BlockKindSpec, Effect, Note, Plugin, TextTable } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 

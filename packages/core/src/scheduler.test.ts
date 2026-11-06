@@ -16,7 +16,7 @@ import type {
   TaskInput,
   TaskRef,
   WindowRuntimeState,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { RuleScheduler } from "./scheduler.ts";
 import { ManualTimers } from "./testing.ts";
 

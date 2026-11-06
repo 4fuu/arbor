@@ -1,5 +1,5 @@
 /**
- * @arbor/agent-pi - the default `AgentBackend` on pi-agent-core.
+ * @4fu/arbor-agent-pi - the default `AgentBackend` on pi-agent-core.
  *
  * pi runs every window in process, so steering, tool hooks and code mode are
  * direct calls (docs/architecture.md#stack). Nothing pi owns crosses the

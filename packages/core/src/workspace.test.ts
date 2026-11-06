@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import { openWorkspace } from "./workspace.ts";
 
 /**

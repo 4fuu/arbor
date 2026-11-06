@@ -9,8 +9,8 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { TextTable } from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+import type { TextTable } from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 
 /** How much of one result the model reads, after the cut. */
 export const RESULT_LIMIT = 20000;

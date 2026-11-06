@@ -18,11 +18,11 @@ import {
   fauxAssistantMessage,
   fauxProvider,
   fauxToolCall,
-} from "@arbor/agent-pi/testing";
-import { SqliteJournal } from "@arbor/journal-sqlite";
-import { DirectoryWorkspace } from "@arbor/workspace-dir";
-import { PiAgentBackend } from "@arbor/agent-pi";
-import type { ExternalRef, Judge, JudgeAnswer, JudgeRequest } from "@arbor/interfaces";
+} from "@4fu/arbor-agent-pi/testing";
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
+import { PiAgentBackend } from "@4fu/arbor-agent-pi";
+import type { ExternalRef, Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers } from "./testing.ts";
 

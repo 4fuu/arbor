@@ -17,10 +17,10 @@ import type {
   NoteSummary,
   Settings,
   TextTable,
-} from "@arbor/interfaces";
-import type { NoteStore } from "@arbor/interfaces";
-import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@arbor/prompt";
-import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
+import type { NoteStore } from "@4fu/arbor-interfaces";
+import { Renderer, renderMemorySnapshot, renderSystemPrompt } from "@4fu/arbor-prompt";
+import type { DirectToolSpec, EnvItem, ModuleSpec, PromptSection } from "@4fu/arbor-interfaces";
 
 /** The default: the prefix is rebuilt at most every ten minutes. */
 export const DEFAULT_MIN_INTERVAL_MS = 600000;

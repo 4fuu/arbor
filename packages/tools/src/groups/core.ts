@@ -17,8 +17,8 @@ import type {
   ToolGroup,
   ToolResult,
   WindowRef,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import type { ToolServices } from "../host.ts";
 import { refused, toolSpec } from "../host.ts";
 

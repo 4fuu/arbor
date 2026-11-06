@@ -22,7 +22,7 @@ import { spawn } from "node:child_process";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { get } from "node:http";
 import { join } from "node:path";
-import { arborError, type ArborErrorInfo } from "@arbor/errors";
+import { arborError, type ArborErrorInfo } from "@4fu/arbor-errors";
 import type {
   LogOptions,
   LogPage,
@@ -32,8 +32,8 @@ import type {
   ServiceState,
   ServiceStatus,
   Supervisor,
-} from "@arbor/interfaces";
-import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
 
 /** How many lines one service keeps in memory for `services.logs`. */
 const LOG_MEMORY_LINES = 2000;

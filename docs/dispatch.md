@@ -90,7 +90,7 @@ one.
 
 ### The default judge
 
-Jev is TypeSafe AI's System One classifier, served by `@arbor/judge-jev`. It is
+Jev is TypeSafe AI's System One classifier, served by `@4fu/arbor-judge-jev`. It is
 not a chat model and not a pi provider: one request posts one JSON state and
 several typed questions about it to `POST /v1/systemone`, and every answer comes
 back with its score or probability. A bool question is `yes`/`no`, a score

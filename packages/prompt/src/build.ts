@@ -18,7 +18,7 @@ import type {
   Ref,
   TaskRef,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import type { Renderer } from "./render.ts";
 import { textOf } from "./text.ts";
 import { formatTime } from "./time.ts";

@@ -43,7 +43,7 @@ import type {
   RouteScore,
   RouteState,
   WindowRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 import {
   CANDIDATES_TOKENS,

@@ -24,7 +24,7 @@
 
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
-import { arborError } from "@arbor/errors";
+import { arborError } from "@4fu/arbor-errors";
 import type {
   TextTable,
   ToolGroup,
@@ -33,7 +33,7 @@ import type {
   WorkspaceMount,
   WorkspaceQuota,
   WorkspaceRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { WorkspacePathGroup } from "./path-module.ts";
 
 export interface DirectoryWorkspaceOptions {

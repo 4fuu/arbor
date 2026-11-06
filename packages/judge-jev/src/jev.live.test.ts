@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import type { FilterAnswer } from "@arbor/interfaces";
+import type { FilterAnswer } from "@4fu/arbor-interfaces";
 
 import { Jev } from "./jev.ts";
 

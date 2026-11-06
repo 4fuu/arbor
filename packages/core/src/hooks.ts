@@ -20,7 +20,7 @@
  * | window end | is recorded with the window's end; a window the model ended is not held open by a hook |
  */
 
-import { arborError, type ArborErrorInfo } from "@arbor/errors";
+import { arborError, type ArborErrorInfo } from "@4fu/arbor-errors";
 import type {
   AppendContext,
   DeliveryContext,
@@ -40,7 +40,7 @@ import type {
   WindowContinueContext,
   WindowEndContext,
   WindowStartContext,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 /** The context each hook runs with, by its name. */
 type HookContexts = {

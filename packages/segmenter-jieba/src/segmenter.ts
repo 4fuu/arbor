@@ -17,7 +17,7 @@
 
 import { Jieba } from "@node-rs/jieba";
 import { dict } from "@node-rs/jieba/dict.js";
-import type { Segmenter } from "@arbor/interfaces";
+import type { Segmenter } from "@4fu/arbor-interfaces";
 
 /**
  * A token with no letter and no digit holds no word: it is punctuation or

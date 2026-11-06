@@ -21,10 +21,10 @@ import type {
   WindowRef,
   WindowSession,
   WindowState,
-} from "@arbor/interfaces";
-import { arborError } from "@arbor/errors";
-import type { Renderer } from "@arbor/prompt";
-import { renderDelivery } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { arborError } from "@4fu/arbor-errors";
+import type { Renderer } from "@4fu/arbor-prompt";
+import { renderDelivery } from "@4fu/arbor-prompt";
 
 export interface PiSessionOptions {
   agent: Agent;

@@ -1,5 +1,5 @@
 /**
- * @arbor/notes-sqlite - the default `NoteStore`.
+ * @4fu/arbor-notes-sqlite - the default `NoteStore`.
  */
 
 export { SqliteNoteStore, SUMMARY_LIMIT, DEFAULT_BODY_LIMIT, MAX_BODY_LIMIT } from "./notes.ts";

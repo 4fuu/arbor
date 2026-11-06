@@ -30,8 +30,8 @@ import type {
   ToolResult,
   WindowRef,
   WorkspaceMount,
-} from "@arbor/interfaces";
-import { textOf } from "@arbor/prompt";
+} from "@4fu/arbor-interfaces";
+import { textOf } from "@4fu/arbor-prompt";
 import { boundResult } from "../bound.ts";
 import { envCommand } from "../env-stage.ts";
 import { toolSpec } from "../host.ts";

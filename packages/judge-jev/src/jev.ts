@@ -34,7 +34,7 @@
  * (docs/dispatch.md#judge-decisions), so it costs no request.
  */
 
-import { arborError } from "@arbor/errors";
+import { arborError } from "@4fu/arbor-errors";
 import type {
   ActiveSetRequest,
   BroadcastRequest,
@@ -45,7 +45,7 @@ import type {
   ModelTierRequest,
   NoticeRequest,
   RouteRequest,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 
 import type { JudgeAnswerValue, JudgeQuestion, JevOptions, ResolvedJevOptions } from "./options.ts";
 import { resolveJevOptions } from "./options.ts";

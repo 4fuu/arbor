@@ -1,5 +1,5 @@
 /**
- * @arbor/core - the service layer for one window (docs/architecture.md#layers).
+ * @4fu/arbor-core - the service layer for one window (docs/architecture.md#layers).
  *
  * Every operation is implemented once: a direct tool and a code mode function
  * are thin wrappers of one service call, and the host API calls the same layer.

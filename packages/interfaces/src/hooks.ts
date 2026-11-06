@@ -8,7 +8,7 @@
  * built from these.
  */
 
-import type { ArborErrorInfo } from "@arbor/errors";
+import type { ArborErrorInfo } from "@4fu/arbor-errors";
 import type { Delivery, RenderedPrompt, ToolCall, ToolResult } from "./agent.ts";
 import type { Block } from "./blocks.ts";
 import type { Event, EventInput } from "./events.ts";

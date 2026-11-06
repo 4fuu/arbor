@@ -14,7 +14,7 @@ import type {
   PromptSection,
   Settings,
   TextTable,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import { Renderer } from "./render.ts";
 import { textOf } from "./text.ts";
 

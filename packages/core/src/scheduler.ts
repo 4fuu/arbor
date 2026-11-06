@@ -26,7 +26,7 @@ import type {
   SkipPeriod,
   TaskInput,
   TaskRef,
-} from "@arbor/interfaces";
+} from "@4fu/arbor-interfaces";
 import type { Timers, Timer } from "./host.ts";
 
 /** How long to wait before asking the backend about its rate limits again. */
