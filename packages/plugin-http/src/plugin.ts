@@ -45,8 +45,8 @@ const HTTP_BLOCKS: readonly BlockKindSpec[] = [
 
 /** The fixed strings its own block writes, merged into the host's table. */
 const HTTP_TEXT: TextTable = {
-  "http.channel": "HTTP 测试频道 {channel}：回复用 send，目标写 {channel}:<会话名>。",
-  "http.conversations": "当前会话：{conversations}",
+  "http.channel": "HTTP 测试频道 {channel}：回复用 send，目标写 {channel}:<来源名>。",
+  "http.conversations": "当前来源：{conversations}",
 };
 
 /** What the plugin is built from. */
@@ -114,7 +114,7 @@ export function httpPlugin(options: HttpPluginOptions): Plugin {
     judgeCriteria: [
       {
         decision: "route",
-        criteria: ["一条会话里的消息进入已经在该会话中的窗口，而不是新开一个窗口"],
+        criteria: ["一个来源里的消息进入已经在该来源中的窗口，而不是新开一个窗口"],
       },
     ],
   };

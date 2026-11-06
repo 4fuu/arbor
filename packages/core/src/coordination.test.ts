@@ -147,7 +147,7 @@ describe("staying current", () => {
     for (const record of [first, second]) {
       const lines = await deliveredTo(journal, record.window);
       assert.ok(lines.some((line) => line.includes("第三句")), `${record.window} is current`);
-      assert.ok(lines.some((line) => line.includes("会话 qq:group:1 有新事件")));
+      assert.ok(lines.some((line) => line.includes("来源 qq:group:1 有新事件")));
     }
   });
 

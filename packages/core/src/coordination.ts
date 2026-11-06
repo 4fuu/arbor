@@ -345,6 +345,6 @@ function hopRefusal(hops: number): Error {
     code: "limit_reached",
     rule: "window_message.hop_limit",
     message: `window: 回复链已有 ${hops} 跳，达到上限`,
-    nextAction: "把结论直接说清，或另起一个问题重新开始这段对话。",
+    nextAction: "把结论直接说清，或就一个新的话题另起一个来源。",
   });
 }

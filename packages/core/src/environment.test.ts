@@ -482,7 +482,7 @@ describe("the environment in the host", () => {
     const base = await mkdtemp(join(tmpdir(), "arbor-plugin-item-"));
     const skill = join(base, "chatbot-skill");
     await mkdir(skill, { recursive: true });
-    await writeFile(join(skill, "SKILL.md"), "# chatbot\n\n在一个会话里回复用户。\n\n1. 读这一行。\n", "utf8");
+    await writeFile(join(skill, "SKILL.md"), "# chatbot\n\n在一个来源里回复用户。\n\n1. 读这一行。\n", "utf8");
     const { arbor, backend, journal } = await host({
       plugins: [{ name: "chatbot", skills: [{ kind: "skill", name: "chatbot-skill", path: skill }] }],
     });
@@ -490,7 +490,7 @@ describe("the environment in the host", () => {
     await arbor.open(task);
     await backend.finished();
     const item = (await arbor.services.environment?.list())?.find((one) => one.name === "chatbot-skill");
-    assert.equal(item?.description, "在一个会话里回复用户。");
+    assert.equal(item?.description, "在一个来源里回复用户。");
     assert.equal(item?.path, "/env/skills/chatbot-skill");
     // Installing a plugin's item is an environment change like any other.
     const revisions = await journal.list({ kinds: ["environment_revision"] });

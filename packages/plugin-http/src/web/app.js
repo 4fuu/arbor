@@ -81,7 +81,7 @@ function renderConversations() {
 }
 
 function renderMessages() {
-  const title = state.selected === null ? "选择一个会话" : `会话 ${nameOf(state.selected)}`;
+  const title = state.selected === null ? "选择一个来源" : `来源 ${nameOf(state.selected)}`;
   elements.conversationTitle.textContent = title;
   const shown = state.selected === null ? [] : state.messages.filter((one) => one.conversation === state.selected);
   elements.chatEmpty.hidden = shown.length > 0;

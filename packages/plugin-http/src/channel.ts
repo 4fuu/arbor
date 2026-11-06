@@ -268,7 +268,7 @@ export class HttpChannel implements Channel {
       throw arborError({
         code: "invalid_input",
         rule: "http.webhook.conversation",
-        message: "webhook: 没有给出会话名",
+        message: "webhook: 没有给出来源名",
         nextAction: "在 body 里给 conversation，例如 {\"conversation\":\"demo\",\"text\":\"你好\"}。",
       });
     }

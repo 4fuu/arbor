@@ -226,7 +226,7 @@ One term per concept, in prompts, descriptions, results, errors and logs:
 
 | Term | Meaning | Do not use |
 | --- | --- | --- |
-| 窗口 (window) | one context window | 会话、session |
+| 窗口 (window) | one context window | 会话、session、来源 |
 | 记录 (journal) | the one append-only log | 日志、历史库 |
 | 事件 (event) | one record in the journal | 条目 |
 | 目标 (target) | what an event touches | 对象、主题 |
@@ -239,5 +239,5 @@ One term per concept, in prompts, descriptions, results, errors and logs:
 | 环境 (environment) | skills, MCP servers, services and settings | 配置 (alone) |
 | 服务 (service) | a resident application the host supervises | 后台进程 |
 | 工作区 (workspace) | a window's own directory | 仓库、沙箱 |
-| 会话 (conversation) | an outside exchange, such as a chat | 窗口、频道 |
+| 来源 (conversation) | where an outside message comes from and where its reply goes, such as a chat on a channel | 会话、对话、窗口、频道 |
 | 引用 (ref) | a ref such as `r902` or `n012@3` | 链接、ID |

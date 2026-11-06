@@ -70,7 +70,7 @@ export const zhTextTable: TextTable = {
   "delivery.window_message": "窗口消息：来自 {from}。",
   "delivery.window_message.reply": "回复 {reply_to}。",
   "delivery.window_message.ref": "消息 {ref}：回复它时在 reply_to 中带上这个引用。",
-  "delivery.conversation_update": "会话 {conversation} 有新事件。",
+  "delivery.conversation_update": "来源 {conversation} 有新事件。",
   "delivery.environment_delta": "环境变更 {revision}：",
   "delivery.delta.item": "{change} {kind} {name}：{description}",
   "delivery.inserted_task": "插入的任务：",
@@ -240,7 +240,7 @@ export const zhTextTable: TextTable = {
 
   "param.query": "查询词。",
   "param.scope": "搜索范围：journal、notes、board；省略时三者都搜。",
-  "param.to": "目标：一个会话、一个外部项或一个窗口。",
+  "param.to": "目标：一个来源、一个外部项或一个窗口。",
   "param.content": "要发送的内容。",
   "param.reply_to": "所回复的外部消息引用。",
   "param.cites": "本消息引用的引用。",

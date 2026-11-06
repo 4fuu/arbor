@@ -354,11 +354,11 @@ describe("plugins", () => {
   it("collects the criteria its plugins add for the judge", async () => {
     const plugin: Plugin = {
       name: "chatbot",
-      judgeCriteria: [{ decision: "route", criteria: ["一个会话只进一个窗口"] }],
+      judgeCriteria: [{ decision: "route", criteria: ["一个来源只进一个窗口"] }],
     };
     const { arbor } = await host({ plugins: [plugin] });
     assert.deepEqual(arbor.judgeCriteria(), [
-      { plugin: "chatbot", decision: "route", criteria: ["一个会话只进一个窗口"] },
+      { plugin: "chatbot", decision: "route", criteria: ["一个来源只进一个窗口"] },
     ]);
   });
 });

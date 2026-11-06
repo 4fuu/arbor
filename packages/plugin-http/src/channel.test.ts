@@ -226,7 +226,7 @@ describe("the http channel plugin", () => {
         { kind: "http_channel", fields: { channel: "http", conversations: ["demo"] } },
       ]);
       assert.ok(prompt.includes("HTTP 测试频道 http"), "the section's fixed line");
-      assert.ok(prompt.includes("当前会话：demo"), "and the conversations it carries");
+      assert.ok(prompt.includes("当前来源：demo"), "and the conversations it carries");
     } finally {
       await release(harness);
     }
@@ -248,7 +248,7 @@ describe("the http channel plugin", () => {
         },
         async (context: { messages: readonly { role: string }[] }) => {
           harness.seen.push(JSON.stringify(context.messages));
-          return fauxAssistantMessage("另一个会话也收到了。");
+          return fauxAssistantMessage("另一个来源也收到了。");
         },
       ]);
       await post(harness.base, { conversation: "demo", id: "1", text: "部署流程是什么" });
@@ -277,7 +277,7 @@ describe("the http channel plugin", () => {
         harness.seen.some((one) => one.includes("灰度比例是多少")),
       );
       // A different conversation is a different target, so it opens its own window.
-      await post(harness.base, { conversation: "ops", id: "3", text: "另一个会话" });
+      await post(harness.base, { conversation: "ops", id: "3", text: "另一个来源" });
       await until("a second window to open", async () =>
         (await harness.journal.list({ kinds: ["window_start"] })).items.length === 2,
       );

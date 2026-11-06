@@ -692,7 +692,7 @@ describe("the criteria a plugin adds", () => {
     const { arbor, judge } = await host();
     arbor.register({
       name: "chatbot",
-      judgeCriteria: [{ decision: "route", criteria: ["一个会话只进一个窗口"] }],
+      judgeCriteria: [{ decision: "route", criteria: ["一个来源只进一个窗口"] }],
     });
 
     await arbor.dispatch(batch("qq:group:1", "在吗"));
@@ -701,7 +701,7 @@ describe("the criteria a plugin adds", () => {
     // steers the wording rather than entering the state.
     const asked = judge.routes();
     assert.equal(asked.length, 1);
-    assert.deepEqual(asked[0]?.criteria, ["一个会话只进一个窗口"]);
+    assert.deepEqual(asked[0]?.criteria, ["一个来源只进一个窗口"]);
     assert.deepEqual(asked[0]?.state.candidates, []);
     // A decision the plugin registered no criterion for carries none.
     const filters = judge.requests.filter((request) => request.decision === "filter");
