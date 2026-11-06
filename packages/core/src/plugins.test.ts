@@ -17,7 +17,15 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
-import type { Block, BlockKindSpec, Effect, Note, Plugin, TextTable } from "@4fu/arbor-interfaces";
+import type {
+  Block,
+  BlockKindSpec,
+  Effect,
+  Note,
+  Plugin,
+  StreamEvent,
+  TextTable,
+} from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 
@@ -62,6 +70,19 @@ function reviewedNote(review: string): Block {
 /** Let the host's watchers run, so a test observes what it recorded. */
 async function settle(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await turn();
+}
+
+/**
+ * Wait for the live output a plugin's `windowStream` hook sees. The host hands
+ * each delta on without waiting for the watcher, so a test waits for what it
+ * expects rather than for a fixed number of passes.
+ */
+async function streamed(seen: readonly StreamEvent[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (seen.length >= count) return;
+    await turn();
+  }
+  throw new Error(`only ${seen.length} deltas reached the plugin`);
 }
 
 /** The windows a note may reach: the ones whose board line says they review. */
@@ -360,5 +381,71 @@ describe("plugins", () => {
     assert.deepEqual(arbor.judgeCriteria(), [
       { plugin: "chatbot", decision: "route", criteria: ["一个来源只进一个窗口"] },
     ]);
+  });
+
+  it("hands a window's live output to a plugin, and journals none of it", async () => {
+    const seen: StreamEvent[] = [];
+    const plugin: Plugin = {
+      name: "harness",
+      hooks: {
+        // A surface that shows what a window is writing: the assistant text, and
+        // above all the `send` it is composing, because what a window says to
+        // the outside is that call's content argument.
+        windowStream: (context) => void seen.push(context.event),
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    backend.script([
+      { textDelta: "我看一下" },
+      { toolCallDelta: { name: "send", callId: "call_1_send", args: { to: "qq:group:1", content: "已修" } } },
+      { toolCallDelta: { name: "send", callId: "call_1_send", args: { to: "qq:group:1", content: "已修好" } } },
+      { tool: "send", args: { to: "qq:group:1", content: "已修好" } },
+      { textDelta: "说完了" },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    await streamed(seen, 4);
+
+    // Text arrives as the model writes it, and the send's content is visible
+    // before the call is complete - the last delta is the call itself.
+    assert.deepEqual(
+      seen.map((event) => (event.kind === "text_delta" ? `text ${event.delta}` : `send ${String(event.call.args.content)}`)),
+      ["text 我看一下", "send 已修", "send 已修好", "text 说完了"],
+    );
+    // The stream is ephemeral: the deltas are not events. The run records the
+    // lifecycle's own events and nothing else, and the call is recorded once,
+    // when it is complete - never once per delta.
+    const recorded = await journal.list({ limit: 200 });
+    assert.deepEqual(
+      recorded.items.map((event) => event.kind),
+      ["window_start", "tool_call", "send", "tool_result"],
+    );
+    assert.ok((recorded.items[1]?.body ?? "").includes("已修好"));
+    // The window ran to its end all the same.
+    assert.equal(arbor.live()[0]?.state, "idle");
+  });
+
+  it("keeps the window running when a live-output hook throws", async () => {
+    const plugin: Plugin = {
+      name: "broken",
+      hooks: { windowStream: () => { throw new Error("the surface is down"); } },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    backend.script([
+      { textDelta: "我看一下" },
+      { toolCallDelta: { name: "send", callId: "call_1_send", args: { to: "qq:group:1", content: "已修好" } } },
+      { tool: "send", args: { to: "qq:group:1", content: "已修好" } },
+      { text: "完成" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    await settle();
+    // The deltas are lost, the window is not: its calls and its end are recorded.
+    const calls = await journal.list({ kinds: ["tool_call"] });
+    assert.equal(calls.items.length, 1);
+    const ended = await journal.list({ kinds: ["window_end"] });
+    assert.equal(ended.items.length, 0, "the window is still open, not failed");
+    assert.equal(arbor.live()[0]?.state, "idle");
   });
 });

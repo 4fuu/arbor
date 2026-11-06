@@ -5,13 +5,21 @@
  * boundary through pi's steering, queues follow-ups for after the run, ends the
  * run, and reads tool calls, results and usage as they happen. Nothing pi owns
  * crosses the interface.
+ *
+ * What the model is writing while it runs travels the same way: pi's
+ * `message_update` carries its own text and tool-call argument deltas, and this
+ * session reports them as the core's `StreamEvent`, so a host surface can show a
+ * window's output - above all what it is about to `send` - before the call is
+ * even complete (docs/windows.md#streaming).
  */
 
-import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
+import type { Agent, AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import { ToolCallArgumentsStream } from "@earendil-works/pi-ai";
 import type { Usage as PiUsage } from "@earendil-works/pi-ai";
 import type {
   Delivery,
   Handoff,
+  StreamEvent,
   TokenUsage,
   ToolCall,
   ToolResult,
@@ -85,6 +93,12 @@ export class PiWindowSession implements WindowSession {
   private paused = false;
   private current: TokenUsage;
   private readonly results: Map<string, ToolResult>;
+  /**
+   * The arguments of the tool call being written, by content index. pi reports
+   * them as JSON text in pieces, and a call still being written is not valid
+   * JSON yet, so they are read with pi's own tolerant parser.
+   */
+  private readonly writing = new Map<number, ToolCallArgumentsStream>();
 
   constructor(options: PiSessionOptions) {
     this.window = options.window;
@@ -170,6 +184,15 @@ export class PiWindowSession implements WindowSession {
 
   private onAgentEvent(event: AgentEvent): void {
     switch (event.type) {
+      case "message_start":
+        // A new response numbers its content blocks from zero again.
+        this.writing.clear();
+        break;
+      case "message_update": {
+        const delta = this.deltaOf(event);
+        if (delta !== undefined) this.stream.push(delta);
+        break;
+      }
       case "tool_execution_start":
         this.stream.push({
           kind: "tool_call",
@@ -192,6 +215,33 @@ export class PiWindowSession implements WindowSession {
       default:
         break;
     }
+  }
+
+  /**
+   * One delta of what the model is writing, or nothing when this event is not
+   * one. pi's `message_update` carries the provider's own event: `text_delta`
+   * for assistant text, `toolcall_delta` for the arguments of a tool call as
+   * they are written. What stands so far is what the delta reports, so a
+   * surface that shows a window's output never reassembles the pieces itself
+   * (docs/windows.md#streaming).
+   */
+  private deltaOf(event: Extract<AgentEvent, { type: "message_update" }>): StreamEvent | undefined {
+    const inner = event.assistantMessageEvent;
+    if (inner.type === "text_delta") return { kind: "text_delta", delta: inner.delta };
+    // A provider reports the tool call's name and id on the chunk that opens it,
+    // which need not carry any argument text yet.
+    if (inner.type !== "toolcall_delta" || inner.delta === "") return undefined;
+    const block = writingCall(event.message, inner.contentIndex);
+    if (block === undefined) return undefined;
+    let arguments_ = this.writing.get(inner.contentIndex);
+    if (arguments_ === undefined) {
+      arguments_ = new ToolCallArgumentsStream();
+      this.writing.set(inner.contentIndex, arguments_);
+    }
+    return {
+      kind: "tool_call_delta",
+      call: { name: block.name, args: arguments_.append(inner.delta), callId: block.id },
+    };
   }
 
   /**
@@ -255,4 +305,13 @@ function callOf(name: string, args: unknown, callId: string): ToolCall {
   return { name, args: (args ?? {}) as Record<string, unknown>, callId };
 }
 
-
+/**
+ * The tool call block at one content index of a message still being written.
+ * pi keeps the partial message's blocks in place, so the block a delta belongs
+ * to is the one at its own index; its name and id may still be filling in.
+ */
+function writingCall(message: AgentMessage, index: number): { name: string; id: string } | undefined {
+  if (message.role !== "assistant") return undefined;
+  const block = message.content[index];
+  return block !== undefined && block.type === "toolCall" ? block : undefined;
+}

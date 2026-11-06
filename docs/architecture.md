@@ -30,13 +30,13 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls, accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@4fu/arbor-workspace-dir](../packages/workspace-dir)) |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@4fu/arbor-plugin-http](../packages/plugin-http)) |
-| `TaskSource` | turn outside events into tasks, batching them | the host API |
+| `TaskSource` | turn outside events into tasks, batching them ([dispatch.md](dispatch.md#tasks)) | the host API |
 | `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
 | `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory ([@4fu/arbor-environment-dir](../packages/environment-dir)) |
@@ -88,7 +88,7 @@ or a whole domain such as a chat channel or a code host:
 
 | Part | What it gives |
 | --- | --- |
-| adapters | connections to the outside world: channels with their native ids ([journal.md](journal.md#external-ids)), task sources with their batching, effect executors |
+| adapters | connections to the outside world: channels with their native ids ([journal.md](journal.md#external-ids)), task sources with their batching ([dispatch.md](dispatch.md#tasks)), effect executors |
 | MCP servers | capabilities the model calls, installed into `/env` under the plugin's name ([environment.md](environment.md)) |
 | skills | procedures, installed into `/env` under the plugin's name |
 | hooks | any of the hooks below |
@@ -130,6 +130,12 @@ core's own `channels` module - its connections, and a message by its native id
 ([tools.md](tools.md#modules)) - so a plugin adds no module and the model still
 sees the outside world.
 
+A plugin that wants a window's live output on a surface of its own - a console,
+a chat bridge, a DeepSeek Harness - registers the `windowStream` hook and turns
+each delta into what that surface speaks
+([windows.md](windows.md#streaming)). No pi type and no journal event is
+involved: the deltas are the core's own shapes, and they stay out of the record.
+
 ## Hooks
 
 The framework sets no policy of its own. A deployment or a plugin adds it
@@ -144,6 +150,7 @@ error shape:
 | window start, end and continuation | when a window opens, ends or is continued |
 | before a model request | with the rendered prompt and inputs, before they reach the backend |
 | before a delivery | before a block is steered into a window |
+| live output | one delta of what a window is writing, observation only and best-effort ([windows.md](windows.md#streaming)) |
 | before and after a tool call | around every direct tool and module call |
 | before an effect | when an effect leaves the queue; it can hold the effect for approval and release or drop it later |
 | before and after a note write | around every note revision |
@@ -155,7 +162,9 @@ before it changed, and the first refusal stops the rest. What a refusal does is
 the point's own: around an append, a note write, a reload or a tool call it
 throws, so the caller answers with the rule; before a delivery it drops the
 delivery; before an effect it holds it for an approval; before a window start or
-a model request the window never opens.
+a model request the window never opens. The live-output hook has nothing to
+refuse: it observes, and a hook that fails loses its own deltas
+([windows.md](windows.md#streaming)).
 
 The host API lets an operator list, pause and end windows, steer an input
 into one, and read the board. Permissions, privacy review, budgets and

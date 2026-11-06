@@ -3,9 +3,10 @@
  * without a model and without waiting for one.
  *
  * The backend implements `AgentBackend` and answers with the steps a test
- * scripts: a tool call, a piece of text, or a usage report. It drives the same
- * path a real backend does - the host's tool control, the event stream, the
- * outcome - so the lifecycle under test is the real one.
+ * scripts: a tool call, a piece of text, a delta of live output, or a usage
+ * report. It drives the same path a real backend does - the host's tool
+ * control, the event stream, the outcome - so the lifecycle under test is the
+ * real one.
  */
 
 import type {
@@ -29,7 +30,14 @@ import type { EventRef } from "@4fu/arbor-interfaces";
 export type Step =
   | { tool: string; args?: Record<string, unknown>; result?: Partial<ToolResult> }
   | { text: string }
-  | { usage: TokenUsage };
+  | { usage: TokenUsage }
+  /**
+   * One delta of live output, the way a model writes it. `toolCallDelta.args` is
+   * what stands at that point in the call, best-effort, exactly as a real
+   * backend reports it (docs/windows.md#streaming).
+   */
+  | { textDelta: string }
+  | { toolCallDelta: { name: string; callId: string; args: Record<string, unknown> } };
 
 /** The host's window control, which the backend calls the same way pi does. */
 export interface ScriptedControl {
@@ -290,6 +298,17 @@ export class ScriptedBackend implements AgentBackend {
       }
       if ("usage" in step) {
         session.setUsage(step.usage);
+        continue;
+      }
+      if ("textDelta" in step) {
+        session.push({ kind: "text_delta", delta: step.textDelta });
+        continue;
+      }
+      if ("toolCallDelta" in step) {
+        session.push({
+          kind: "tool_call_delta",
+          call: { name: step.toolCallDelta.name, args: step.toolCallDelta.args, callId: step.toolCallDelta.callId },
+        });
         continue;
       }
       session.push({ kind: "appended", event: step.text });

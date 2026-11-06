@@ -9,6 +9,13 @@ import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type { Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
 import type { CallContext, DirectToolSpec, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
+import type {
+  OutsideEvent,
+  Plugin,
+  TaskInput,
+  TaskSource,
+  Unsubscribe,
+} from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 
@@ -72,6 +79,7 @@ async function host(
     /** The retention period the host reclaims a chain's directory after. */
     retentionMs?: number;
     now?: () => number;
+    plugins?: readonly Plugin[];
   } = {},
 ): Promise<{
   arbor: Arbor;
@@ -97,6 +105,7 @@ async function host(
     ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
     ...(environment === undefined ? {} : { environment }),
     ...(options.retentionMs === undefined ? {} : { settings: { workspaces: { retentionMs: options.retentionMs } } }),
+    ...(options.plugins === undefined ? {} : { plugins: options.plugins }),
     groups: [probe],
   });
   backend.attach(arbor.windowControl());
@@ -909,5 +918,158 @@ describe("workspace retention", () => {
     assert.ok(existsSync(join(root, "ws1")));
     const continued = await journal.list({ kinds: ["window_start"], limit: 5 });
     assert.equal(continued.items.at(-1)?.window, "c2");
+  });
+});
+
+/**
+ * Task sources: a plugin's source claims the outside events of the source it
+ * names, and the host turns those into tasks with the source's own `toTasks`
+ * (docs/dispatch.md#tasks).
+ *
+ * Batching and debouncing are the source's business, so the host does none of
+ * its own for events a source claims - a burst of messages becomes the one task
+ * the source says it is, and a window is not interrupted again and again. What
+ * no source claims keeps the host's own per-target grouping, which is the
+ * default for a source that hands events over as they arrive.
+ */
+describe("task sources", () => {
+  /** One outside event, the way a channel hands it over. */
+  function event(source: string, target: string, text: string): OutsideEvent {
+    return {
+      source,
+      target,
+      time: 1_700_000_000_000,
+      content: [{ kind: "data", fields: { content: text } }],
+    };
+  }
+
+  /**
+   * A chat source: it debounces per conversation, so every event of one target
+   * that arrives together becomes one task. It also has a push source of its
+   * own, the way a channel does.
+   */
+  class ChatSource implements TaskSource {
+    readonly id = "qq";
+    /** Every group of events `toTasks` was handed, in order. */
+    readonly batched: OutsideEvent[][] = [];
+    /** What its own push source handed the host, once `start` subscribed to it. */
+    private handler: ((events: readonly OutsideEvent[]) => void | Promise<void>) | undefined;
+
+    toTasks(events: readonly OutsideEvent[]): readonly TaskInput[] {
+      this.batched.push([...events]);
+      const byTarget = new Map<string, OutsideEvent[]>();
+      for (const one of events) {
+        const group = byTarget.get(one.target);
+        if (group === undefined) byTarget.set(one.target, [one]);
+        else group.push(one);
+      }
+      return [...byTarget].map(([target, group]) => ({
+        kind: "batch" as const,
+        // The source's own reason, not the host's: it knows why this is a task.
+        reason: `群里连续来了 ${group.length} 条消息`,
+        targets: [target],
+        time: group[group.length - 1]?.time ?? 1_700_000_000_000,
+        content: group.map((one) => one.content[0] as TaskInput["content"][number]),
+        events: group,
+        source: this.id,
+      }));
+    }
+
+    subscribe(handler: (events: readonly OutsideEvent[]) => void | Promise<void>): Unsubscribe {
+      this.handler = handler;
+      return () => {
+        this.handler = undefined;
+      };
+    }
+
+    /** Push outside traffic in, the way this source's own transport would. */
+    deliver(events: readonly OutsideEvent[]): Promise<void> {
+      return Promise.resolve(this.handler === undefined ? undefined : this.handler(events));
+    }
+  }
+
+  /** Wait for the backend to have opened `count` windows. */
+  async function opened(backend: ScriptedBackend, count: number): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      if (backend.opened.length >= count) return;
+      await turn();
+    }
+    throw new Error(`only ${backend.opened.length} windows opened`);
+  }
+
+  it("dispatches the batching a registered source made, and the host groups only what it left", async () => {
+    const chat = new ChatSource();
+    const { arbor, journal, backend } = await host({ plugins: [{ name: "chat", adapters: { taskSources: [chat] } }] });
+    backend.script([{ text: "回复群里的问题" }, { text: "处理爬虫的事件" }]);
+
+    const routed = await arbor.ingest([
+      event("qq", "qq:group:1", "在吗"),
+      event("qq", "qq:group:1", "看下 CI"),
+      event("qq", "qq:group:1", "红了"),
+      // A source the plugin registered nothing for keeps the host's own grouping.
+      event("svc:crawler", "svc:crawler", "页面变了"),
+    ]);
+    await opened(backend, 2);
+
+    // The whole burst reached the source as one group, and it made one task of
+    // it: the window is interrupted once, not once per message.
+    assert.equal(chat.batched.length, 1);
+    assert.deepEqual(
+      chat.batched[0]?.map((one) => one.target),
+      ["qq:group:1", "qq:group:1", "qq:group:1"],
+    );
+    assert.equal(routed.length, 2);
+    assert.equal(routed[0]?.window, "c1");
+
+    const tasks = await arbor.tasks();
+    assert.equal(tasks.length, 2);
+    assert.equal(tasks[1]?.ref, "t1");
+    assert.equal(tasks[1]?.source, "qq");
+    assert.equal(tasks[1]?.reason, "群里连续来了 3 条消息");
+    assert.deepEqual(tasks[1]?.targets, ["qq:group:1"]);
+    const shown = await arbor.task(["t1"]);
+    assert.equal(shown[0]?.events.length, 3, "the task names the events it batches");
+    // The event no source claimed is the host's own task, grouped by its target.
+    assert.equal(tasks[0]?.ref, "t2");
+    assert.equal(tasks[0]?.source, "svc:crawler");
+    assert.equal(tasks[0]?.reason, "a message arrived in svc:crawler");
+    // One window for the burst, one for what it did not claim: no window per message.
+    assert.equal(backend.opened.length, 2);
+    // Every outside event is still recorded before anything routes, whatever
+    // batched it: the journal stays the only record.
+    const inputs = await journal.list({ kinds: ["input"] });
+    assert.equal(inputs.items.length, 4);
+  });
+
+  it("keeps its own grouping by target with no task source registered", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "回第一群" }, { text: "回第二群" }]);
+
+    await arbor.ingest([event("qq", "qq:group:1", "在吗"), event("qq", "qq:group:1", "看下 CI"), event("qq", "qq:group:2", "另一边")]);
+    await opened(backend, 2);
+
+    const tasks = await arbor.tasks();
+    assert.equal(tasks.length, 2);
+    assert.equal(tasks[1]?.reason, "a message arrived in qq:group:1");
+    assert.equal(tasks[0]?.reason, "a message arrived in qq:group:2");
+    assert.equal((await arbor.task(["t1"]))[0]?.events.length, 2);
+    assert.equal((await arbor.task(["t2"]))[0]?.events.length, 1);
+    const inputs = await journal.list({ kinds: ["input"] });
+    assert.equal(inputs.items.length, 3, "every outside event is recorded before anything routes");
+  });
+
+  it("subscribes to a source's own push source, the way a channel's is subscribed", async () => {
+    const chat = new ChatSource();
+    const { arbor, backend } = await host({ plugins: [{ name: "chat", adapters: { taskSources: [chat] } }] });
+    await arbor.start();
+    backend.script([{ text: "回复群里的问题" }]);
+
+    await chat.deliver([event("qq", "qq:group:1", "在吗"), event("qq", "qq:group:1", "看下 CI")]);
+    await opened(backend, 1);
+
+    assert.equal(chat.batched.length, 1);
+    const tasks = await arbor.tasks();
+    assert.equal(tasks.length, 1);
+    assert.equal(tasks[0]?.reason, "群里连续来了 2 条消息");
   });
 });

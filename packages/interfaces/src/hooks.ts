@@ -9,7 +9,7 @@
  */
 
 import type { ArborErrorInfo } from "@4fu/arbor-errors";
-import type { Delivery, RenderedPrompt, ToolCall, ToolResult } from "./agent.ts";
+import type { Delivery, RenderedPrompt, StreamEvent, ToolCall, ToolResult } from "./agent.ts";
 import type { Block } from "./blocks.ts";
 import type { Event, EventInput } from "./events.ts";
 import type { Effect } from "./effects.ts";
@@ -77,6 +77,17 @@ export interface DeliveryContext {
   delivery: Delivery;
 }
 
+/**
+ * One delta of a window's live output, as the model writes it. What a window
+ * says to the outside is the `content` argument of the `send` direct tool, so a
+ * surface that shows a window's output live reads `tool_call_delta`
+ * (docs/windows.md#streaming).
+ */
+export interface WindowStreamContext {
+  window: WindowRef;
+  event: StreamEvent;
+}
+
 export interface ToolCallContext {
   window: WindowRef;
   call: ToolCall;
@@ -138,6 +149,14 @@ export interface Hooks {
   beforeModelRequest?(context: ModelRequestContext): Promise<HookOutcome<ModelRequestContext>> | HookOutcome<ModelRequestContext>;
 
   beforeDelivery?(context: DeliveryContext): Promise<HookOutcome<DeliveryContext>> | HookOutcome<DeliveryContext>;
+
+  /**
+   * One delta of a window's live output. Observation only, and best-effort: it
+   * can neither change nor refuse anything, it is not waited for, and a hook
+   * that throws or is slow loses its deltas rather than the window
+   * (docs/windows.md#streaming).
+   */
+  windowStream?(context: WindowStreamContext): Promise<void> | void;
 
   beforeToolCall?(context: ToolCallContext): Promise<HookOutcome<ToolCallContext>> | HookOutcome<ToolCallContext>;
   afterToolCall?(context: ToolCallContext): Promise<void> | void;

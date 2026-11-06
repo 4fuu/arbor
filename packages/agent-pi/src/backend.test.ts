@@ -272,6 +272,64 @@ describe("pi backend", () => {
     assert.equal(recorded.results[0]?.content, "已结束");
   });
 
+  it("reports what the model is writing, so a surface shows it before the call is complete", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+      // Small chunks, so the text and the arguments arrive in several deltas.
+      tokenSize: { min: 1, max: 1 },
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    faux.setResponses([
+      fauxAssistantMessage([fauxToolCall("send", { to: "qq:group:1", content: "已修好" }, { id: "call_1" })]),
+      fauxAssistantMessage("说完了"),
+    ]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({
+      models,
+      control: controlOf(recorded, (call) => ({ callId: call.callId, ok: true, content: "已送达" })),
+    });
+
+    const session = await backend.open(requestOf());
+    const stream: { kind: string; text: string }[] = [];
+    const kinds: string[] = [];
+    for await (const event of session.events()) {
+      kinds.push(event.kind);
+      if (event.kind === "text_delta") stream.push({ kind: event.kind, text: event.delta });
+      else if (event.kind === "tool_call_delta") {
+        stream.push({ kind: event.kind, text: String(event.call.args.content ?? "") });
+      }
+      if (event.kind === "run_ended") break;
+    }
+    await session.end();
+
+    // The arguments grow as pi streams them: a partial call's content is
+    // readable before the call itself is reported.
+    const contents = stream.filter((one) => one.kind === "tool_call_delta").map((one) => one.text);
+    assert.ok(contents.length > 1, `the arguments arrived in deltas: ${contents.join("|")}`);
+    // Every content value is a prefix of the last one, so what stands so far is
+    // what the delta carries and nothing is reported twice; at least one is a
+    // partial value, readable before the call itself is reported.
+    const partial = contents.slice(0, -1);
+    assert.ok(
+      partial.every((text) => "已修好".startsWith(text)),
+      `the partial contents grew: ${contents.join("|")}`,
+    );
+    assert.ok(
+      partial.some((text) => text !== "" && text !== "已修好"),
+      `a partial content was seen: ${contents.join("|")}`,
+    );
+    assert.equal(contents.at(-1), "已修好");
+    // The text of the second turn streams the same way.
+    const texts = stream.filter((one) => one.kind === "text_delta").map((one) => one.text);
+    assert.equal(texts.join(""), "说完了");
+    // The durable events stay exactly what they were: one call, one result.
+    assert.deepEqual(
+      kinds.filter((kind) => kind === "tool_call" || kind === "tool_result"),
+      ["tool_call", "tool_result"],
+    );
+  });
+
   it("lists only the models that take images", async () => {
     const faux = fauxProvider({
       models: [

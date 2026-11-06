@@ -54,6 +54,30 @@ in the journal ([journal.md](journal.md)).
 - Anything that changes per input - its time, people or items seen for the
   first time in this window - goes into the input itself.
 
+## Streaming
+
+A host surface can show a window's output while the model is still writing it.
+The backend streams what the model writes, delta by delta, and the host hands
+every delta to the `windowStream` hook - the one way code outside the core sees
+them (docs/architecture.md#hooks):
+
+- **`text_delta`** - assistant text, as it is written.
+- **`tool_call_delta`** - one tool call's arguments, as they are written. What
+  stands so far is what the delta carries, best-effort, because a call still
+  being written is not valid JSON yet. What a window says to the outside is the
+  `content` argument of the `send` direct tool (docs/tools.md#direct-tools), so
+  this is what makes a window's answer readable before the call is complete.
+
+The deltas of one window stay in order, and none of them is waited for: a
+surface that shows them must never hold up the window's own events. The hook
+observes - it can neither change nor refuse anything.
+
+**Streams are best-effort and ephemeral.** They are not journaled, and the
+journal's durable events stay the only record: a tool call is recorded once,
+when it is complete, and a window that ends loses nothing. A backend that
+cannot report deltas never emits them, and a hook that throws or is slow loses
+its own deltas rather than the window.
+
 ## Usage reminders
 
 Host reminders are appended to an input, never to the prefix: at 15, 30 and

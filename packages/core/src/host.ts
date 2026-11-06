@@ -60,11 +60,13 @@ import type {
   ScheduledTaskUpdate,
   ServiceStatus,
   Settings,
+  StreamEvent,
   Supervisor,
   Task,
   TaskInput,
   TaskKind,
   TaskRef,
+  TaskSource,
   Target,
   TextTable,
   ToolCall,
@@ -286,8 +288,15 @@ export class Arbor {
   private readonly plugins: Plugin[] = [];
   /** The channels those plugins registered, in the order they registered. */
   private readonly registeredChannels: Channel[] = [];
+  /** The task sources those plugins registered, in the order they registered. */
+  private readonly registeredTaskSources: TaskSource[] = [];
   /** The push sources the host took, so `close` lets them go. */
   private readonly subscriptions: Unsubscribe[] = [];
+  /**
+   * The live output each window is handing on, so its deltas stay in order and
+   * are never waited for (docs/windows.md#streaming).
+   */
+  private readonly streaming = new Map<WindowRef, Promise<void>>();
   /** The prompt sections the plugins registered, one per plugin. */
   private readonly sections: PromptSection[] = [];
   /** The environment as the catalog reads it, kept in step with every change. */
@@ -387,6 +396,12 @@ export class Arbor {
     // and ingests what arrives (docs/dispatch.md#tasks). A channel a deployment
     // only uses as a sink is simply never subscribed to.
     for (const channel of plugin.adapters?.channels ?? []) this.registeredChannels.push(channel);
+    // A task source claims the outside events of the source it names, and
+    // batches them its own way - so a burst of messages becomes the one task
+    // the source says it is, and the host does no debouncing of its own
+    // (docs/dispatch.md#tasks). One with a push source of its own is subscribed
+    // at `start`, exactly the way a channel is.
+    for (const source of plugin.adapters?.taskSources ?? []) this.registeredTaskSources.push(source);
     // A plugin's items arrive in `/env` on the next load, so its abilities reach
     // live windows as a delta and new ones through their prefix.
     this.loading = undefined;
@@ -648,30 +663,36 @@ export class Arbor {
     await this.scheduler.restore?.([...restored.values()]);
     // A plugin's channel is an outside source, so the host takes its push source
     // and ingests what arrives (docs/dispatch.md#tasks). A channel without one
-    // is a sink a deployment polls, or one nothing pushes to.
-    this.subscribeChannels();
+    // is a sink a deployment polls, or one nothing pushes to. A task source's
+    // own push source is taken the same way.
+    this.subscribePushSources();
   }
 
   /**
-   * Take every registered channel's push source. What arrives is outside
-   * traffic, so it goes through `ingest` exactly as a task source's does: one
-   * task per conversation, and the events recorded before anything routes
-   * (docs/dispatch.md#tasks).
+   * Take every registered channel's and task source's push source. What arrives
+   * is outside traffic, so it goes through `ingest` exactly as a task source's
+   * does: one task per conversation, and the events recorded before anything
+   * routes (docs/dispatch.md#tasks).
    */
-  private subscribeChannels(): void {
+  private subscribePushSources(): void {
     for (const channel of this.registeredChannels) {
       if (channel.subscribe === undefined) continue;
-      this.subscriptions.push(
-        channel.subscribe(async (events) => {
-          if (events.length === 0) return;
-          await this.ingest(events);
-        }),
-      );
+      this.subscriptions.push(channel.subscribe(this.onOutside));
+    }
+    for (const source of this.registeredTaskSources) {
+      if (source.subscribe === undefined) continue;
+      this.subscriptions.push(source.subscribe(this.onOutside));
     }
   }
 
+  /** What arrived from a push source: outside traffic, so it goes through `ingest`. */
+  private readonly onOutside = async (events: readonly OutsideEvent[]): Promise<void> => {
+    if (events.length === 0) return;
+    await this.ingest(events);
+  };
+
   /** Let every push source go. What they recorded stays in the journal. */
-  private async unsubscribeChannels(): Promise<void> {
+  private async unsubscribePushSources(): Promise<void> {
     for (const unsubscribe of this.subscriptions.splice(0)) await unsubscribe();
   }
 
@@ -728,33 +749,58 @@ export class Arbor {
   }
 
   /**
-   * Outside events in, tasks out. A chat source debounces per conversation, so
-   * the events of one conversation become one task; batching is the source's
-   * business, and this is the host's own grouping of what arrived together
-   * (docs/dispatch.md#tasks).
+   * Outside events in, tasks out. A task source claims the events of the source
+   * it names, and the host turns those into tasks with the source's own
+   * `toTasks` - so the batching and the debouncing stay the source's business
+   * and never the host's (docs/dispatch.md#tasks). What no source claims keeps
+   * the host's own grouping: one task per target, which is the host's debouncing
+   * for a source that hands events over as they arrive.
    */
   async ingest(events: readonly OutsideEvent[]): Promise<readonly DispatchResult[]> {
+    const claimed = new Map<TaskSource, OutsideEvent[]>();
+    const unclaimed: OutsideEvent[] = [];
+    for (const event of events) {
+      const source = this.registeredTaskSources.find((one) => one.id === event.source);
+      if (source === undefined) {
+        unclaimed.push(event);
+        continue;
+      }
+      const group = claimed.get(source);
+      if (group === undefined) claimed.set(source, [event]);
+      else group.push(event);
+    }
+    const results: DispatchResult[] = [];
+    for (const [source, group] of claimed) {
+      for (const task of source.toTasks(group)) {
+        // The source knows its own reason and its own batching; the host only
+        // names the source that made the task when the task does not.
+        results.push(await this.dispatch({ ...task, source: task.source ?? source.id }));
+      }
+    }
+    for (const task of this.groupedTasks(unclaimed)) results.push(await this.dispatch(task));
+    return results;
+  }
+
+  /**
+   * The host's own grouping of what arrived together: one task per target, for
+   * the events no task source claimed (docs/dispatch.md#tasks).
+   */
+  private groupedTasks(events: readonly OutsideEvent[]): readonly TaskInput[] {
     const groups = new Map<string, OutsideEvent[]>();
     for (const event of events) {
       const group = groups.get(event.target);
       if (group === undefined) groups.set(event.target, [event]);
       else group.push(event);
     }
-    const results: DispatchResult[] = [];
-    for (const [target, group] of groups) {
-      results.push(
-        await this.dispatch({
-          kind: "batch",
-          reason: `a message arrived in ${target}`,
-          targets: [target],
-          time: group[group.length - 1]?.time ?? this.clock(),
-          content: group.map((event) => outsideMessageBlockOf(event)),
-          events: group,
-          source: group[0]?.source,
-        }),
-      );
-    }
-    return results;
+    return [...groups].map(([target, group]) => ({
+      kind: "batch" as const,
+      reason: `a message arrived in ${target}`,
+      targets: [target],
+      time: group[group.length - 1]?.time ?? this.clock(),
+      content: group.map((event) => outsideMessageBlockOf(event)),
+      events: group,
+      source: group[0]?.source,
+    }));
   }
 
   /**
@@ -1110,7 +1156,7 @@ export class Arbor {
     this.held.length = 0;
     this.closed = true;
     this.scheduler.close?.();
-    await this.unsubscribeChannels();
+    await this.unsubscribePushSources();
     const stopping = this.live();
     for (const record of stopping) {
       if (record.session === undefined) continue;
@@ -1310,6 +1356,12 @@ export class Arbor {
       for await (const event of session.events()) {
         this.arm(record);
         switch (event.kind) {
+          case "text_delta":
+          case "tool_call_delta":
+            // Live output is handed on without being waited for: a surface that
+            // shows it must never hold up the window's own events.
+            this.streamOut(record.window, event);
+            break;
           case "usage":
             record.usage = event.usage;
             this.board.update(record.window, { usage: event.usage, state: "running" });
@@ -1332,6 +1384,23 @@ export class Arbor {
     } catch {
       // The session's stream closed with the window; the outcome carries why.
     }
+  }
+
+  /**
+   * One delta of a window's live output, out to the code that watches it. The
+   * deltas of one window stay in order, and none of them is waited for: the
+   * stream is best-effort and ephemeral, so a hook that throws or is slow loses
+   * its own deltas and never the window (docs/windows.md#streaming).
+   */
+  private streamOut(window: WindowRef, event: StreamEvent): void {
+    if (this.hooks.empty) return;
+    const handed = (this.streaming.get(window) ?? Promise.resolve())
+      .then(() => this.hooks.after("windowStream", { window, event }))
+      .catch(() => {});
+    this.streaming.set(window, handed);
+    void handed.then(() => {
+      if (this.streaming.get(window) === handed) this.streaming.delete(window);
+    });
   }
 
   /**

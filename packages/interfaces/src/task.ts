@@ -6,6 +6,12 @@
  * or a service event. Batching is the source's business - a chat source
  * debounces per conversation, so several messages sent in a row become one
  * task. The host makes no tasks of its own for maintenance.
+ *
+ * A source claims the outside events of the source it names: the host hands it
+ * every event whose `OutsideEvent.source` is this source's `id`, and dispatches
+ * the tasks it makes of them as they stand. The host groups nothing of its own
+ * for a source's events, and never debounces on its behalf - a source that
+ * debounces keeps its own buffer.
  */
 
 import type { Block } from "./blocks.ts";
@@ -48,6 +54,9 @@ export interface TaskSource {
   /** Turn outside events into tasks, batched the way this source batches. */
   toTasks(events: readonly OutsideEvent[]): readonly TaskInput[];
 
-  /** Push source. The host may poll instead. */
+  /**
+   * Push source. The host may poll instead. The host takes this one at `start`,
+   * the way it takes a channel's, and what it pushes goes through `ingest`.
+   */
   subscribe?(handler: (events: readonly OutsideEvent[]) => void | Promise<void>): Unsubscribe;
 }

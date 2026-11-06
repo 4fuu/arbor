@@ -1,8 +1,8 @@
 /**
  * The `AgentBackend` interface: run one window - send the prompt and the tools
- * to a model, stream tool calls, accept inputs inserted once a turn's tool
- * calls finish, report token usage, list the models it can run and log in to
- * their providers (docs/architecture.md#interfaces).
+ * to a model, stream tool calls and what the model is writing, accept inputs
+ * inserted once a turn's tool calls finish, report token usage, list the models
+ * it can run and log in to their providers (docs/architecture.md#interfaces).
  *
  * arbor uses pi-agent-core's `Agent` with its own system prompt: pi's default
  * coding prompt, context files and skills never reach the model
@@ -125,15 +125,38 @@ export interface WindowSession {
 
   usage(): TokenUsage;
 
-  /** Tool calls, results and appends as they happen. */
+  /** Tool calls, results and what the model is writing, as they happen. */
   events(): AsyncIterable<WindowEvent>;
 
   /** Resolves when the window ends, with why. */
   outcome(): Promise<WindowOutcome>;
 }
 
+/**
+ * What a window is writing while it runs, one delta at a time
+ * (docs/windows.md#streaming).
+ *
+ * Streams are best-effort and ephemeral: they are not journaled, and the
+ * journal's durable events stay the only record. A backend that cannot report
+ * deltas never emits them, and a consumer that misses one keeps going - the
+ * next delta carries what stands so far.
+ */
+export type StreamEvent =
+  /** Assistant text, as the model writes it. */
+  | { kind: "text_delta"; delta: string }
+  /**
+   * One tool call's arguments, as the model writes them. `call.args` is what
+   * has been decoded so far and is best-effort: a call still being written is
+   * not valid JSON yet, so a string argument holds the characters written so
+   * far - which is what makes `send`'s content visible while the model is
+   * still writing it (docs/tools.md#direct-tools). The durable `tool_call`
+   * event carries the complete arguments, once.
+   */
+  | { kind: "tool_call_delta"; call: ToolCall };
+
 /** What a backend streams while a window runs. */
 export type WindowEvent =
+  | StreamEvent
   | { kind: "tool_call"; call: ToolCall }
   | { kind: "tool_result"; call: ToolCall; result: ToolResult }
   | { kind: "appended"; event: string }

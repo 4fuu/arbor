@@ -40,6 +40,7 @@ import type {
   WindowContinueContext,
   WindowEndContext,
   WindowStartContext,
+  WindowStreamContext,
 } from "@4fu/arbor-interfaces";
 
 /** The context each hook runs with, by its name. */
@@ -55,6 +56,7 @@ type HookContexts = {
   windowContinue: WindowContinueContext;
   beforeModelRequest: ModelRequestContext;
   beforeDelivery: DeliveryContext;
+  windowStream: WindowStreamContext;
   beforeToolCall: ToolCallContext;
   afterToolCall: ToolCallContext;
   beforeNoteWrite: NoteWriteContext;

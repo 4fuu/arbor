@@ -26,9 +26,24 @@ source is the one that knows.
 The host records a task and the outside events it batches before anything
 decides about them, so a ref names both from the start: the events as `input`
 events and the task as a `task` event, linked to them. `Arbor.dispatch(task)`
-routes one; `Arbor.ingest(events)` groups outside events by their target and
-routes one task per target, which is the host's own debouncing for a source
-that hands events over as they arrive.
+routes one.
+
+`Arbor.ingest(events)` is where outside events become tasks:
+
+- A **task source claims the events of the source it names** - the
+  `OutsideEvent.source` a channel or a service stamps on them, matching the
+  source's own `id`. The host hands those events to that source's `toTasks` and
+  dispatches what comes back, exactly as it stands. Batching and debouncing are
+  the source's business and the host does none of its own for them, so a burst
+  of messages becomes the one task the source says it is - one window, one
+  interruption - instead of a task per message. A source that debounces keeps
+  its own buffer and hands its batch over when it is ready.
+- A **source with its own `subscribe`** is subscribed the way a channel's is,
+  at `start`: what it pushes goes through `ingest`, and is then claimed by that
+  same source.
+- **What no source claims** keeps the host's own grouping: one task per target,
+  which is the host's debouncing for a source that hands events over as they
+  arrive.
 
 ## Routing
 
