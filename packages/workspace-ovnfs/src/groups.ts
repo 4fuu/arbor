@@ -101,7 +101,8 @@ export class OvnfsWorkspaceGroup implements ToolGroup {
 
   private async checkout(request: ToolCall, context: CallContext): Promise<ToolResult> {
     const name = stringArg(request.args, "name");
-    if (!name.startsWith(`${context.window}-`)) {
+    // ovnfs accepts only lowercase letters, digits, ".", "_" and "-" in a name.
+    if (!name.startsWith(`${context.window}-`) || !/^[a-z0-9._-]+$/.test(name)) {
       return this.refusal(request, "refused.workspace.name", { name });
     }
     const dir = stringArg(request.args, "dir");

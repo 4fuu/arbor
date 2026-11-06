@@ -124,15 +124,15 @@ describe("ovnfs against the real binary", { skip: await skipReason() }, () => {
       await assert.rejects(() => workspace.applyCheckout("c2", "c2-parent", "arbor/c2"));
 
       // A checkout of one repository itself does get a private git directory.
-      const repoPath = await workspace.openCheckout("c2", "c2-repoA", join(parent, "repoA"));
+      const repoPath = await workspace.openCheckout("c2", "c2-repoa", join(parent, "repoA"));
       await writeFile(join(repoPath, "x.txt"), "x\n");
       execFileSync("git", ["add", "."], { cwd: repoPath });
       execFileSync("git", ["commit", "--quiet", "-m", "in repoA"], { cwd: repoPath });
-      const reply = await workspace.applyCheckout("c2", "c2-repoA", "arbor/c2");
+      const reply = await workspace.applyCheckout("c2", "c2-repoa", "arbor/c2");
       assert.equal(reply.branch, "arbor/c2");
 
       await workspace.removeCheckout("c2-parent").catch(() => {});
-      await workspace.removeCheckout("c2-repoA").catch(() => {});
+      await workspace.removeCheckout("c2-repoa").catch(() => {});
     } finally {
       await cleanup(root);
     }

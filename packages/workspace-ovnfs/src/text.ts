@@ -19,7 +19,7 @@ export const ovnfsText: TextTable = {
   // ---- the prompt section the implementation contributes -----------------
   "workspace.method.shared": "共享文件夹 {source}：所有窗口都从这里读，bash 默认也在这里运行；它可以放多个项目和多个 git 仓库。",
   "workspace.method.readonly": "共享文件夹按约定只读：不要直接改它，改动请开检出，直接写会写到别人的文件。",
-  "workspace.method.open": "要改某个项目就给它开一个检出（ovnfs checkout）：workspace.checkout(\"<简称>\", \"<项目子目录>\")，检出名以本窗口引用开头，如 c41-app。",
+  "workspace.method.open": "要改某个项目就给它开一个检出（ovnfs checkout）：workspace.checkout(\"<本窗口引用>-<简称>\", \"<项目子目录>\")，如 c41-app；检出名只用小写字母、数字、.、_ 和 -。",
   "workspace.method.work": "在检出里读写和跑命令；一次要改两个项目就开两个检出，它们各自独立、互不看见。",
   "workspace.method.apply": "改完用 workspace.apply(\"<检出名>\") 合回共享文件夹；有冲突就先解决冲突标记，再 apply 一次；合完用 workspace.rm 删掉检出。",
   "workspace.method.frozen": "检出在打开时冻结：别的窗口之后合回的变化这里看不到，要读共享文件夹或新开一个检出。",
@@ -50,7 +50,7 @@ export const ovnfsText: TextTable = {
   "result.workspace.path.empty": "窗口 {window} 没有检出。",
 
   // ---- refusals ---------------------------------------------------------
-  "refused.workspace.name": "检出名 {name} 不符合约定：要以本窗口引用开头。",
+  "refused.workspace.name": "检出名 {name} 不符合约定：要以本窗口引用开头，且只用小写字母、数字、.、_ 和 -。",
   "refused.workspace.cli": "ovnfs：{message}",
   "refused.workspace.path": "窗口 {window} 没有检出。",
 

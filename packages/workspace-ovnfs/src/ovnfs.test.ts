@@ -112,6 +112,10 @@ describe("ovnfs workspace", () => {
     assert.equal(result.ok, false);
     assert.equal(result.error?.rule, "refused.workspace.name");
     assert.ok(result.error?.nextAction !== undefined && result.error.nextAction.length > 0);
+
+    // The real binary refuses uppercase; the host refuses it first, by its own rule.
+    const upper = await call(workspace, "workspace.checkout", { name: "c1-MyApp" }, "c1");
+    assert.equal(upper.error?.rule, "refused.workspace.name");
   });
 
   it("lists, diffs, applies and removes a checkout", async () => {
