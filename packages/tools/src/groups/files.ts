@@ -46,6 +46,8 @@ interface Job {
   output: string;
   done: boolean;
   code: number | null;
+  /** Settles when the command has ended. */
+  ended: Promise<void>;
   stop(): void;
 }
 
@@ -152,7 +154,7 @@ export class FileToolGroup implements ToolGroup {
     }
     const job = this.start(command, workspace.path, this.services.workspace?.bashEnv?.(window));
     const wait = numberArg(request.args, "timeout", BASH_WAIT_MS);
-    await sleep(wait);
+    await Promise.race([job.ended, sleep(wait)]);
     // A command that ran to its end inside the wait window is answered with
     // what it wrote; one that outlived it becomes a background job, and the
     // result line says the window is not woken when it ends.
@@ -283,30 +285,36 @@ export class FileToolGroup implements ToolGroup {
         ? { cwd }
         : { cwd, env: { ...process.env, ...extraEnv } };
     const child = spawn("/bin/sh", ["-c", command], options);
-    let output = "";
-    const append = (chunk: Buffer): void => {
-      output = (output + chunk.toString("utf8")).slice(-JOB_BUFFER);
-    };
-    child.stdout.on("data", append);
-    child.stderr.on("data", append);
+    let end = (): void => {};
     const job: Job = {
       id,
       output: "",
       done: false,
       code: null,
+      ended: new Promise((resolve) => {
+        end = resolve;
+      }),
       stop: () => {
         child.kill("SIGTERM");
       },
     };
+    // Output lands on the job as it is written, so a running job's output can
+    // be read before it ends.
+    const append = (chunk: Buffer): void => {
+      job.output = (job.output + chunk.toString("utf8")).slice(-JOB_BUFFER);
+    };
+    child.stdout.on("data", append);
+    child.stderr.on("data", append);
     child.on("close", (code) => {
       job.done = true;
       job.code = code;
-      job.output = output;
+      end();
     });
     child.on("error", (error: Error) => {
       job.done = true;
       job.code = 1;
-      job.output = output + error.message;
+      job.output += error.message;
+      end();
     });
     this.jobs.set(id, job);
     return job;

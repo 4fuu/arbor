@@ -536,19 +536,24 @@ describe("tool catalog", () => {
 
   it("runs bash in the workspace and follows a long command with bash_output", async () => {
     const { catalog, root, refOf } = await harness();
-    const short = await run(catalog, "bash", { command: "pwd && echo hello", timeout: 5000 });
+    // A command that ends early is answered when it ends, not when the default
+    // wait runs out.
+    const started = Date.now();
+    const short = await run(catalog, "bash", { command: "pwd && echo hello" });
+    assert.ok(Date.now() - started < 5000, "a short command does not wait out the default wait");
     assert.equal(short.ok, true);
     assert.ok(short.content.includes(root));
     assert.ok(short.content.includes("hello"));
     assert.equal(refOf("c1"), "ws1");
     assert.equal(refOf("c1"), "ws1");
 
-    const long = await run(catalog, "bash", { command: "sleep 5; echo done", timeout: 50 });
+    const long = await run(catalog, "bash", { command: "echo begun; sleep 5; echo done", timeout: 500 });
     const job = /b\d+/.exec(long.content)?.[0] ?? "";
     assert.notEqual(job, "");
     const running = await run(catalog, "bash_output", { job });
     assert.equal(running.ok, true);
     assert.ok(running.content.includes("仍在运行"));
+    assert.ok(running.content.includes("begun"), "a running job shows what it has written so far");
     const stopped = await run(catalog, "bash_stop", { job });
     assert.ok(stopped.content.includes("已停止"));
     const missing = await run(catalog, "bash_output", { job: "b999" });
