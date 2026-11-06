@@ -10,8 +10,9 @@ opens, works in and merges back. It is used when the `ovnfs` binary is found and
 its daemon starts. When ovnfs is not installed - or its daemon will not start -
 the host falls back to the **plain directory** workspace
 ([@4fu/arbor-workspace-dir](../packages/workspace-dir)): one directory per
-window, which needs nothing a host does not already have and runs the same way
-on Windows, Linux and macOS.
+window, plus the persistent directories a window asks to keep, which needs
+nothing a host does not already have and runs the same way on Windows, Linux and
+macOS.
 
 ovnfs isolates files, not processes: a command a window runs can still reach any
 process, socket or file on the host. **It is not a sandbox.** Real process
@@ -97,6 +98,59 @@ recovers which directory a continuation uses. `bash` runs on the host in it, and
 a background job runs there too, through the host's own process API. A disk
 quota is the size the implementation reports against a workspace's directory.
 
+```text
+<root>/ws3/                    the window's own directory
+<root>/keep/notes/             a persistent directory, kept past the window
+```
+
+### Persistent directories
+
+A window's own directory ends with its chain. Content that has to outlive that -
+a build cache, a cloned repository, notes a later window needs - is a
+**persistent directory**, kept under one `keep` directory beside the windows'
+own:
+
+```text
+workspace.keep("build-cache")          # the directory, created on first use
+mkdir -p <root>/keep/build-cache       # the same directory, by hand
+```
+
+Both make the same directory, and both are the documented way in: the module
+function answers with the path and records the write in the journal with the
+window that asked for it, and a plain `mkdir` under the same root makes the
+directory nothing else has to know about. A name the directory already has is
+handed back as it is, so a later window that wants the same place gets the same
+directory rather than a second one - which is how a persistent directory is
+shared. A name is one segment: lowercase letters, digits, `.`, `_` and `-`,
+starting with a letter or a digit, at most 64 characters.
+
+They live outside the windows' own directories, so nothing the lifecycle does to
+a window's own directory reaches them: reclaim removes `<root>/ws<n>` and
+nothing else, a restart finds them where they were, and a host restart loses
+nothing. `workspace.keeps()` lists them all by name and path, a continuation's
+first input names the ones its own chain created, and `journal.search` finds the
+writes. Removing one is the model's own `rm`, in `bash`; nothing reclaims a
+persistent directory.
+
+A persistent directory is shared, exactly as the shared folder is in the ovnfs
+workspace: the name says what belongs in it, and the prompt text asks a window
+not to overwrite what is not its own. It is not a security boundary, and neither
+is a window's own directory.
+
+## Prompt text
+
+Each implementation carries its own prompt text and its own module functions,
+chosen with the implementation: the ovnfs workspace's section and text table
+(`packages/workspace-ovnfs`) describe the shared folder, the checkouts and the
+`ovnfs` skill it seeds; the plain-directory workspace's
+(`packages/workspace-dir`) describe working in place, the persistent directories
+and another window's directory. The host merges the active implementation's
+table over its own when it starts, so a host that fell back to the plain
+directory never shows the ovnfs method and a host running ovnfs never shows the
+plain-directory one. Where the two restate the same key - `workspace.path`'s
+description, result and refusal - each carries its own wording, and a host's
+table is its own copy, so one host's strings never reach another's.
+
 ## Detection and restart
 
 At start the host finds the `ovnfs` binary, checks its version against the
@@ -136,6 +190,8 @@ working where, and the judge takes it into account when dispatching
 - The period is counted from the end the journal recorded, not from the host's
   start, so a restart in the middle of it reclaims on time. The plain directory
   workspace reclaims the chain's directory the same way, by `Workspace.refOf`
-  and `Workspace.reclaim`.
+  and `Workspace.reclaim`. What it does not reclaim is a persistent directory:
+  those live outside the windows' own directories and outlive the chain, the
+  period and the restart ([above](#persistent-directories)).
 
 A deployment that never works with files needs no workspace.

@@ -101,6 +101,20 @@ export interface WorkspaceCheckout {
   dirty: boolean;
 }
 
+/**
+ * One persistent directory an implementation keeps beyond a window's own
+ * folder: a named place whose content outlives the window that made it, the
+ * retention period and a host restart, and which a later window finds by name
+ * and uses. The plain directory workspace keeps them under one root beside the
+ * windows' own directories (docs/workspaces.md#persistent-directories).
+ */
+export interface WorkspaceKeep {
+  /** The name the model gave it, which is how a later window names it. */
+  name: string;
+  /** The directory's path on the host, where a command works in it. */
+  path: string;
+}
+
 export interface Workspace {
   /**
    * Create the window's own directory, on first use. A window that never
@@ -144,6 +158,17 @@ export interface Workspace {
    * for an implementation that keeps no checkouts of its own.
    */
   checkouts?(window: WindowRef): Promise<readonly WorkspaceCheckout[]>;
+
+  /**
+   * The persistent directories a window's chain created, or every one of them
+   * when no window is named - the places whose content outlives the window, the
+   * retention period and a host restart, which a later window finds by name and
+   * uses (docs/workspaces.md#persistent-directories). Absent for an
+   * implementation that keeps none. The host asks for a chain's to name them in
+   * a continuation's first input; a window asks for all of them through the
+   * implementation's own module function.
+   */
+  keeps?(window?: WindowRef): Promise<readonly WorkspaceKeep[]>;
 
   /**
    * The prompt section this implementation contributes, or none. It carries the

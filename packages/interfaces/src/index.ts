@@ -130,6 +130,7 @@ export type {
   ExecResult,
   StagedFile,
   WorkspaceCheckout,
+  WorkspaceKeep,
   WorkspaceMount,
   WorkspaceQuota,
   Workspace,

@@ -252,5 +252,6 @@ One term per concept, in prompts, descriptions, results, errors and logs:
 | 环境 (environment) | skills, MCP servers, services and settings | 配置 (alone) |
 | 服务 (service) | a resident application the host supervises | 后台进程 |
 | 工作区 (workspace) | a window's own directory | 仓库、沙箱 |
+| 常驻目录 (persistent directory) | a named directory kept past the window, made with `workspace.keep` | 持久目录、长期目录、存档 |
 | 来源 (conversation) | where an outside message comes from and where its reply goes, such as a chat on a channel | 会话、对话、窗口、频道 |
 | 引用 (ref) | a ref such as `r902` or `n012@3` | 链接、ID |

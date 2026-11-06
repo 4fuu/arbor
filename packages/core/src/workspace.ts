@@ -6,9 +6,9 @@
  * copy-on-write checkouts the model opens and applies back. When ovnfs is not
  * installed, or its daemon will not start, the host falls back to the plain
  * directory workspace - one directory per window, created on first use, a
- * continuation working in its predecessor's directory in place - which needs
- * nothing a host does not already have and runs the same way on Windows, Linux
- * and macOS.
+ * continuation working in its predecessor's directory in place, and the
+ * persistent directories a window asks to keep - which needs nothing a host
+ * does not already have and runs the same way on Windows, Linux and macOS.
  */
 
 import { tmpdir } from "node:os";
@@ -64,5 +64,13 @@ export async function openWorkspace(options: OpenWorkspaceOptions = {}): Promise
     if (ovnfs !== null) return { workspace: ovnfs, backend: "ovnfs" };
   }
 
-  return { workspace: new DirectoryWorkspace({ root }), backend: "dir" };
+  return {
+    workspace: new DirectoryWorkspace({
+      root,
+      // The journal records a persistent directory with the window that asked
+      // for it, which is how a continuation is told which ones its chain has.
+      ...(options.journal === undefined ? {} : { journal: options.journal }),
+    }),
+    backend: "dir",
+  };
 }

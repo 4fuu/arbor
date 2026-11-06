@@ -331,7 +331,12 @@ export class Arbor {
     this.hooks = new HookRunner();
     this.journal = new HookedJournal(options.journal, this.hooks);
     this.backend = options.backend;
-    this.table = options.table ?? zhTextTable;
+    // A host's own copy of the framework's table: the workspace implementation
+    // and every plugin merge their own strings into the table this host renders
+    // with, and one host's strings must never reach another's - the directory
+    // workspace and the ovnfs workspace restate the same keys with their own
+    // wording (docs/workspaces.md#prompt-text).
+    this.table = options.table ?? { ...zhTextTable };
     this.renderer = options.renderer ?? new Renderer({ table: this.table });
     this.clock = options.now ?? (() => Date.now());
     this.timers = options.timers ?? systemTimers;
@@ -410,14 +415,22 @@ export class Arbor {
   /**
    * The workspace implementation's own prompt section, if it contributes one,
    * registered the way a plugin's is: its block kinds on the renderer, its
-   * fixed strings merged into the table (docs/workspaces.md).
+   * fixed strings merged into the table (docs/workspaces.md#prompt-text).
+   *
+   * The strings are merged into the host's own table as well as the renderer's,
+   * because the layers the core renders itself - a continuation's first input,
+   * a refusal - read the implementation's wording when it has one, and fall
+   * back to nothing when it has none.
    */
   private addWorkspaceSection(): void {
     const section = this.options.workspace?.promptSection?.(this.table);
     if (section === undefined) return;
     this.sections.push(section);
     for (const spec of section.blocks) this.renderer.register(spec);
-    if (section.text !== undefined) this.renderer.extend(section.text);
+    if (section.text !== undefined) {
+      this.renderer.extend(section.text);
+      Object.assign(this.table, section.text);
+    }
   }
 
   /**
@@ -568,8 +581,8 @@ export class Arbor {
       throw arborError({
         code: "unavailable",
         rule: "env.absent",
-        message: "环境：本主机没有配置环境",
-        nextAction: "本主机没有配置环境。",
+        message: textOf(this.table, "refused.env.absent"),
+        nextAction: textOf(this.table, "next.env.absent"),
       });
     }
     const mount = await this.mountFor(window);
@@ -1042,16 +1055,16 @@ export class Arbor {
       throw arborError({
         code: "not_found",
         rule: "window.not_found",
-        message: `window: 没有窗口 ${window}`,
-        nextAction: "用 windows.list 查看当前窗口。",
+        message: textOf(this.table, "refused.windows.notfound", { window }),
+        nextAction: textOf(this.table, "next.windows.notfound"),
       });
     }
     if (record.state === "ended") {
       throw arborError({
         code: "refused",
         rule: "window.ended",
-        message: `window: 窗口 ${window} 已结束`,
-        nextAction: "把内容发给一个还在运行的窗口，或为它开一个新窗口。",
+        message: textOf(this.table, "refused.windows.ended", { window }),
+        nextAction: textOf(this.table, "next.windows.ended"),
       });
     }
     this.nextQueueId += 1;
@@ -1368,8 +1381,8 @@ export class Arbor {
       await this.fail(record, arborError({
         code: "refused",
         rule: "model.request.refused",
-        message: "window: 一个插件拒绝了这个窗口的模型请求",
-        nextAction: "查看该插件的钩子记录，或换一个没有被拒绝的窗口。",
+        message: textOf(this.table, "refused.model.request.refused"),
+        nextAction: textOf(this.table, "next.model.request.refused"),
       }));
       return;
     }
@@ -1641,6 +1654,18 @@ export class Arbor {
               }),
             ),
           ];
+    // The persistent directories the chain created, so a continuation finds them
+    // by name and keeps working in them (docs/workspaces.md#persistent-directories).
+    // The wording is the implementation's own; an implementation that keeps none
+    // has no line to give and the block is simply not there.
+    const keeps = await this.options.workspace?.keeps?.(previous) ?? [];
+    const keepLine =
+      keeps.length === 0
+        ? ""
+        : textOf(this.table, "continuation.keeps", {
+            keeps: keeps.map((one) => `${one.name} ${one.path}`).join("、"),
+          });
+    const keepBlock = keepLine === "" ? [] : [dataBlock(keepLine)];
     const firstInput = this.renderer.render(
       firstInputBlocks({
         task: {
@@ -1659,9 +1684,9 @@ export class Arbor {
           openTasks,
           effects,
         },
-        ...(changes.length === 0 && checkoutBlock.length === 0
+        ...(changes.length === 0 && checkoutBlock.length === 0 && keepBlock.length === 0
           ? {}
-          : { changes: [...changes, ...checkoutBlock] }),
+          : { changes: [...changes, ...checkoutBlock, ...keepBlock] }),
       }),
     );
     await this.journal.append({
@@ -1906,8 +1931,8 @@ export class Arbor {
           throw arborError({
             code: "unavailable",
             rule: "env.absent",
-            message: "环境：本主机没有配置环境",
-            nextAction: "本主机没有配置环境。",
+            message: textOf(this.table, "refused.env.absent"),
+            nextAction: textOf(this.table, "next.env.absent"),
           });
         }
         return environment.call(server, fn, args);
@@ -2000,8 +2025,8 @@ export class Arbor {
       throw arborError({
         code: "unavailable",
         rule: "notes.absent",
-        message: "notes: 本主机没有配置笔记存储",
-        nextAction: "本主机没有配置笔记存储。",
+        message: textOf(this.table, "refused.notes.absent"),
+        nextAction: textOf(this.table, "next.notes.absent"),
       });
     }
     const anchor: Anchor = { window, event: await this.lastEvent(window) };

@@ -100,13 +100,19 @@ export class NoteToolGroup implements ToolGroup {
   }
 
   private async remove(request: ToolCall, store: NoteStore, window: WindowRef): Promise<ToolResult> {
-    return this.record(request, store, window, {
-      id: stringArg(request.args, "id") as NoteWriteInput["id"],
-      title: "",
-      body: "",
-      delete: true,
-      expectedRevision: numberArg(request.args, "revision"),
-    });
+    return this.record(
+      request,
+      store,
+      window,
+      {
+        id: stringArg(request.args, "id") as NoteWriteInput["id"],
+        title: "",
+        body: "",
+        delete: true,
+        expectedRevision: numberArg(request.args, "revision"),
+      },
+      true,
+    );
   }
 
   /**
@@ -119,10 +125,11 @@ export class NoteToolGroup implements ToolGroup {
     store: NoteStore,
     window: WindowRef,
     input: NoteWriteInput,
+    deleted = false,
   ): Promise<ToolResult> {
     try {
       const note = await this.services.writeNote(window, input);
-      return this.answer(request, note.ref, store);
+      return this.answer(request, note.ref, store, deleted);
     } catch (error: unknown) {
       return this.refusalOf(request, error);
     }
@@ -131,16 +138,17 @@ export class NoteToolGroup implements ToolGroup {
   /**
    * One write's answer, with the active set's budget beside it: the budget is
    * part of every prefix, so a window that writes hears how full it is
-   * (docs/memory.md#the-active-set).
+   * (docs/memory.md#the-active-set). A delete is its own line: it removed a
+   * note rather than writing one.
    */
-  private async answer(request: ToolCall, ref: string, store: NoteStore): Promise<ToolResult> {
+  private async answer(request: ToolCall, ref: string, store: NoteStore, deleted = false): Promise<ToolResult> {
     const table = this.services.table;
     const snapshot = await store.snapshot().catch(() => null);
     return {
       callId: request.callId,
       ok: true,
       content: [
-        textOf(table, "result.note_written", { ref }),
+        textOf(table, deleted ? "result.note_deleted" : "result.note_written", { ref }),
         ...(snapshot === null
           ? []
           : [

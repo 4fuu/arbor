@@ -19,6 +19,7 @@ import type {
 import { Arbor } from "./host.ts";
 import { RefAllocator } from "./refs.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
+import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 
 /**
  * A judge that answers nothing, so a test never reaches a service. Every
@@ -343,6 +344,9 @@ describe("one window end to end", () => {
       refs: ["r1"],
     });
     await backend.finished();
+    // The end is settled by the window's own run, which opens the continuation,
+    // so the run is what a test waits for before it reads the journal.
+    await record.running;
     const started = await journal.list({ kinds: ["window_start"] });
     assert.equal(started.items.length, 2);
     const continuation = started.items[1];
@@ -496,8 +500,11 @@ describe("one window end to end", () => {
       { usage: { used: 190000, limit: 200000, reserve: 4000 } },
       { text: "继续" },
     ]);
-    await arbor.open(task);
+    const record = await arbor.open(task);
     await backend.finished();
+    // The hard limit ends the window inside its own run, which opens the
+    // continuation, so the run is what a test waits for.
+    await record.running;
     const ended = await journal.list({ kinds: ["window_end"] });
     assert.equal(ended.items[0]?.window, "c1");
     const body = JSON.parse(ended.items[0]?.body ?? "{}") as { reason: string };
@@ -637,6 +644,7 @@ describe("one window end to end", () => {
       refs: ["r1"],
     });
     await backend.finished();
+    await record.running;
     const sends = await journal.list({ kinds: ["send"] });
     assert.equal(sends.items.length, 1);
     assert.equal(sends.items[0]?.window, "c1");
@@ -1330,6 +1338,9 @@ describe("the window's own words", () => {
     backend.script([{ ended: "failed" }, { text: "接着做" }]);
     const record = await arbor.open(task);
     await backend.finished();
+    // The failure is settled inside the window's own run, which opens the
+    // continuation, so the run is what a test waits for.
+    await record.running;
 
     const continuation = backend.opened[1];
     assert.ok(continuation !== undefined, "a failed window's work goes on");
@@ -1421,5 +1432,70 @@ describe("a refusal to open a window", () => {
     const recorded = await journal.list({ kinds: ["dispatch"] });
     assert.equal(recorded.items.length, 1);
     assert.ok((recorded.items[0]?.body ?? "").includes("policy.window.denied"));
+  });
+});
+
+/**
+ * The host's own refusals (docs/prompting.md#language-and-the-text-table): the
+ * rules the core enforces outside a tool - no environment, no such window, a
+ * window that ended, a plugin refusing the model request, no note store - read
+ * the one text table like every other refusal, so a deployment that replaces
+ * the table replaces these too.
+ */
+
+describe("the host's own refusals", () => {
+  const delivery = {
+    kind: "window_message" as const,
+    refs: [] as readonly `r${number}`[],
+    time: 1_700_000_000_000,
+    content: [{ kind: "data" as const, fields: { content: "在吗" } }],
+  };
+
+  it("names no such window in the table's words", async () => {
+    const { arbor, backend } = await host();
+    backend.script([{ text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    await record.running;
+
+    // The window that ended is gone from the host, which is what a delivery to
+    // it is answered with; the same table entry answers a window that never was.
+    await assert.rejects(
+      () => arbor.deliver(record.window, delivery),
+      (error: { rule?: string; message?: string; nextAction?: string }) => {
+        assert.equal(error.rule, "window.not_found");
+        assert.equal(error.message, textOf(zhTextTable, "refused.windows.notfound", { window: record.window }));
+        assert.equal(error.nextAction, textOf(zhTextTable, "next.windows.notfound"));
+        return true;
+      },
+    );
+  });
+
+  it("names an absent note store and an absent environment in the table's words", async () => {
+    const { arbor, backend } = await host();
+    backend.script([{ text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    // The host this test runs with configures neither.
+    await assert.rejects(
+      () => arbor.services.writeNote(record.window, { title: "标题", body: "正文" }),
+      (error: { rule?: string; message?: string; nextAction?: string }) => {
+        assert.equal(error.rule, "notes.absent");
+        assert.equal(error.message, textOf(zhTextTable, "refused.notes.absent"));
+        assert.equal(error.nextAction, textOf(zhTextTable, "next.notes.absent"));
+        return true;
+      },
+    );
+    await assert.rejects(
+      () => arbor.services.reload(record.window, { drafts: [], remove: [] }),
+      (error: { rule?: string; message?: string; nextAction?: string }) => {
+        assert.equal(error.rule, "env.absent");
+        assert.equal(error.message, textOf(zhTextTable, "refused.env.absent"));
+        assert.equal(error.nextAction, textOf(zhTextTable, "next.env.absent"));
+        return true;
+      },
+    );
   });
 });

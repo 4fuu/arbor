@@ -3,7 +3,7 @@
   "version": "2026.1106.0",
   "private": true,
   "type": "module",
-  "description": "The plain-directory Workspace: one directory per window, with a continuation working in its predecessor's directory in place.",
+  "description": "The plain-directory Workspace: one directory per window, with a continuation working in its predecessor's directory in place, plus the persistent directories a window asks to keep.",
   "exports": {
     ".": {
       "types": "./src/index.ts",

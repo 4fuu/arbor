@@ -294,11 +294,21 @@ describe("tool catalog", () => {
     assert.ok(found.content.includes(join(root, "ws1")));
     // The answer says whose directory it is, and that it is not to be changed.
     assert.ok(found.content.includes("只读"));
-    // The module lists the lookup beside the lookups the core declares.
+    // The module lists the lookup beside the lookups the core declares, and the
+    // persistent directories this implementation contributes.
     assert.deepEqual(
       catalog.modules().find((module) => module.name === "workspace")?.functions.map((fn) => fn.name),
-      ["workspace.grep", "workspace.find", "workspace.ls", "workspace.path"],
+      ["workspace.grep", "workspace.find", "workspace.ls", "workspace.keep", "workspace.keeps", "workspace.path"],
     );
+
+    // A persistent directory is answered with its path under the keep root, and
+    // the listing names it (docs/workspaces.md#persistent-directories).
+    const kept = await run(catalog, "workspace.keep", { name: "build-cache" });
+    assert.equal(kept.ok, true);
+    assert.ok(kept.content.includes(join(root, "keep", "build-cache")));
+    const listed = await run(catalog, "workspace.keeps", {});
+    assert.equal(listed.ok, true);
+    assert.ok(listed.content.includes("build-cache"));
 
     // Another window reads the directory the answer names, by its path.
     const read = await catalog.call(
@@ -902,6 +912,8 @@ describe("tool catalog", () => {
     const removed = await run(catalog, "note_delete", { id: "n1", revision: 2 });
     assert.equal(removed.ok, true);
     assert.equal(written[2]?.input.delete, true);
+    // A delete answers its own line: it removed a note rather than writing one.
+    assert.match(removed.content, /^已删除 n1@1/);
   });
 
   it("omits the note tools when no NoteStore is configured", async () => {
