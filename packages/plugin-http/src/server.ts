@@ -74,11 +74,33 @@ async function main(): Promise<void> {
   const journal = new SqliteJournal({ path: join(DATA_DIR, "journal.sqlite") });
   const notes = new SqliteNoteStore({ path: join(DATA_DIR, "notes.sqlite"), journal });
   const supervisor = new ProcessSupervisor({ root: join(DATA_DIR, "services") });
+
+  // The workspace is chosen before the environment, because an implementation
+  // seeds its own built-in skill - the ovnfs workspace seeds the `ovnfs` skill -
+  // which the environment installs read-only beside its own. ovnfs is the host
+  // default: it is used when its binary is found and its daemon starts, and the
+  // plain directory workspace is the fallback when it is not
+  // (docs/workspaces.md).
+  const workspaces = SETTINGS.workspaces ?? {};
+  const shared = workspaces.shared ?? join(DATA_DIR, "shared");
+  await mkdir(shared, { recursive: true });
+  const { workspace, backend } = await openWorkspace({
+    root: join(DATA_DIR, "workspaces"),
+    source: shared,
+    state: workspaces.ovnfs?.state ?? join(DATA_DIR, "ovnfs", "state"),
+    mount: workspaces.ovnfs?.mount ?? join(DATA_DIR, "ovnfs", "checkouts"),
+    ...(workspaces.ovnfs?.bin === undefined ? {} : { bin: workspaces.ovnfs.bin }),
+    journal,
+    warn: (message) => console.warn(message),
+  });
+
   const environment = new DirectoryEnvironment({
     root: join(DATA_DIR, "env"),
     supervisor,
     // A service's secret is read from the environment by name, never held here.
     secretOf: (name) => process.env[name],
+    // The workspace implementation's own skill, seeded read-only.
+    builtinSkills: workspace.builtinSkills?.() ?? [],
   });
 
   // The settings are installed, so they live in `/env` where the model changes
@@ -88,10 +110,6 @@ async function main(): Promise<void> {
   const settingsPath = join(seed, "settings.json");
   await writeFile(settingsPath, JSON.stringify(SETTINGS, null, 2), "utf8");
   await environment.install([{ kind: "settings", name: "settings", path: settingsPath }]);
-
-  // The workspace: one directory per window, under the data directory. It needs
-  // nothing a host does not already have, so it runs on any platform.
-  const workspace = await openWorkspace({ root: join(DATA_DIR, "workspaces") });
 
   // The channel is created before the host and reads the board from it, so the
   // plugin holds no reference to the host and the deployment supplies one.
@@ -119,7 +137,7 @@ async function main(): Promise<void> {
   const models = await arbor.models();
   console.log(`arbor: HTTP test channel on ${address}`);
   console.log(`arbor: journal ${join(DATA_DIR, "journal.sqlite")}, model ${SETTINGS.modelTiers?.[TIER]}`);
-  console.log(`arbor: workspace ${join(DATA_DIR, "workspaces")}`);
+  console.log(`arbor: workspace ${backend === "ovnfs" ? `ovnfs (shared ${shared})` : `plain directory ${join(DATA_DIR, "workspaces")}`}`);
   console.log(`arbor: ${models.length} models in the catalog, ${arbor.channels().length} channel plugged in`);
   console.log(`arbor: open ${address} in a browser, or POST a message to ${address}/webhook`);
 

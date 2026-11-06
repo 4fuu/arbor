@@ -1,0 +1,43 @@
+{
+  "name": "@4fu/arbor-workspace-ovnfs",
+  "version": "2026.1106.0",
+  "private": true,
+  "type": "module",
+  "description": "The ovnfs Workspace: one shared folder every window reads, with per-window copy-on-write checkouts the model opens, works in and applies back (docs/workspaces.md).",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/workspace-ovnfs"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@4fu/arbor-errors": "workspace:*",
+    "@4fu/arbor-interfaces": "workspace:*",
+    "@4fu/arbor-prompt": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

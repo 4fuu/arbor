@@ -9,3 +9,4 @@
 
 export { DirectoryWorkspace, type DirectoryWorkspaceOptions } from "./directory-workspace.ts";
 export { WorkspacePathGroup } from "./path-module.ts";
+export { directorySection, directoryText, DIRECTORY_METHOD_BLOCK } from "./section.ts";

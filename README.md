@@ -27,9 +27,11 @@ everything that takes judgment, such as git, merges and conflicts, to the agent.
   guarantees what an agent cannot guarantee for itself - the record, isolation,
   exactly-once effects, the checks, dispatch. Everything that takes judgment,
   such as git, merges and conflicts, is the agent's.
-- **A directory per window.** Each window gets its own directory, and a
-  continuation keeps working in its predecessor's directory in place. It is not
-  bound to a repository; the agent clones and pushes what it needs.
+- **A shared workspace with per-window checkouts.** The default workspace is
+  ovnfs: one shared folder every window reads, and a window opens its own
+  copy-on-write checkout of the project it needs, works there and merges back
+  with `apply`. It falls back to a plain directory per window when ovnfs is not
+  installed. It is not a sandbox: ovnfs isolates files, not processes.
 - **A self-changing environment.** The model adds and changes skills, MCP
   servers and resident services itself; a `reload` validates the change and
   broadcasts it to every live window as a delta of names and descriptions.
@@ -118,7 +120,8 @@ window gets, and how a continuation keeps working in it, are in
 | [`@4fu/arbor-journal-sqlite`](packages/journal-sqlite) | the default `Journal` and `BlobStore` on SQLite |
 | [`@4fu/arbor-notes-sqlite`](packages/notes-sqlite) | the default `NoteStore` on SQLite, beside the journal |
 | [`@4fu/arbor-segmenter-jieba`](packages/segmenter-jieba) | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
-| [`@4fu/arbor-workspace-dir`](packages/workspace-dir) | the default `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
+| [`@4fu/arbor-workspace-dir`](packages/workspace-dir) | the fallback `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
+| [`@4fu/arbor-workspace-ovnfs`](packages/workspace-ovnfs) | the default `Workspace` when ovnfs is installed: one shared folder, per-window copy-on-write checkouts the model opens and applies back |
 | [`@4fu/arbor-environment-dir`](packages/environment-dir) | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
 | [`@4fu/arbor-supervisor-process`](packages/supervisor-process) | the default `Supervisor`: one host process per service, restart with backoff, logs |
 | [`@4fu/arbor-judge-jev`](packages/judge-jev) | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
@@ -151,7 +154,7 @@ deployment can see what it would be taking on before it adopts one.
 | [docs/coordination.md](docs/coordination.md) | the board, expectations, deliveries and broadcasts, staying current, effects |
 | [docs/environment.md](docs/environment.md) | skills, MCP servers and services: using, changing, reload, built-in skills, deltas |
 | [docs/memory.md](docs/memory.md) | notes, the active set, anchors, links |
-| [docs/workspaces.md](docs/workspaces.md) | per-window directories: isolation, continuity, what the agent does |
+| [docs/workspaces.md](docs/workspaces.md) | the shared folder and per-window checkouts: isolation, continuity, what the agent does |
 | [docs/tools.md](docs/tools.md) | direct tools and code mode modules |
 | [docs/prompting.md](docs/prompting.md) | how every model-facing text is written: layers, notes, deliveries, errors, judge questions, terms |
 | [docs/release.md](docs/release.md) | calendar versioning, the manual release steps, how a package is published |

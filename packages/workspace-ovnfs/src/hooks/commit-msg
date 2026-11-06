@@ -1,0 +1,34 @@
+#!/bin/sh
+# arbor commit-msg hook (docs/workspaces.md).
+#
+# Forced onto a checkout through GIT_CONFIG_COUNT/core.hooksPath, so it shadows
+# whatever hooks path the repository configured. It therefore chains to the
+# repository's own commit-msg hook first - read straight from the repository's
+# config file, which the environment override cannot reach - and only then
+# appends the Arbor-Window trailer. A repository with no commit-msg hook of its
+# own is left untouched apart from the trailer, and a hook that rejects the
+# commit stops this one, so the trailer is never added to a refused commit.
+set -u
+
+msg="$1"
+
+gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null) || gitdir=""
+if [ -n "$gitdir" ] && [ -f "$gitdir/config" ]; then
+  own_path=$(git config --file "$gitdir/config" core.hooksPath 2>/dev/null || true)
+  if [ -n "$own_path" ]; then
+    case "$own_path" in
+      /*) own_dir="$own_path" ;;
+      *) top=$(git rev-parse --show-toplevel 2>/dev/null || echo "$gitdir"); own_dir="$top/$own_path" ;;
+    esac
+  else
+    own_dir="$gitdir/hooks"
+  fi
+  own_hook="$own_dir/commit-msg"
+  if [ -x "$own_hook" ]; then
+    "$own_hook" "$msg" || exit $?
+  fi
+fi
+
+if [ -n "${ARBOR_WINDOW:-}" ] && ! grep -q '^Arbor-Window:' "$msg" 2>/dev/null; then
+  printf 'Arbor-Window: %s\n' "$ARBOR_WINDOW" >> "$msg"
+fi

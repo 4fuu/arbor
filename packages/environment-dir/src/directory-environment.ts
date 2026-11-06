@@ -144,6 +144,13 @@ export interface DirectoryEnvironmentOptions {
    * Defaults to the framework's own Chinese table.
    */
   text?: (key: string, args?: Record<string, string | number>) => string;
+  /**
+   * Extra built-in skills to seed read-only on first use, each a name and the
+   * directory its `SKILL.md` lives in. The workspace implementation contributes
+   * its own this way - the ovnfs workspace seeds the `ovnfs` skill
+   * (docs/workspaces.md).
+   */
+  builtinSkills?: readonly { name: string; source: string }[];
   /** The clock. Tests pass a fixed one. */
   now?: () => number;
 }
@@ -160,6 +167,8 @@ export class DirectoryEnvironment implements Environment {
   /** The table every refusal this implementation raises is written from. */
   private readonly text: (key: string, args?: Record<string, string | number>) => string;
   private readonly clock: () => number;
+  /** Extra built-in skills an implementation seeds, name and source directory. */
+  private readonly extraSkills: readonly { name: string; source: string }[];
   private index: IndexFile = { revision: 0, items: [] };
   /** Every environment revision, oldest first. */
   private log: EnvRevision[] = [];
@@ -173,6 +182,7 @@ export class DirectoryEnvironment implements Environment {
     this.secretOf = options.secretOf;
     this.text = options.text ?? ((key, args) => textOf(zhTextTable, key, args));
     this.clock = options.now ?? (() => Date.now());
+    this.extraSkills = options.builtinSkills ?? [];
   }
 
   async revision(): Promise<EnvRef> {
@@ -783,11 +793,12 @@ export class DirectoryEnvironment implements Environment {
   /** Copy the built-in skills in, read-only, when they are not there yet. */
   private async seedBuiltins(): Promise<void> {
     const here = fileURLToPath(new URL(".", import.meta.url));
-    for (const name of BUILTIN_SKILLS) {
+    const shipped = BUILTIN_SKILLS.map((name) => ({ name, source: join(here, "skills", name) }));
+    for (const { name, source } of [...shipped, ...this.extraSkills]) {
       if (this.index.items.some((entry) => entry.name === name)) continue;
       const target = join(this.root, "env", "skills", name);
       await mkdir(dirname(target), { recursive: true });
-      await cp(join(here, "skills", name), target, { recursive: true });
+      await cp(source, target, { recursive: true });
       const text = await readText(join(target, "SKILL.md"));
       const lines = (text ?? "").split("\n").map((line) => line.trim());
       const entry: IndexEntry = {

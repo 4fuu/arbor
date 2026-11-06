@@ -36,7 +36,7 @@ often the logs show it used.
 | `channels` | `list`, `get(ref)` |
 | `tasks` | `list`, `show(t…)` |
 | `schedule` | `list`, `create`, `update`, `cancel` |
-| `workspace` | `grep`, `find`, `ls`, and `path(window)` where the implementation answers another window's directory |
+| `workspace` | `grep`, `find`, `ls`, and, for the ovnfs workspace, `checkout(name, dir?)`, `list(window?)`, `diff(name)`, `apply(name, branch?)`, `rm(name)` and `path(window)` |
 
 A module whose backing feature is not configured is absent: `env` and
 `services` appear only when the host has an environment and a supervisor, and

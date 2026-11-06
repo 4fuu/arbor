@@ -361,6 +361,11 @@ export class Arbor {
     this.services = this.buildServices();
     this.catalog = new ToolCatalog({ services: this.services, groups: options.groups });
     for (const plugin of options.plugins ?? []) this.register(plugin);
+    // The workspace implementation contributes its own prompt section - the
+    // method the model follows for changing files - rendered in its own tag, so
+    // a host that fell back to another implementation shows that one's instead
+    // (docs/workspaces.md).
+    this.addWorkspaceSection();
     // A service's state change reaches the host, which records it and runs its
     // hooks (docs/environment.md#services).
     options.supervisor?.onStateChange?.((status) => this.serviceState(status));
@@ -376,6 +381,19 @@ export class Arbor {
   }
 
   // ---- plugins ------------------------------------------------------------
+
+  /**
+   * The workspace implementation's own prompt section, if it contributes one,
+   * registered the way a plugin's is: its block kinds on the renderer, its
+   * fixed strings merged into the table (docs/workspaces.md).
+   */
+  private addWorkspaceSection(): void {
+    const section = this.options.workspace?.promptSection?.(this.table);
+    if (section === undefined) return;
+    this.sections.push(section);
+    for (const spec of section.blocks) this.renderer.register(spec);
+    if (section.text !== undefined) this.renderer.extend(section.text);
+  }
 
   /**
    * Plug one in: its hooks, its block kinds and fixed strings on the one
@@ -1524,6 +1542,19 @@ export class Arbor {
     const changes = await this.changesSince(epoch);
     const effects = await this.eventsOfKind(previous, "send");
     const openTasks = await this.taskOf(previous);
+    // The predecessor chain's open checkouts, so a continuation sees them by name
+    // and can continue working in them or apply them (docs/workspaces.md).
+    const checkouts = await this.options.workspace?.checkouts?.(previous) ?? [];
+    const checkoutBlock =
+      checkouts.length === 0
+        ? []
+        : [
+            dataBlock(
+              textOf(this.table, "continuation.checkouts", {
+                checkouts: checkouts.map((one) => `${one.name}${one.dirty ? "（未合回）" : ""}`).join("、"),
+              }),
+            ),
+          ];
     const firstInput = this.renderer.render(
       firstInputBlocks({
         task: {
@@ -1541,7 +1572,9 @@ export class Arbor {
           openTasks,
           effects,
         },
-        ...(changes.length === 0 ? {} : { changes }),
+        ...(changes.length === 0 && checkoutBlock.length === 0
+          ? {}
+          : { changes: [...changes, ...checkoutBlock] }),
       }),
     );
     await this.journal.append({
@@ -1841,10 +1874,12 @@ export class Arbor {
     return { callId: "", ok: true, content: textOf(this.table, "result.ended", { window }) };
   }
 
-  /** True when the window is behind on a target it touched. */
+  /** True when the window is behind on a target it touched, or holds a checkout with changes not yet applied back. */
   private async hasOpenWork(window: WindowRef): Promise<boolean> {
     const gaps = await this.journal.targetsBehind(window);
-    return gaps.length > 0;
+    if (gaps.length > 0) return true;
+    const checkouts = await this.options.workspace?.checkouts?.(window);
+    return checkouts?.some((checkout) => checkout.dirty) ?? false;
   }
 
   /**

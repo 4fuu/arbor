@@ -37,7 +37,8 @@
     "@4fu/arbor-judge-jev": "workspace:*",
     "@4fu/arbor-prompt": "workspace:*",
     "@4fu/arbor-tools": "workspace:*",
-    "@4fu/arbor-workspace-dir": "workspace:*"
+    "@4fu/arbor-workspace-dir": "workspace:*",
+    "@4fu/arbor-workspace-ovnfs": "workspace:*"
   },
   "devDependencies": {
     "@4fu/arbor-agent-pi": "workspace:*",

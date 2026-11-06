@@ -67,6 +67,21 @@ export interface Settings {
   workspaces?: {
     /** How long a chain's directory is kept after its last window ended, before the host reclaims it. */
     retentionMs?: number;
+    /**
+     * The shared folder every window works in, for the ovnfs workspace: it can
+     * hold several projects and repositories, and it is read-only by convention.
+     * Absent leaves the plain-directory workspace's own root in place.
+     */
+    shared?: string;
+    /** The ovnfs daemon's paths, under the host's data directory by default. */
+    ovnfs?: {
+      /** Where the daemon keeps its state. */
+      state?: string;
+      /** Where checkouts appear. */
+      mount?: string;
+      /** The ovnfs binary to run; `ovnfs` on PATH by default. */
+      bin?: string;
+    };
   };
 
   /** The names of the secrets a configuration may use. Never their values. */

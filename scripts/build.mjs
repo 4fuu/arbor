@@ -32,6 +32,7 @@ import { buildablePackages, compilerOf } from "./workspace.mjs";
 /** The files a package ships beside its compiled output, keyed by package name. */
 const ASSETS = {
   "@4fu/arbor-environment-dir": ["skills"],
+  "@4fu/arbor-workspace-ovnfs": ["hooks", "skills"],
   "@4fu/arbor-plugin-http": ["web"],
 };
 

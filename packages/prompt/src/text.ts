@@ -98,6 +98,7 @@ export const zhTextTable: TextTable = {
   "continuation.reason": "继续窗口 {window} 未完成的工作。",
   "continuation.tasks": "未完成的任务：{openTasks}",
   "continuation.effects": "已产生的效果：{effects}",
+  "continuation.checkouts": "上个窗口链开着的检出：{checkouts}（标注「未合回」的还有改动没用 apply 合回，按需继续或合回）。",
 
   // ---- results and refusals the tools report -----------------------------
   "result.sent": "已记录 {ref}，效果已入队。",
@@ -186,6 +187,7 @@ export const zhTextTable: TextTable = {
   "refused.note.closed": "笔记存储已关闭。",
   "refused.note.ref": "{ref} 不是一个笔记引用。",
   "refused.end.no_handoff": "有未完成的工作时必须带交接内容：当前话题、进展、待办、约定。",
+  "refused.end.no_handoff.checkouts": "有未合回的检出改动：{checkouts}。带交接内容结束：当前话题、进展、待办、约定。",
   "refused.windows.ended": "窗口 {window} 已结束。",
   "refused.windows.notfound": "没有窗口 {window}。",
   "refused.notes.absent": "笔记模块未配置。",

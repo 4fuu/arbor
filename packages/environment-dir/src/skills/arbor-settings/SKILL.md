@@ -25,7 +25,9 @@
 - `modelTiers`、`defaultTier`：每一层映射到后端能跑的一个模型。
 - `window`：空闲秒数、上下文预算、预留 token。
 - `snapshot.minIntervalMs`：系统提示和记忆快照最多多久重建一次。
-- `workspaces.retentionMs`：窗口链最后一个窗口结束后，它的工作区目录再保留多久由主机回收；不设就不回收。
+- `workspaces.retentionMs`：窗口链最后一个窗口结束后，它的工作区检出再保留多久由主机回收；不设就不回收。
+- `workspaces.shared`：ovnfs 工作区的共享文件夹，所有窗口都在里面读写，按约定只读；不放多个项目和仓库时留空。
+- `workspaces.ovnfs.state` / `workspaces.ovnfs.mount`：ovnfs 守护进程的状态目录和检出挂载目录，默认在主机数据目录下。
 - `judge.modes`：每个决策是 `on`、`off` 还是 `shadow`。
 - `secrets`：允许使用的秘密的名字，只写名字，不写值。
 

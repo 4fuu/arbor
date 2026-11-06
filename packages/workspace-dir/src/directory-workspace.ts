@@ -29,6 +29,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { arborError } from "@4fu/arbor-errors";
 import type {
+  PromptSection,
   TextTable,
   ToolGroup,
   WindowRef,
@@ -38,6 +39,7 @@ import type {
   WorkspaceRef,
 } from "@4fu/arbor-interfaces";
 import { WorkspacePathGroup } from "./path-module.ts";
+import { directorySection } from "./section.ts";
 
 export interface DirectoryWorkspaceOptions {
   /** The root every workspace lives under. */
@@ -132,6 +134,16 @@ export class DirectoryWorkspace implements Workspace {
    */
   groups(table: TextTable): readonly ToolGroup[] {
     return [new WorkspacePathGroup(this, table)];
+  }
+
+  /**
+   * This implementation's own prompt text: work in your own directory in place,
+   * and treat another window's directory as read-only by convention. Its own,
+   * different from the ovnfs workspace's, so a host never shows the ovnfs method
+   * when it fell back here (docs/workspaces.md).
+   */
+  promptSection(): PromptSection {
+    return directorySection();
   }
 
   private workspacePath(ref: WorkspaceRef): string {

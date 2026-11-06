@@ -53,6 +53,9 @@ importers:
       '@4fu/arbor-workspace-dir':
         specifier: workspace:*
         version: link:../workspace-dir
+      '@4fu/arbor-workspace-ovnfs':
+        specifier: workspace:*
+        version: link:../workspace-ovnfs
     devDependencies:
       '@4fu/arbor-agent-pi':
         specifier: workspace:*
@@ -291,6 +294,25 @@ importers:
         version: 5.9.3
 
   packages/workspace-dir:
+    dependencies:
+      '@4fu/arbor-errors':
+        specifier: workspace:*
+        version: link:../errors
+      '@4fu/arbor-interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+      '@4fu/arbor-prompt':
+        specifier: workspace:*
+        version: link:../prompt
+    devDependencies:
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  packages/workspace-ovnfs:
     dependencies:
       '@4fu/arbor-errors':
         specifier: workspace:*

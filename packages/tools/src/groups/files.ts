@@ -150,7 +150,7 @@ export class FileToolGroup implements ToolGroup {
       // there and `path` is not a host path.
       return this.ran(request, await runToEnd(workspace.exec, command));
     }
-    const job = this.start(command, workspace.path);
+    const job = this.start(command, workspace.path, this.services.workspace?.bashEnv?.(window));
     const wait = numberArg(request.args, "timeout", BASH_WAIT_MS);
     await sleep(wait);
     // A command that ran to its end inside the wait window is answered with
@@ -272,10 +272,17 @@ export class FileToolGroup implements ToolGroup {
     await writeFile(target, text, "utf8");
   }
 
-  private start(command: string, cwd: string): Job {
+  private start(command: string, cwd: string, extraEnv?: Record<string, string>): Job {
     const id = `b${this.nextJob}`;
     this.nextJob += 1;
-    const child = spawn("/bin/sh", ["-c", command], { cwd });
+    // Extra environment the workspace implementation asks for - the ovnfs
+    // workspace's `ARBOR_WINDOW` and git hook path - is set on this command's
+    // own process, never on the host, so it reaches no MCP server or service.
+    const options =
+      extraEnv === undefined || Object.keys(extraEnv).length === 0
+        ? { cwd }
+        : { cwd, env: { ...process.env, ...extraEnv } };
+    const child = spawn("/bin/sh", ["-c", command], options);
     let output = "";
     const append = (chunk: Buffer): void => {
       output = (output + chunk.toString("utf8")).slice(-JOB_BUFFER);

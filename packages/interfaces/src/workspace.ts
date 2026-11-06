@@ -9,6 +9,7 @@
 
 import type { TextTable } from "./blocks.ts";
 import type { WindowRef, WorkspaceRef } from "./refs.ts";
+import type { PromptSection } from "./plugin.ts";
 import type { ToolGroup } from "./tools.ts";
 
 /** The result of one command run in a mounted workspace. */
@@ -85,6 +86,21 @@ export interface WorkspaceQuota {
   files: number;
 }
 
+/**
+ * One checkout a window's chain has open, for an implementation that gives a
+ * window a copy-on-write checkout rather than working in place (the ovnfs
+ * workspace, docs/workspaces.md). `dirty` is true when the checkout holds
+ * changes not yet applied back, which counts as open work at `end`.
+ */
+export interface WorkspaceCheckout {
+  /** The checkout's name, which begins with the window ref that opened it. */
+  name: string;
+  /** The checkout's path on the host, where a command works in it. */
+  path: string;
+  /** The checkout holds changes not yet applied back to the shared folder. */
+  dirty: boolean;
+}
+
 export interface Workspace {
   /**
    * Create the window's own directory, on first use. A window that never
@@ -121,4 +137,35 @@ export interface Workspace {
    * about it (docs/workspaces.md, docs/architecture.md#plugins).
    */
   groups?: (table: TextTable) => readonly ToolGroup[];
+
+  /**
+   * The open checkouts of a window's chain, for `end`'s open-work check, for
+   * `workspace.list` and `workspace.path`, and as the gate reclaim uses. Absent
+   * for an implementation that keeps no checkouts of its own.
+   */
+  checkouts?(window: WindowRef): Promise<readonly WorkspaceCheckout[]>;
+
+  /**
+   * The prompt section this implementation contributes, or none. It carries the
+   * method the model follows - how this implementation wants files changed -
+   * rendered in its own tag, so each implementation owns its own prompt text and
+   * a host that fell back to another implementation shows that one's instead.
+   */
+  promptSection?(table: TextTable): PromptSection;
+
+  /**
+   * The environment a bash command in this window runs with, beyond the host's
+   * own, or none. The ovnfs workspace sets `ARBOR_WINDOW` and the git hook path
+   * that stamps `Arbor-Window` onto commits made in a checkout
+   * (docs/workspaces.md). Set on the command's own process, never on the host,
+   * so it does not reach an MCP server or a service.
+   */
+  bashEnv?(window: WindowRef): Record<string, string>;
+
+  /**
+   * The built-in skills this implementation seeds into the environment, read
+   * only, or none. The ovnfs workspace seeds the `ovnfs` skill that documents
+   * the full CLI method.
+   */
+  builtinSkills?(): readonly { name: string; source: string }[];
 }

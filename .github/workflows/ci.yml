@@ -37,3 +37,36 @@ jobs:
         run: pnpm build
       - name: Pack every package
         run: node scripts/publish.mjs
+
+  ovnfs:
+    name: ovnfs real tests (FUSE)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@9bbca1e9dc2902adb87e8780fe5c98796985a62d # v6.1.1
+        with:
+          version: 12
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # FUSE mounts for real. Ubuntu's fusermount3 AppArmor profile only allows
+      # mounts below $HOME, /mnt, /media and /tmp, so the workspace's temp dirs
+      # (its state, its checkouts and the test's source repositories) are moved
+      # under $HOME.
+      - name: Set up FUSE and ovnfs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fuse3
+          curl -fsSL -o ovnfs.tar.gz https://github.com/stencil-hq/ovnfs/releases/download/v0.1.1/ovnfs_0.1.1_linux_amd64.tar.gz
+          tar -xzf ovnfs.tar.gz ovnfs
+          echo "$PWD" >> "$GITHUB_PATH"
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          ovnfs version
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Run the real ovnfs tests
+        run: pnpm --filter @4fu/arbor-workspace-ovnfs test
