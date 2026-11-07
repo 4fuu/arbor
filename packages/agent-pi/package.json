@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-agent-pi",
-  "version": "2026.1106.1",
+  "version": "2026.1107.0",
   "private": true,
   "type": "module",
   "description": "The default AgentBackend: pi-agent-core in process, with its own system prompt and no pi type crossing the interface.",

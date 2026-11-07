@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-search-zvec",
-  "version": "2026.1106.1",
+  "version": "2026.1107.0",
   "private": true,
   "type": "module",
   "description": "The optional semantic search channel: event text embedded and searched by meaning with zvec, an embedded vector database.",

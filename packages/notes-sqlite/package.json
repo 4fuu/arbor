@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-notes-sqlite",
-  "version": "2026.1106.1",
+  "version": "2026.1107.0",
   "private": true,
   "type": "module",
   "description": "The default NoteStore: one copy of every note, checked writes, revisions, anchors, the active set and search on SQLite beside the journal: lexical, and semantic when the optional channel is installed.",
