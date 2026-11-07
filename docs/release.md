@@ -11,8 +11,19 @@ the date in `Asia/Hong_Kong`. The month is not padded, the day is two digits,
 and the first release of a day uses revision zero. For example, `2026.1106.0`
 is the first release on 2026-11-06, and `2026.1106.1` is the second that day.
 
-Every package is published at the same version, so one version is set across
-all of them and one tag marks all of them.
+A release publishes only what changed. The packages that changed since the
+last release tag take the new version, and so does every package that depends
+on one of them, directly or through another, or takes it as a peer: the
+published packages name each other at exact versions, so a dependent left at
+its old version would keep installing the old code. Every other package keeps
+the version it was last released at and is not published again. One tag,
+`v<version>`, marks the release; the packages it published are the ones at that
+version.
+
+A change is any committed change under the package's directory since the tag,
+except its test files (`*.test.ts` under `src`), which are never published. A
+change outside every package, such as the root `README.md` or
+`tsconfig.base.json`, moves no version on its own.
 
 ## Before you start
 
@@ -35,9 +46,13 @@ all of them and one tag marks all of them.
 
   The single quotes keep `${NPM_TOKEN}` literal; npm expands it when it reads
   the file. Delete `/tmp/arbor-npmrc` when the release is done.
+- Fetch the tags (`git fetch --tags`): changes are measured from the newest
+  release tag, and without one every package takes the version.
 - Pick the version: today's date in `Asia/Hong_Kong`
-  (`TZ=Asia/Hong_Kong date +%Y.%-m%d`), then the next revision not already on
-  the registry (`npm view @4fu/arbor-core versions`).
+  (`TZ=Asia/Hong_Kong date +%Y.%-m%d`), then the next revision after the
+  newest release tag of that day (`git tag --list 'v<date>.*'`). A package
+  that did not change in an earlier release keeps its old version, so
+  `npm view @4fu/arbor-core versions` alone can miss a revision.
 
 ## Release
 
@@ -50,18 +65,22 @@ node scripts/publish.mjs          # dry run: what each tarball would contain
 node scripts/publish.mjs --publish
 ```
 
-`scripts/set-version.mjs` writes the version into every `package.json`,
-including the repository's own root, and checks its form. The workspace links
-in `pnpm-lock.yaml` carry no version, so nothing else changes.
-`scripts/publish.mjs --publish` refuses a version that does not carry today's
-date in `Asia/Hong_Kong`, then publishes each package in turn.
+`scripts/set-version.mjs` checks the version's form, writes it into the
+`package.json` of each package in the release, and prints every package with
+its new version and why (`changed since v2026.1105.0`, `depends on
+@4fu/arbor-lexical`) or the version it stays at. It refuses when no package
+changed. The workspace links in `pnpm-lock.yaml` carry no version, so nothing
+else changes. The dry run packs every package and names the ones in the
+release; `scripts/publish.mjs --publish` refuses a version that does not carry
+today's date in `Asia/Hong_Kong`, then publishes only the packages at the
+release's version, each in turn.
 
 With a stage-only token, run `node scripts/publish.mjs --stage` instead: it
 stages each package with `npm stage publish`, and nothing is installable yet.
 List the stages with `npm stage list @4fu/arbor-<name>` and hand them to the
 owner, who approves each one with 2FA, on npmjs.com (Staged Packages) or with
 `npm stage approve <stage-id>`. Approve all of them: the packages name each
-other at the exact release version, so a partial approval does not install.
+other at exact versions, so a partial approval does not install.
 
 Once every package is live, record the release in Git:
 
@@ -76,7 +95,8 @@ the registry, and a version, published or staged, can never be reused. Fix
 the cause, then publish (or stage) each remaining package from its `dist`
 with `npm publish --access public` (or `npm stage publish`); running the
 script again stops at the first package already there. Check the result with
-`npm view @4fu/arbor-<name> version` for every package. A version npm reports
+`npm view @4fu/arbor-<name>@<version> version` for every package in the
+release. A version npm reports
 as published can take ten minutes or more to appear on the registry, so wait
 for every package before you conclude one is missing, and do not publish it
 again.
@@ -90,8 +110,9 @@ that - Node refuses to strip types inside `node_modules` - so
 and packs or publishes from there:
 
 - `exports`, `types` and `main` are rewritten to `dist`-relative paths;
-- a `workspace:*` dependency or peer becomes the release version, so a
-  release's packages always name each other exactly;
+- a `workspace:*` dependency or peer becomes that package's own version, the
+  one it was last released at, so the packages always name each other
+  exactly;
 - `private`, `scripts` and `devDependencies` are dropped, because they mean
   nothing outside the repository;
 - `license`, `repository`, `engines`, `description` and

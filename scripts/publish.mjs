@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 /**
- * Pack or publish every package from its `dist` directory.
+ * Pack every package, or publish the release's packages, from each `dist`.
  *
- *   node scripts/publish.mjs              `npm pack --dry-run` for each package
- *   node scripts/publish.mjs --publish    `npm publish` for each one
- *   node scripts/publish.mjs --stage      `npm stage publish` for each one; a
- *                                         maintainer approves each stage with 2FA
+ *   node scripts/publish.mjs              `npm pack --dry-run` for every package
+ *   node scripts/publish.mjs --publish    `npm publish` for each one in the release
+ *   node scripts/publish.mjs --stage      `npm stage publish` for each one in the
+ *                                         release; a maintainer approves each
+ *                                         stage with 2FA
+ *
+ * The release is the packages at the newest version in the workspace:
+ * `scripts/set-version.mjs` gives it only to the packages that changed and
+ * their dependents, and every other package keeps a version already on the
+ * registry, so it is not published again.
  *
  * The repository's own `package.json` files point their `exports` at the
  * TypeScript sources, because that is what development runs: Node strips the
@@ -17,7 +23,7 @@
  * Everything the published manifest carries comes from the repository's
  * manifest: only what must differ does. The `exports`, `types` and `main` are
  * rewritten to `dist`-relative paths, a workspace range such as
- * `workspace:*` becomes the release version, and the fields that only mean
+ * `workspace:*` becomes that package's own version, and the fields that only mean
  * something in the repository - `private`, `scripts`, `devDependencies` - are
  * dropped. `license`, `repository`, `engines`, `description` and
  * `publishConfig.access` are carried over unchanged.
@@ -35,18 +41,23 @@ const publish = stage || process.argv.includes("--publish");
 const dryRun = !publish;
 const root = new URL("..", import.meta.url);
 
-/** The one version every package is published with. */
+/** A `YYYY.MDD.REVISION` version as numbers, so two compare in order. */
+function parts(version) {
+  return version.split(".").map((part) => Number.parseInt(part, 10));
+}
+
+/** The newest version any package carries: the release's version. */
 function releaseVersion(packages) {
-  const versions = new Set(packages.map((one) => one.manifest.version));
-  if (versions.size > 1) {
-    const found = packages.map((one) => `${one.name}@${one.manifest.version}`).join(", ");
-    throw new Error(`every package must carry the same version; found ${found}`);
-  }
-  const [version] = versions;
-  if (publish && version === "0.0.0") {
+  const versions = packages.map((one) => one.manifest.version);
+  const newest = versions.reduce((best, one) => {
+    const [a, b] = [parts(one), parts(best)];
+    const order = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+    return order > 0 ? one : best;
+  });
+  if (publish && newest === "0.0.0") {
     throw new Error("set the release version with node scripts/set-version.mjs first");
   }
-  return version;
+  return newest;
 }
 
 /** Where one `exports` entry or `types`/`main` field points once published. */
@@ -74,32 +85,33 @@ function rewriteExports(exports) {
   return rewritten;
 }
 
-/** A workspace range becomes the release version; an external one is kept. */
-function pin(dependencies, version) {
+/** A workspace range becomes that package's own version; an external one is kept. */
+function pin(dependencies, versions) {
   if (dependencies === undefined) return undefined;
   const pinned = {};
   for (const [name, range] of Object.entries(dependencies)) {
-    pinned[name] = range.startsWith("workspace:") ? version : range;
+    if (!range.startsWith("workspace:")) pinned[name] = range;
+    else if (versions.has(name)) pinned[name] = versions.get(name);
+    else throw new Error(`${name} is not a published workspace package`);
   }
   return pinned;
 }
 
 /** The manifest one package is published with, derived from its own. */
-function publishManifest(package_, version, files) {
+function publishManifest(package_, versions, files) {
   const source = package_.manifest;
   const manifest = { ...source };
   delete manifest.private;
   delete manifest.scripts;
   delete manifest.devDependencies;
-  manifest.version = version;
   manifest.exports = rewriteExports(source.exports);
   if (typeof source.types === "string") manifest.types = distPath(source.types, "types");
   if (typeof source.main === "string") manifest.main = distPath(source.main, "default");
   manifest.files = files;
-  const dependencies = pin(source.dependencies, version);
+  const dependencies = pin(source.dependencies, versions);
   if (dependencies !== undefined) manifest.dependencies = dependencies;
   else delete manifest.dependencies;
-  const peerDependencies = pin(source.peerDependencies, version);
+  const peerDependencies = pin(source.peerDependencies, versions);
   if (peerDependencies !== undefined) manifest.peerDependencies = peerDependencies;
   else delete manifest.peerDependencies;
   return manifest;
@@ -175,11 +187,15 @@ async function checkBuild(package_) {
   }
 }
 
-const packages = await buildablePackages();
-if (packages.length === 0) throw new Error("no package carries a tsconfig.build.json");
-const version = releaseVersion(packages);
+const all = await buildablePackages();
+if (all.length === 0) throw new Error("no package carries a tsconfig.build.json");
+const version = releaseVersion(all);
 if (publish) checkDate(version);
-console.log(`${dryRun ? "packing" : stage ? "staging" : "publishing"} ${packages.length} packages at ${version}`);
+const versions = new Map(all.map((one) => [one.name, one.manifest.version]));
+const release = all.filter((one) => one.manifest.version === version);
+const packages = dryRun ? all : release;
+console.log(`${version}: ${release.map((one) => one.name).join(", ")}`);
+console.log(`${dryRun ? "packing" : stage ? "staging" : "publishing"} ${packages.length} of ${all.length} packages`);
 
 for (const package_ of packages) {
   await checkBuild(package_);
@@ -187,7 +203,7 @@ for (const package_ of packages) {
   const files = (await filesUnder(package_.dist)).filter(
     (one) => one !== "package.json" && one !== "README.md" && one !== "LICENSE",
   );
-  const manifest = publishManifest(package_, version, files);
+  const manifest = publishManifest(package_, versions, files);
   await writeFile(join(package_.dist, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
   const result = spawnSync(...(publish ? publishCommand() : packCommand()), {
