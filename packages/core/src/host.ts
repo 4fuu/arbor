@@ -222,8 +222,15 @@ export interface QueuedItem extends QueuedInput {
   task?: TaskInput;
 }
 
+/**
+ * The host's own timers - a window's idle end, a chain's retention reclaim, a
+ * held window's retry - are housekeeping and do not keep the process alive:
+ * how long the process runs is the embedder's to decide, through its channels
+ * or by calling `close()`. A process that ends without `close()` loses only
+ * what the journal already lets a restart rebuild.
+ */
 const systemTimers: Timers = {
-  setTimeout: (handler, ms) => ({ id: setTimeout(handler, ms) }),
+  setTimeout: (handler, ms) => ({ id: setTimeout(handler, ms).unref() }),
   clearTimeout: (timer) => clearTimeout(timer.id as ReturnType<typeof setTimeout>),
 };
 

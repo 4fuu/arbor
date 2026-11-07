@@ -169,6 +169,12 @@ host started. It opens no continuation and starts no new turn, so a host that
 closes changes nothing the journal does not already hold; each window it stopped
 is recorded with the reason `host_restart`.
 
+The host's own timers - a window's idle end, a chain's retention reclaim, a
+held window's retry - do not keep the process alive: how long the process runs
+is the embedder's to decide, through its channels or its own lifetime. A
+process that ends without `close()` loses nothing the journal does not hold;
+the next host's `start()` continues what was running.
+
 A host restart is a new host over the same journal. Its `start()` continues
 every window that was still running and every window a `close` stopped, the way
 the hard limit does; effects already made are not made again. A continued window

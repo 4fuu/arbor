@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1786,5 +1787,37 @@ describe("the host's own refusals", () => {
         return true;
       },
     );
+  });
+});
+
+/**
+ * A host's own timers do not keep its process alive. Run in a child process,
+ * so what is measured is whether the process exits by itself.
+ */
+const TIMERS_SCRIPT = `
+import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
+import { Arbor } from "./src/host.ts";
+import { ScriptedBackend } from "./src/testing.ts";
+const backend = new ScriptedBackend();
+const arbor = new Arbor({ journal: new SqliteJournal({ path: ":memory:" }), backend });
+backend.attach(arbor.windowControl());
+backend.script([{ text: "完成" }]);
+await arbor.open({ kind: "batch", reason: "r", targets: ["t:1"], time: Date.now(), content: [] });
+await backend.finished();
+// The window is live and its idle timer is armed; nothing calls close().
+console.log("opened");
+`;
+
+describe("host timers", () => {
+  it("lets the process exit with a live window, without close()", () => {
+    const started = Date.now();
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", TIMERS_SCRIPT], {
+      cwd: new URL("..", import.meta.url),
+      encoding: "utf8",
+      timeout: 20000,
+    });
+    assert.match(child.stdout, /opened/, child.stderr);
+    assert.equal(child.signal, null, "the process ended by itself, not by the test's timeout");
+    assert.ok(Date.now() - started < 20000);
   });
 });
