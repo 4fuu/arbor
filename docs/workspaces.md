@@ -179,6 +179,13 @@ plain-directory one. Where the two restate the same key - `workspace.path`'s
 description, result and refusal - each carries its own wording, and a host's
 table is its own copy, so one host's strings never reach another's.
 
+A section is registered once and rendered per window, and every render names the
+window it is for, so an implementation that serves several sessions - one
+workspace per session, as a host embedded in another harness runs - names the
+window in its own section and declares that section per window: each window then
+reads the section for itself, and the rest of the prefix stays shared
+([prompting.md](prompting.md#plugin-sections-that-change)).
+
 ## Detection and restart
 
 At start the host finds the `ovnfs` binary, checks its version against the
@@ -221,5 +228,12 @@ working where, and the judge takes it into account when dispatching
   and `Workspace.reclaim`. What it does not reclaim is a persistent directory:
   those live outside the windows' own directories and outlive the chain, the
   period and the restart ([above](#persistent-directories)).
+- An implementation whose workspace is a directory somebody else owns - the
+  user's own project directory, which nothing here may remove - answers
+  `Workspace.reclaimable` with `false` and never reclaims anything. The host
+  then asks for no ref to reclaim and arms no deadline, so nothing is reclaimed
+  and no failure is recorded: a workspace that is not the host's own to delete
+  is not the host's to clean up. The two implementations the framework ships
+  own their directories and say nothing, which is the same as saying yes.
 
 A deployment that never works with files needs no workspace.

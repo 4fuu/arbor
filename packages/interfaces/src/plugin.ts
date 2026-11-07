@@ -17,6 +17,7 @@ import type { EffectExecutor } from "./effects.ts";
 import type { EnvDraft } from "./environment.ts";
 import type { JudgeCriteria } from "./judge.ts";
 import type { Hooks } from "./hooks.ts";
+import type { WindowRef } from "./refs.ts";
 import type { TaskSource } from "./task.ts";
 import type { ExternalTool, ExternalToolSource } from "./tools.ts";
 
@@ -33,8 +34,17 @@ export interface PromptSection {
   tag: string;
   /** The block kinds its inputs use, which the renderer maps to text. */
   blocks: readonly BlockKindSpec[];
-  /** Its content, as blocks. The plugin hands blocks, never finished text. */
-  content(): readonly Block[] | Promise<readonly Block[]>;
+  /**
+   * Its content, as blocks. The plugin hands blocks, never finished text.
+   *
+   * `window` is the window the section is rendered for, which the host names on
+   * every render: the epoch a window opens with, a delta of the changed lines
+   * while it runs. A section whose content is the same for every window ignores
+   * it; one that serves several sessions - one workspace per session, each
+   * naming the window it serves - answers for that window
+   * (docs/prompting.md#plugin-sections-that-change).
+   */
+  content(window?: WindowRef): readonly Block[] | Promise<readonly Block[]>;
   /**
    * The fixed strings its own blocks write, merged into the host's text table.
    * A plugin names no secret here, and writes no prompt text of its own: its
@@ -50,6 +60,16 @@ export interface PromptSection {
    * never changes once the host has rendered it.
    */
   revision?(): string | number | Promise<string | number>;
+  /**
+   * True when this section's content differs from window to window - a section
+   * that serves several sessions, one workspace per session, naming the window
+   * it serves. The host then renders it for each window instead of freezing it
+   * with the epoch, and that window's prefix is its own where this section is
+   * concerned; every other window still shares the epoch's prefix
+   * (docs/prompting.md#plugin-sections-that-change). Absent, like `false`: the
+   * section says the same thing to every window and is frozen with the epoch.
+   */
+  perWindow?: boolean;
   /**
    * True when the section is material from outside the framework - a third
    * party's prompt text, such as the sections a DeepSeek Harness plugin

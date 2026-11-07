@@ -7,6 +7,14 @@
  * Rendering is deterministic: no timestamps or counters reach the prefix, and
  * the notes are sorted by id. What changed since the epoch goes into the first
  * input instead.
+ *
+ * A prefix is built for the window that asks for it, because a plugin section
+ * may declare itself per window - one workspace per session, naming the window
+ * it serves - and then the prefix is that window's own
+ * (docs/prompting.md#plugin-sections-that-change). Every other window keeps
+ * sharing one prefix. The active set stays frozen for its period whichever
+ * prefix is built, so a per-window section costs one render rather than one
+ * more read of the notes.
  */
 
 import type {
@@ -17,6 +25,7 @@ import type {
   NoteSummary,
   Settings,
   TextTable,
+  WindowRef,
 } from "@4fu/arbor-interfaces";
 import type { NoteStore } from "@4fu/arbor-interfaces";
 import { Renderer, renderMemorySnapshot, renderSystemPrompt, sectionRevision } from "@4fu/arbor-prompt";
@@ -44,6 +53,14 @@ export interface PromptEpoch {
    * delta (docs/prompting.md#plugin-sections-that-change).
    */
   sections: readonly RenderedPluginSection[];
+  /**
+   * The window this prefix was built for, when it was built for one. A section
+   * that declares itself per window - one workspace per session, naming the
+   * window it serves - makes the prefix that window's own, so an epoch is reused
+   * only for the window it was built for
+   * (docs/prompting.md#plugin-sections-that-change).
+   */
+  window?: WindowRef;
   /** The epoch's version, so a later window can ask what changed since. */
   version: number;
   /** When the epoch was built. */
@@ -92,6 +109,12 @@ export class SnapshotBuilder {
   private readonly options: SnapshotBuilderOptions;
   private readonly renderer: Renderer;
   private current: PromptEpoch | undefined;
+  /**
+   * The active set of the current period, kept across the prefixes built inside
+   * it: a per-window section rebuilds the prefix for each window and reads the
+   * notes once per period, not once per window.
+   */
+  private active: { items: readonly NoteSummary[]; at: number } | undefined;
   private version = 0;
 
   constructor(options: SnapshotBuilderOptions = {}) {
@@ -111,17 +134,33 @@ export class SnapshotBuilder {
     return settings;
   }
 
-  /** The frozen prefix of the current epoch. */
-  async epoch(): Promise<PromptEpoch> {
+  /**
+   * The frozen prefix of the current epoch, for the window it is asked for.
+   *
+   * `window` is the window the prefix is built for. A section that declares
+   * itself per window - one workspace per session, naming the window it serves -
+   * makes the prefix that window's own, so an epoch built for one window is
+   * never handed to another; a host whose sections all say the same thing to
+   * every window keeps one prefix shared by all of them. The active set stays
+   * frozen for its own period either way, so a per-window section costs one
+   * render and not one more read of the notes
+   * (docs/memory.md#snapshot-epochs).
+   */
+  async epoch(window?: WindowRef): Promise<PromptEpoch> {
     const now = this.options.now?.() ?? Date.now();
     const minInterval = this.options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
     const plugins = this.options.plugins === undefined ? [] : this.options.plugins();
+    // One section that renders per window is enough to make the prefix that
+    // window's own, so the epoch is then reused only for the window it was built
+    // for (docs/prompting.md#plugin-sections-that-change).
+    const perWindow = plugins.some((section) => section.perWindow === true);
     // A plugin section that moved since this epoch was built rebuilds it at
     // once: a window opened now opens with what the section says now, rather
     // than a stale prefix plus a delta of its own opening
     // (docs/prompting.md#plugin-sections-that-change).
     if (
       this.current !== undefined &&
+      (!perWindow || this.current.window === window) &&
       now - this.current.time < minInterval &&
       !(await this.sectionsMoved(this.current, plugins))
     ) {
@@ -141,12 +180,14 @@ export class SnapshotBuilder {
         plugins,
       },
       this.renderer,
+      window,
     );
     const epoch: PromptEpoch = {
       system,
       memory: renderMemorySnapshot(notes, this.renderer),
       envRevision,
       sections,
+      ...(perWindow ? { window } : {}),
       version: this.version,
       time: now,
     };
@@ -173,6 +214,13 @@ export class SnapshotBuilder {
   private async activeNotes(): Promise<readonly NoteSummary[]> {
     const notes = this.options.notes;
     if (notes === undefined) return [];
+    const now = this.options.now?.() ?? Date.now();
+    const minInterval = this.options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
+    // The active set is frozen for one period, not for one prefix: a section
+    // that renders per window rebuilds the prefix for each window it serves,
+    // and neither the notes nor the judge call behind them is rebuilt with it
+    // (docs/memory.md#snapshot-epochs).
+    if (this.active !== undefined && now - this.active.at < minInterval) return this.active.items;
     const budget = this.activeBudget();
     const judgeShare = this.activeSetShare();
     const candidates = (await notes.score()).items.map((note) => ({
@@ -188,6 +236,7 @@ export class SnapshotBuilder {
       judgeShare,
       ...(judgeKeep === undefined || judgeKeep.length === 0 ? {} : { judgeKeep }),
     });
+    this.active = { items: snapshot.items, at: now };
     return snapshot.items;
   }
 

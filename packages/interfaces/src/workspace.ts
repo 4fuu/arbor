@@ -142,14 +142,32 @@ export interface Workspace {
   /** The workspace's size and file count, for a quota a deployment sets. */
   quota(workspace: WorkspaceRef): Promise<WorkspaceQuota>;
 
-  /** Reclaim the workspace after the retention period. */
+  /**
+   * Reclaim the workspace after the retention period.
+   *
+   * An implementation whose workspace is a directory somebody else owns - a
+   * host's own project directory, which nothing here may remove - has no honest
+   * answer to give here: it says so with `reclaimable`, below, and the host
+   * never asks.
+   */
   reclaim(workspace: WorkspaceRef): Promise<void>;
+
+  /**
+   * Whether this implementation reclaims a workspace at all. `false` for one
+   * whose directory belongs to somebody else - the user's own project, which
+   * nothing here may remove - and the host then neither asks `refOf` for a ref
+   * to reclaim nor arms a retention deadline, so nothing is reclaimed and no
+   * failure is recorded either (docs/workspaces.md#lifecycle). Absent, like
+   * `true`: the implementation owns what it created and `reclaim` removes it.
+   */
+  reclaimable?(): boolean | Promise<boolean>;
 
   /**
    * The workspace a window's chain already has, or `undefined` when it has
    * none - the window never touched files, or the directory was reclaimed. The
    * host asks for it to reclaim a chain's directory once its last window has
-   * ended and the retention period has passed, which a restart has to survive
+   * ended and the retention period has passed - of an implementation that
+   * reclaims at all (`reclaimable`, above) - which a restart has to survive
    * (docs/workspaces.md#lifecycle).
    */
   refOf(window: WindowRef): Promise<WorkspaceRef | undefined>;
@@ -200,6 +218,11 @@ export interface Workspace {
    * method the model follows - how this implementation wants files changed -
    * rendered in its own tag, so each implementation owns its own prompt text and
    * a host that fell back to another implementation shows that one's instead.
+   *
+   * The host registers the section once and renders it per window, so a section
+   * that serves several sessions - one workspace per session, each naming the
+   * window it serves - answers for the window it is rendered for through
+   * `content(window)` (docs/prompting.md#plugin-sections-that-change).
    */
   promptSection?(table: TextTable): PromptSection;
 

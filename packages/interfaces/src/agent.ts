@@ -381,7 +381,15 @@ export interface ToolCall {
 export interface ToolResult {
   callId: string;
   ok: boolean;
-  /** Stable fields, bounded, in the core's error shape when it failed. */
+  /**
+   * Stable fields, bounded, in the core's error shape when it failed.
+   *
+   * A refusal carries its own wording here as well as in `error`: the rule, the
+   * message and the next action, in the one form the journal records a refusal
+   * with. So an embedding that writes its own log passes the result through as
+   * it stands instead of reassembling the three parts, and what the record
+   * holds is what the caller was handed.
+   */
   content: string;
   /**
    * The tool that was called, as the prompt names it. A refusal carries it so

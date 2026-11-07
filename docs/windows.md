@@ -52,7 +52,10 @@ in the journal ([journal.md](journal.md)).
   the environment ([environment.md](environment.md)) or the direct tools
   declared from outside the core ([tools.md](tools.md#external-tools-that-change))
   changed. Every window opened in one epoch has the same prefix. Changes since
-  the epoch go into the first input.
+  the epoch go into the first input. The one exception is a prompt section that
+  declares itself per window, which is rendered for each window rather than
+  frozen with the epoch, so that window's prefix is its own where that section is
+  concerned ([prompting.md](prompting.md#plugin-sections-that-change)).
 - The prefix never changes while a window is open. Rendering is
   deterministic: no timestamps or counters in the system prompt or snapshot.
 - **A plugin's prompt section can change under a running window.** It declares

@@ -13,9 +13,13 @@ import type { CallContext, DirectToolSpec, Settings, ToolCall, ToolGroup, ToolRe
 import type {
   OutsideEvent,
   Plugin,
+  PromptSection,
   TaskInput,
   TaskSource,
   Unsubscribe,
+  WindowRef,
+  Workspace,
+  WorkspaceRef,
 } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { RefAllocator } from "./refs.ts";
@@ -145,10 +149,64 @@ class ContributedSwap implements ToolGroup {
   }
 }
 
+/**
+ * A workspace whose directory is somebody else's - the user's own project, which
+ * nothing here may remove. It says so with `reclaimable`, and records every
+ * window the host asked which workspace to reclaim, which must be none
+ * (docs/workspaces.md#lifecycle).
+ */
+class ForeignWorkspace extends DirectoryWorkspace {
+  readonly asked: WindowRef[] = [];
+
+  reclaimable(): boolean {
+    return false;
+  }
+
+  override async refOf(window: WindowRef): Promise<WorkspaceRef | undefined> {
+    this.asked.push(window);
+    return super.refOf(window);
+  }
+}
+
+/**
+ * A workspace that serves several sessions, one per window, and says so: its
+ * prompt section renders for the window it is rendered for and records which
+ * windows it was asked about (docs/prompting.md#plugin-sections-that-change).
+ */
+class PerSessionWorkspace extends DirectoryWorkspace {
+  readonly rendered: (WindowRef | undefined)[] = [];
+
+  override promptSection(): PromptSection {
+    return {
+      tag: "workspace",
+      perWindow: true,
+      blocks: [
+        {
+          kind: "workspace_session",
+          data: false,
+          fields: [{ name: "window", type: "string", required: true }],
+          lines: ["workspace.method.session"],
+        },
+      ],
+      text: { "workspace.method.session": "本段为窗口 {window} 渲染。" },
+      content: (window?: WindowRef) => {
+        this.rendered.push(window);
+        return [{ kind: "workspace_session", fields: { window: window ?? "" } }];
+      },
+    };
+  }
+}
+
 /** One scripted window: the host sees a backend it can drive by hand. */
 async function host(
   options: {
-    workspace?: boolean;
+    /**
+     * The workspace the host runs with: an implementation of the test's own, or
+     * `false` for none. A plain directory under the test's root by default.
+     */
+    workspace?: Workspace | false;
+    /** The test's own root, when it names one; a fresh temporary directory by default. */
+    root?: string;
     environment?: boolean;
     /** The retention period the host reclaims a chain's directory after. */
     retentionMs?: number;
@@ -174,7 +232,7 @@ async function host(
 }> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const timers = new ManualTimers();
-  const root = await mkdtemp(join(tmpdir(), "arbor-core-"));
+  const root = options.root ?? (await mkdtemp(join(tmpdir(), "arbor-core-")));
   const backend = new ScriptedBackend();
   const probe = new ProbeGroup();
   const environment = options.environment === true ? new DirectoryEnvironment({ root }) : undefined;
@@ -184,7 +242,11 @@ async function host(
     timers,
     now: options.now ?? (() => 1700000000000),
     judge: options.judge ?? new QuietJudge(),
-    ...(options.workspace === false ? {} : { workspace: new DirectoryWorkspace({ root }) }),
+    ...(options.workspace === undefined
+      ? { workspace: new DirectoryWorkspace({ root }) }
+      : options.workspace === false
+        ? {}
+        : { workspace: options.workspace }),
     ...(environment === undefined ? {} : { environment }),
     ...(options.retentionMs === undefined ? {} : { settings: { workspaces: { retentionMs: options.retentionMs } } }),
     ...(options.settings === undefined ? {} : { settings: options.settings }),
@@ -485,6 +547,30 @@ describe("one window end to end", () => {
     const first = backend.opened[1]?.firstInput ?? "";
     assert.ok(!first.includes("插件段落已变更"));
     assert.equal((await journal.list({ kinds: ["delivery"] })).items.length, 0);
+  });
+
+  it("renders a workspace's prompt section for the window it is opened with", async () => {
+    // One workspace per session, each naming the window it serves: the host
+    // registers the section once and renders it per window
+    // (docs/prompting.md#plugin-sections-that-change).
+    const root = await mkdtemp(join(tmpdir(), "arbor-core-"));
+    const workspace = new PerSessionWorkspace({ root });
+    const { arbor, backend } = await host({ root, workspace });
+    backend.script([{ text: "第一轮" }, { text: "第二轮" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.open(task);
+    await backend.finished();
+
+    // Each window's prefix carries its own line, not a guess at one.
+    const first = backend.opened[0]?.prompt.system ?? "";
+    const second = backend.opened[1]?.prompt.system ?? "";
+    assert.ok(first.includes("本段为窗口 c1 渲染。"), first);
+    assert.ok(second.includes("本段为窗口 c2 渲染。"), second);
+    assert.ok(!first.includes("c2"), "the first window is not told about the second");
+    // Every render named the window it was for, so no render had to guess.
+    assert.ok(workspace.rendered.length >= 2);
+    assert.ok(workspace.rendered.every((window) => window !== undefined));
   });
 
   it("says there is no handoff and gives the order to recover", async () => {
@@ -1205,6 +1291,31 @@ describe("workspace retention", () => {
     assert.equal(timers.size, 0);
   });
 
+  it("neither asks nor reclaims for a workspace that is not the host's own", async () => {
+    // The workspace is the user's own project directory: nothing here may remove
+    // it, so the implementation says it is not reclaimable and the host never
+    // asks which ref to reclaim (docs/workspaces.md#lifecycle).
+    const root = await mkdtemp(join(tmpdir(), "arbor-project-"));
+    const workspace = new ForeignWorkspace({ root });
+    const { arbor, backend, timers } = await host({ root, retentionMs, workspace });
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "写完了" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    await record.running;
+
+    // No ref was asked for, no deadline was armed, and nothing was removed.
+    assert.deepEqual(workspace.asked, []);
+    assert.equal(timers.size, 0);
+    assert.ok(existsSync(join(root, "ws1")));
+    timers.fireAll();
+    await turn();
+    assert.ok(existsSync(join(root, "ws1")));
+  });
+
   it("keeps the deadline across a restart, counted from the end the journal recorded", async () => {
     const { arbor, journal, backend, root } = await endedChain({ retentionMs });
     // `close` leaves nothing armed and reclaims nothing.
@@ -1722,6 +1833,45 @@ describe("a refusal to open a window", () => {
     const recorded = await journal.list({ kinds: ["dispatch"] });
     assert.equal(recorded.items.length, 1);
     assert.ok((recorded.items[0]?.body ?? "").includes("policy.window.denied"));
+  });
+});
+
+/**
+ * What a refused call answers with
+ * (docs/prompting.md#rules-surface-where-they-bite): the rule, the one line the
+ * model reads and the next action, carried on the result itself in the one form
+ * a refusal is written in, so an embedding that keeps its own journal passes the
+ * result through as it stands.
+ */
+describe("what a refused call answers", () => {
+  it("carries the refusal's own wording on the result, and records the same bytes", async () => {
+    const seen: ToolResult[] = [];
+    const plugin: Plugin = {
+      name: "watcher",
+      hooks: {
+        afterToolCall: (context) => {
+          if (context.result !== undefined) seen.push(context.result);
+        },
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    backend.script([{ tool: "no_such_tool", args: {} }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await arbor.end(record.window);
+    await backend.finished();
+
+    const wanted = `tool.unknown ${textOf(zhTextTable, "refused.unknown_tool", {
+      name: "no_such_tool",
+    })} ${textOf(zhTextTable, "next.unknown_tool")}`;
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]?.ok, false);
+    // The structured part stays, and the wording rides on the result with it.
+    assert.equal(seen[0]?.error?.rule, "tool.unknown");
+    assert.equal(seen[0]?.content, wanted);
+    // What the record holds is what the caller was handed.
+    const results = await journal.list({ kinds: ["tool_result"] });
+    assert.equal(results.items[0]?.body, wanted);
   });
 });
 

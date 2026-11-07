@@ -14,6 +14,7 @@ import type {
   PromptSection,
   Settings,
   TextTable,
+  WindowRef,
 } from "@4fu/arbor-interfaces";
 import type { Block } from "@4fu/arbor-interfaces";
 import { Renderer } from "./render.ts";
@@ -152,12 +153,18 @@ function outsideBlock(content: readonly Block[]): Block {
  * One plugin's prompt section, rendered in its tag, with what it produced. The
  * revision it reports is what a later call compares against, so an unchanged
  * section is never rendered twice.
+ *
+ * `window` is the window this render is for: a section that serves several
+ * sessions answers for that one, and a section whose content is the same
+ * everywhere renders the same text for each
+ * (docs/prompting.md#plugin-sections-that-change).
  */
 export async function renderPluginSection(
   section: PromptSection,
   renderer: Renderer,
+  window?: WindowRef,
 ): Promise<RenderedPluginSection> {
-  const content = await section.content();
+  const content = await section.content(window);
   return {
     tag: section.tag,
     text: renderer.render(section.outside === true ? [outsideBlock(content)] : content),
@@ -167,16 +174,18 @@ export async function renderPluginSection(
 }
 
 /**
- * Every plugin section, rendered once, in the order they registered. A section
- * whose content renders to nothing is still listed - with empty text - so a
- * later call can tell a section that stayed empty from one that appeared.
+ * Every plugin section, rendered once, in the order they registered, for the
+ * window they are rendered for. A section whose content renders to nothing is
+ * still listed - with empty text - so a later call can tell a section that
+ * stayed empty from one that appeared.
  */
 export async function renderPluginSections(
   plugins: readonly PromptSection[],
   renderer: Renderer,
+  window?: WindowRef,
 ): Promise<readonly RenderedPluginSection[]> {
   const rendered: RenderedPluginSection[] = [];
-  for (const plugin of plugins) rendered.push(await renderPluginSection(plugin, renderer));
+  for (const plugin of plugins) rendered.push(await renderPluginSection(plugin, renderer, window));
   return rendered;
 }
 
@@ -184,13 +193,17 @@ export async function renderPluginSections(
  * Build the frozen prefix. `plugins` are rendered first because their content
  * is produced per epoch, their sections render in a tag named after the plugin,
  * and one of them being outside is what puts the precedence rule into `<agent>`.
+ *
+ * `window` is the window the prefix is built for, when it is built for one: a
+ * section that renders per window makes this prefix that window's own.
  */
 export async function renderSystemPrompt(
   input: SystemPromptInput,
   renderer: Renderer,
+  window?: WindowRef,
 ): Promise<RenderedSystemPrompt> {
   const table = renderer.table;
-  const sections = await renderPluginSections(input.plugins ?? [], renderer);
+  const sections = await renderPluginSections(input.plugins ?? [], renderer, window);
   const parts = sectionsOf(input, table, sections.some((section) => section.outside)).map((section) =>
     [`<${section.tag}>`, ...section.lines, `</${section.tag}>`].join("\n"),
   );

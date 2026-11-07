@@ -118,6 +118,18 @@ never repeated, and a running window's system prompt is never rebuilt. A window
 that opens after the change is built with the new text in its prefix and gets no
 delta of its own opening.
 
+### A section rendered per window
+
+The host registers a section once and renders it per window, and every render
+names the window it is for: `content(window)` answers for that window. A section
+that serves several sessions - one workspace per session, as a host embedded in
+another harness runs - says which window it is rendering for and declares itself
+`perWindow`; the host then renders it for each window instead of freezing it
+with the epoch, so each window reads the section for itself while the rest of
+the prefix stays shared. A section that says the same thing to every window
+declares nothing and is frozen with the epoch as before
+([windows.md](windows.md#prompt-layout)).
+
 ## Fixed notes
 
 - **Opening note of a continuation.** The previous window's transcript is not
@@ -160,6 +172,11 @@ is data where it is delivered ([below](#data-and-instructions)).
   implementation, a provider, an MCP server or a service pass through a host
   wrapper that adds the same; a raw upstream error never reaches the model
   alone. A refusal with no useful next action means the rule belongs elsewhere.
+- **A refusal carries its own wording.** The rule, the message and the next
+  action stand on the result itself, in the one form a refusal is written in, so
+  an embedding that keeps its own journal records the result as it stands
+  instead of reassembling the three parts. `error` stays the structured part the
+  model reads, and what the record holds is what the caller was handed.
 - An error about the environment names the section of the built-in skill
   that covers it.
 - A rule moves into a description only when the logs show the model hitting

@@ -454,6 +454,11 @@ export class Arbor {
    * because the layers the core renders itself - a continuation's first input,
    * a refusal - read the implementation's wording when it has one, and fall
    * back to nothing when it has none.
+   *
+   * The section is registered once, here, and rendered per window: every render
+   * names the window it is for, so a section that serves several sessions - one
+   * workspace per session - answers for the window it is rendered for
+   * (docs/prompting.md#plugin-sections-that-change).
    */
   private addWorkspaceSection(): void {
     const section = this.options.workspace?.promptSection?.(this.table);
@@ -810,7 +815,7 @@ export class Arbor {
   }
 
   /** What changed since a window's epoch, for its first input. */
-  private async changesSince(epoch: PromptEpoch): Promise<Block[]> {
+  private async changesSince(epoch: PromptEpoch, window: WindowRef): Promise<Block[]> {
     const blocks: Block[] = [];
     const environment = this.options.environment;
     if (environment !== undefined) {
@@ -822,7 +827,7 @@ export class Arbor {
     }
     // A plugin's prompt section that moved since the epoch reaches a window
     // opened in it as a delta, exactly as an environment change does.
-    blocks.push(...(await this.promptSectionDeltas(epoch.sections)));
+    blocks.push(...(await this.promptSectionDeltas(epoch.sections, window)));
     return blocks;
   }
 
@@ -831,10 +836,13 @@ export class Arbor {
    * delta block per section, carrying only the lines that changed
    * (docs/prompting.md#plugin-sections-that-change). A section that renders to
    * what it held gives nothing, so an unchanged prompt is never restated.
+   *
+   * The render is for the window the delta goes to, so a section that renders
+   * per window is compared against what it says for that window.
    */
-  private async promptSectionDeltas(views: readonly RenderedPluginSection[]): Promise<Block[]> {
+  private async promptSectionDeltas(views: readonly RenderedPluginSection[], window: WindowRef): Promise<Block[]> {
     if (this.sections.length === 0) return [];
-    const current = await renderPluginSections(this.sections, this.renderer);
+    const current = await renderPluginSections(this.sections, this.renderer, window);
     const blocks: Block[] = [];
     for (const view of views) {
       const section = current.find((one) => one.tag === view.tag);
@@ -864,7 +872,7 @@ export class Arbor {
       const revision = await sectionRevision(section);
       if (revision === view.revision) continue;
       const from = view.text;
-      const rendered = await renderPluginSection(section, this.renderer);
+      const rendered = await renderPluginSection(section, this.renderer, record.window);
       view.text = rendered.text;
       view.revision = rendered.revision;
       const delta = promptSectionDeltaBlock(
@@ -1025,8 +1033,8 @@ export class Arbor {
       refs: [taskRef],
     });
     const record = this.record(window, taskRef, reason, [...wanted.targets], tier);
-    const epoch = await this.snapshots.epoch();
-    const changes = await this.changesSince(epoch);
+    const epoch = await this.snapshots.epoch(window);
+    const changes = await this.changesSince(epoch, window);
     const firstInput = this.renderer.render(
       firstInputBlocks({
         task: {
@@ -1963,8 +1971,8 @@ export class Arbor {
       ...(options.handoff === undefined ? {} : { handoff: options.handoff }),
       ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
     });
-    const epoch = await this.snapshots.epoch();
-    const changes = await this.changesSince(epoch);
+    const epoch = await this.snapshots.epoch(window);
+    const changes = await this.changesSince(epoch, window);
     const effects = await this.eventsOfKind(previous, "send");
     const openTasks = await this.taskOf(previous);
     // The work the predecessor chain left open, so a continuation picks it up by
@@ -2068,11 +2076,18 @@ export class Arbor {
    * keeps the deadline, because the end it is counted from is in the journal
    * (docs/workspaces.md#lifecycle). This is a setting, not a task for a model:
    * with no `workspaces.retentionMs` nothing is reclaimed.
+   *
+   * An implementation whose workspace is a directory somebody else owns - the
+   * user's own project, which nothing here may remove - says so with
+   * `reclaimable`, and then the host neither asks which ref to reclaim nor arms
+   * a deadline for it: nothing is reclaimed and no failure is recorded.
    */
   private async retire(window: WindowRef, endedAt: number): Promise<void> {
     const workspace = this.options.workspace;
     const retentionMs = this.retentionMs();
     if (workspace === undefined || retentionMs === undefined) return;
+    const reclaims = workspace.reclaimable === undefined ? true : await workspace.reclaimable();
+    if (!reclaims) return;
     const root = await this.chainRoot(window);
     if (this.retentionTimers.has(root)) return;
     const ref = await workspace.refOf(root);
@@ -2601,17 +2616,23 @@ export class Arbor {
       ran = allowed.call;
       result = await this.catalog.call(ran, context).catch((error: unknown) => this.refusalOf(call, error));
     }
+    // A refusal carries its own wording on the result itself: whoever is handed
+    // it - a hook, the backend, the model, an embedding that writes its own
+    // journal - reads the same text the record holds, and nothing reassembles
+    // the rule, the message and the next action
+    // (docs/prompting.md#rules-surface-where-they-bite).
+    result = withRefusalText(result);
     if (!this.hooks.empty) {
       const seen = await this.hooks.after("afterToolCall", { window, call, result });
       // What an after hook answered with is used: it may rewrite the result,
       // and what the window records and what the model read both follow it.
-      if (seen.result !== undefined) result = seen.result;
+      if (seen.result !== undefined) result = withRefusalText(seen.result);
     }
     const scrubbed = this.scrubResult(result);
     await this.journal.append({
       kind: "tool_result",
       window,
-      body: scrubbed.content === "" ? refusalText(scrubbed) : scrubbed.content,
+      body: scrubbed.content,
       targets: [],
       ...(at === undefined ? {} : { refs: [at] }),
     });
@@ -2818,11 +2839,26 @@ function continuedWindow(body: string | null | undefined): WindowRef | undefined
   }
 }
 
-/** What a refusal records: the rule and the one line the model reads. */
-function refusalText(result: ToolResult): string {
-  const error = result.error;
-  if (error === undefined) return "";
+/**
+ * One refusal as the model and the journal read it: the rule, the one line the
+ * model reads and what to do instead. This is the one form a refusal is written
+ * in, so the text on the result, the text in the journal and the text a host
+ * that keeps its own log writes are the same bytes
+ * (docs/prompting.md#rules-surface-where-they-bite).
+ */
+function refusalText(error: NonNullable<ToolResult["error"]>): string {
   return `${error.rule} ${error.message}${error.nextAction === undefined ? "" : ` ${error.nextAction}`}`;
+}
+
+/**
+ * The result with a refusal's own wording carried on it, so a caller never
+ * reassembles the rule, the message and the next action to say what happened.
+ * A result that carries content of its own, or a success, is left as it is.
+ */
+function withRefusalText(result: ToolResult): ToolResult {
+  const error = result.error;
+  if (result.ok || error === undefined || result.content !== "") return result;
+  return { ...result, content: refusalText(error) };
 }
 
 /** Take one item out of a window's inbox. */
