@@ -30,7 +30,7 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers; declare the tools the harness around it registered ([tools.md](tools.md#external-tools)) ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers; declare the tools the harness around it registered, and answer again whenever the host asks for them ([tools.md](tools.md#external-tools)) ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create it on first use, mount it, reclaim it | a plain directory ([@4fu/arbor-workspace-dir](../packages/workspace-dir)) |
@@ -105,14 +105,19 @@ or a whole domain such as a chat channel or a code host:
   history.
 - **A tool of its own is the exception.** A plugin whose behaviour is code
   rather than an item in `/env` - a tool the harness around arbor registered,
-  for instance - declares it as an `ExternalTool`: a name, a description, a
+  for instance - declares it as an `ExternalTool`: a name, a description, a JSON
   schema and its `execute`. A backend injects the same shape through
   `AgentBackend.externalTools()`, so a plugin and a backend share one path and
   not two. Both are ordinary direct tools from registration on: same hooks,
   same journaling, same scrub, same result cut, and the tools list says where
   each one comes from ([tools.md](tools.md#external-tools)). A name the model
   already has is not registered; the collision is recorded with
-  `tool.name_taken` rather than thrown.
+  `tool.name_taken` rather than thrown, on every registration and not only the
+  first. The set is refreshable: a plugin's `tools` may be a source the host
+  reads again, and the backend's set is read again before every window opens and
+  at every step boundary, so a tool a harness registers while the host runs
+  reaches the model as a delta instead of waiting for a restart
+  ([tools.md](tools.md#external-tools-that-change)).
 - **An implementation may still add its own.** A `Workspace` implementation
   that can do something the core does not name - showing another window's
   directory, for instance - declares its own module function or tool and its
@@ -149,6 +154,9 @@ a chat bridge, a DeepSeek Harness - registers the `windowStream` hook and turns
 each delta into what that surface speaks
 ([windows.md](windows.md#streaming)). No pi type and no journal event is
 involved: the deltas are the core's own shapes, and they stay out of the record.
+An embedding host that drives one window - the driver that runs arbor inside
+another harness - takes that window's stream instead, with
+`Arbor.stream(window, onEvent)`, and registers no hook and filters nothing.
 
 ## Hooks
 
@@ -195,8 +203,9 @@ and a refusal leaves the task unrouted; the decision itself is the host's, so
 what a hook answers with is not applied to it.
 
 The host API lets an operator list, pause and end windows, steer an input
-into one, and read the board. Permissions, privacy review, budgets and
-approvals are built from these.
+into one, watch one window's live output, read the external tool sources again,
+and read the board. Permissions, privacy review, budgets and approvals are built
+from these.
 
 ## Data placement
 

@@ -155,10 +155,18 @@ request. The host inserts through the backend's own steering (pi's
 `agent.steer`); the rules below only decide when it calls it. An input meant
 for after the run goes in as a follow-up (`agent.followUp`).
 
+The two calls are the whole contract a backend implements
+(`WindowSession.steer` and `WindowSession.followUp` in
+`@4fu/arbor-interfaces`): a steered delivery is one user-role input the model
+reads with its next request, in order and exactly once, and it never ends the
+turn; a follow-up is held out of the turn the window is in and becomes the input
+of its next one. A window that is idle is continued by a steered input, because
+that is what a related input wants.
+
 - **Protection period** (default 60 s, configurable, 0 inserts at once): when
   a window starts on a target, only inputs for that target enter during the
-  period. Inputs for the same target do not restart it. Environment deltas
-  and conversation updates are not held back.
+  period. Inputs for the same target do not restart it. Environment deltas,
+  conversation updates, prompt deltas and tools deltas are not held back.
 - **After the period:** an input for the current target that is still being
   batched goes in first; then the others, by priority and age. Currency and
   what a window can call - a conversation update, an environment delta - and a

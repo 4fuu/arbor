@@ -225,6 +225,24 @@ export const BUILTIN_BLOCK_KINDS: readonly BlockKindSpec[] = [
     ],
   },
   {
+    kind: "tools_delta",
+    tag: "tools_delta",
+    lines: ["delivery.tools_delta", "delivery.time"],
+    fields: [
+      { name: "time", type: "string" },
+      { name: "items", type: "blocks" },
+    ],
+  },
+  {
+    kind: "tool_change",
+    lines: ["delivery.tool_change"],
+    fields: [
+      { name: "change", type: "string" },
+      { name: "name", type: "string" },
+      { name: "source", type: "string" },
+    ],
+  },
+  {
     kind: "prompt_section",
     // The tag is the plugin's own choice, so it rides on the block
     // (docs/prompting.md#plugin-sections-that-change).

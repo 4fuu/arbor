@@ -94,6 +94,7 @@ export type {
   ModuleSpec,
   FunctionSpec,
   ParameterSpec,
+  JSONSchema,
   ToolCall,
   ToolResult,
 } from "./agent.ts";
@@ -186,7 +187,13 @@ export type { TaskKind, TaskInput, Task, TaskSource } from "./task.ts";
 
 export type { EffectKind, Effect, EffectResult, EffectExecutor } from "./effects.ts";
 
-export type { CallContext, ToolGroup, ExternalTool } from "./tools.ts";
+export type {
+  CallContext,
+  ToolGroup,
+  ExternalTool,
+  ExternalToolSource,
+  ExternalToolChange,
+} from "./tools.ts";
 
 export type {
   EnvItemKind,

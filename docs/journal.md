@@ -30,8 +30,8 @@ continuation reads what its predecessor said
 The host writes events of its own with no window: an environment revision, a
 service state change, and a `tool_registration` for every direct tool a plugin
 or a backend declared that was not registered, which carries the source, the
-tool and the rule that left it out
-([tools.md](tools.md#external-tools)).
+tool and the rule that left it out - recorded on every refresh of that set, not
+only the first one ([tools.md](tools.md#external-tools-that-change)).
 
 ## Targets
 

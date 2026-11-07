@@ -330,6 +330,100 @@ describe("pi backend", () => {
     );
   });
 
+  it("declares the JSON Schema an outside tool carries, and refreshes a running window's tools", async () => {
+    const faux = fauxProvider({
+      models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],
+    });
+    const models = createModels();
+    models.setProvider(faux.provider);
+    // What the model was actually handed: pi declares the tools a request may
+    // call on the system messages of that request.
+    const declared: string[] = [];
+    const see = (context: { messages: readonly { role: string; toolsAdded?: readonly unknown[] }[] }) => {
+      for (const message of context.messages) {
+        if (message.role !== "system") continue;
+        for (const tool of message.toolsAdded ?? []) declared.push(JSON.stringify(tool));
+      }
+    };
+    faux.setResponses([
+      (context) => {
+        see(context);
+        return fauxAssistantMessage("完成");
+      },
+      // The harness registered a tool while the window runs, so the window's
+      // declared tools are replaced and the model calls the new one.
+      (context) => {
+        see(context);
+        return fauxAssistantMessage([fauxToolCall("todo_write", { todos: [{ content: "读文档", status: "pending" }] }, { id: "call_2" })]);
+      },
+      (context) => {
+        see(context);
+        return fauxAssistantMessage("完成");
+      },
+    ]);
+    const recorded: Recorded = { calls: [], results: [], events: [] };
+    const backend = new PiAgentBackend({ models, control: controlOf(recorded, () => ({ callId: "x", ok: true, content: "已记录" })) });
+    const todoWrite = {
+      name: "todo_write",
+      description: "把任务列表替换成传入的完整列表。",
+      parameters: {},
+      schema: {
+        type: "object",
+        properties: {
+          todos: {
+            type: "array",
+            description: "The COMPLETE task list, replacing any previous list.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                content: { type: "string", description: "One task." },
+                status: { type: "string", description: "The task's state.", enum: ["pending", "in_progress", "completed"] },
+              },
+              required: ["content", "status"],
+            },
+          },
+        },
+        required: ["todos"],
+      },
+    };
+
+    const session = await backend.open(requestOf());
+    const kinds: string[] = [];
+    const drain = (async () => {
+      for await (const event of session.events()) kinds.push(event.kind);
+    })();
+    await waitFor(() => kinds.includes("run_ended"));
+    assert.equal(session.state, "idle");
+
+    // The window's declared tools are replaced while it runs, and the tool that
+    // appeared is callable in the same window - its prefix is never rebuilt.
+    session.refreshTools?.([todoWrite]);
+    await session.steer({
+      kind: "tools_delta",
+      refs: [],
+      time: 1700000000000,
+      content: [{ kind: "data", fields: { content: "可直接调用的工具已变更" } }],
+    });
+    await waitFor(() => kinds.filter((kind) => kind === "run_ended").length === 2);
+    await session.end();
+    await session.outcome();
+    await drain;
+
+    // The schema reached the model verbatim: the item shape and the status enum,
+    // which a round trip through arbor's own parameter shape would have dropped.
+    // The window opened with arbor's own declaration, and none of that shape.
+    assert.ok(declared[0]?.includes("search"), declared[0] ?? "nothing was declared");
+    assert.ok(!declared[0]?.includes("enum"));
+    const refreshed = declared.find((one) => one.includes("todo_write"));
+    assert.ok(refreshed !== undefined, `the new tool was declared to the model: ${declared.join(" | ")}`);
+    assert.ok(refreshed.includes('"enum":["pending","in_progress","completed"]'));
+    assert.ok(refreshed.includes('"additionalProperties":false'));
+    assert.ok(refreshed.includes('"items"'));
+    assert.deepEqual(recorded.calls.map((call) => call.name), ["todo_write"]);
+    assert.deepEqual(recorded.calls[0]?.args, { todos: [{ content: "读文档", status: "pending" }] });
+  });
+
   it("retries a transient model error, sending the same request again", async () => {
     const faux = fauxProvider({
       models: [{ id: "faux-1", input: ["text", "image"], contextWindow: 200000, maxTokens: 8192 }],

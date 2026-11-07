@@ -15,6 +15,18 @@ import type { TaskRef, Ref, WindowRef } from "./refs.ts";
 import type { Handoff, TokenUsage, WindowState } from "./windows.ts";
 import type { RateLimitState } from "./scheduler.ts";
 
+/**
+ * One JSON Schema object, carried as it was declared.
+ *
+ * A tool declared from outside the core - a plugin's own, or a harness's
+ * through a backend - hands its parameters over in the JSON Schema that
+ * harness already speaks, and that schema is what the model reads, verbatim
+ * (docs/tools.md#external-tools). Deriving one from a summary would drop what
+ * the schema says and what the summary cannot: `enum`, `items`, `oneOf`,
+ * `additionalProperties`, a nested object's own properties.
+ */
+export type JSONSchema = Record<string, unknown>;
+
 /** One model the backend can run. Only models that take images are offered. */
 export interface ModelInfo {
   id: string;
@@ -88,7 +100,32 @@ export interface ContinuationInfo {
   midTaskReset?: boolean;
 }
 
-/** What the host inserts into a running window at a tool-call boundary. */
+/**
+ * What the host inserts into a running window at a tool-call boundary.
+ *
+ * ## What each kind expects from a backend
+ *
+ * Every delivery is one input block, and the host says when the model must
+ * read it by the call it hands the delivery to: `WindowSession.steer` for one
+ * that goes in at the next step boundary, `WindowSession.followUp` for one that
+ * becomes the input of the next turn. The rule is the same for every kind - the
+ * insertion rules decide, not the kind
+ * (docs/dispatch.md#insertion-timing) - with two things a backend can rely on:
+ *
+ * - **What a window can call is never held back.** A conversation update, an
+ *   environment delta, a prompt delta and a tools delta always come through
+ *   `steer`, in the protection period and after it, because they change what
+ *   the window would otherwise do next.
+ * - **A reminder is the kind the host times itself.** While the window runs it
+ *   is steered in at the next boundary; once the run has ended it is queued as
+ *   a follow-up, so it is the input of the window's next turn.
+ *
+ * A backend that is not pi maps the two calls onto whatever its own loop
+ * offers - DeepSeek Harness's `agent.inject` for a step boundary and its
+ * steering for the next turn - and the rest of the contract is the same: the
+ * block is one user-role input, in order, exactly once, and the turn the
+ * window is in is never ended by it.
+ */
 export interface Delivery {
   kind:
     | "inserted_task"
@@ -103,6 +140,13 @@ export interface Delivery {
      * (docs/prompting.md#plugin-sections-that-change).
      */
     | "prompt_delta"
+    /**
+     * The direct tools declared from outside the core changed while this window
+     * runs: a harness registered one, or a plugin's set moved. The delta names
+     * what was added and what was removed, and the window may call the new ones
+     * from its next tool call on (docs/tools.md#external-tools-that-change).
+     */
+    | "tools_delta"
     /** A host usage reminder, appended to an input (docs/windows.md#usage-reminders). */
     | "reminder";
   /** The window it comes from, for a notice, a broadcast or a window message. */
@@ -117,11 +161,68 @@ export interface WindowSession {
   readonly window: WindowRef;
   readonly state: WindowState;
 
-  /** Insert at the next tool-call boundary, through the backend's steering. */
+  /**
+   * Insert at the next tool-call boundary, through the backend's steering.
+   *
+   * A **step boundary** is the moment every tool call of the current turn has
+   * finished and the next model request has not gone out yet. The delivery
+   * becomes one user-role input the model reads with that request. It is never
+   * a system message in the middle of a window - some providers fold those into
+   * the leading system prompt and that breaks the cached prefix
+   * (docs/prompting.md#no-built-in-pi-prompt) - and it never rewrites the
+   * window's prefix.
+   *
+   * What a backend must do:
+   *
+   * - deliver the block in the order the host handed its deliveries over, and
+   *   deliver each one exactly once;
+   * - keep the turn going: the model is not stopped, not asked to confirm, and
+   *   not told the input is special - it is one more input;
+   * - start a turn when the window is idle, because that is what a related
+   *   input wants (docs/dispatch.md#insertion-timing); the host only steers
+   *   into a window it has not ended and has not paused, so a delivery never
+   *   arrives for one of those;
+   * - resolve once the delivery is queued, not once the model has read it: the
+   *   host never waits for the model, and a slow model is not a slow steer.
+   *
+   * A window that has ended refuses in the core's error shape, rule
+   * `window.ended`; the host never steers into one.
+   */
   steer(delivery: Delivery): Promise<void>;
 
-  /** Queue for after the run ends. */
+  /**
+   * Queue for after the run ends: the delivery becomes the input of the
+   * window's next turn.
+   *
+   * What a backend must do:
+   *
+   * - hold it out of the turn the window is in - the model must not read it
+   *   mid-turn, which is what separates this call from `steer`;
+   * - deliver it as the input of the next turn, in order and exactly once, when
+   *   the window runs again;
+   * - keep it queued while the window sits idle, and drop it when the window
+   *   ends, because an ended window is never reopened
+   *   (docs/windows.md#lifecycle).
+   *
+   * The host uses this only for a delivery that belongs after the run: the
+   * reminder of a window whose run has already ended, and whatever a
+   * `Scheduler` places there (docs/dispatch.md#insertion-timing).
+   */
   followUp(delivery: Delivery): Promise<void>;
+
+  /**
+   * The direct tools this window may call changed: the host registered what a
+   * backend or a plugin declared since this window opened
+   * (docs/tools.md#external-tools-that-change).
+   *
+   * A backend that can change a running window's declared tools replaces them
+   * here, so a tool that appeared is callable in this window and one that was
+   * removed is not. A backend that cannot leaves the declaration it opened
+   * with: the window still learns the change from the `tools_delta` it is
+   * steered, and a call still runs through the host's catalog, which holds the
+   * current set. Optional; the host asks only of a session that has it.
+   */
+  refreshTools?(tools: readonly DirectToolSpec[]): Promise<void> | void;
 
   /** End the run. With a handoff the host opens a continuation. */
   end(handoff?: Handoff, reason?: WindowEndReason): Promise<void>;
@@ -209,8 +310,14 @@ export interface AgentBackend {
    * Direct tools the backend injects from outside arbor: the tools an outside
    * harness registered, which a host embedded in that harness hands in here
    * (docs/tools.md#external-tools). They are declared to the model and called
-   * in the turn like any other direct tool. Read once, before the first window
-   * opens.
+   * in the turn like any other direct tool.
+   *
+   * The set is refreshable: the host reads it again before every window opens
+   * and at every step boundary, so a tool the harness registers - or drops -
+   * while the host runs reaches the model without a restart
+   * (docs/tools.md#external-tools-that-change). A backend that wants the change
+   * to land the moment it happens rather than at the next boundary calls
+   * `Arbor.refreshExternalTools` from its own signal.
    */
   externalTools?(): readonly ExternalTool[] | Promise<readonly ExternalTool[]>;
 
@@ -223,7 +330,17 @@ export interface DirectToolSpec {
   name: string;
   /** What it does and when to use it; side effects. 1 to 4 sentences. */
   description: string;
+  /** The parameters in arbor's own declaration shape. */
   parameters: Record<string, ParameterSpec>;
+  /**
+   * The parameters as the JSON Schema an outside harness declared them, carried
+   * verbatim: `enum`, `items`, `oneOf`, `additionalProperties`, a nested
+   * object's own properties, all of it. What the model reads when the tool has
+   * one, and what the `<tools>` line and `tool_search` show
+   * (docs/tools.md#external-tools). Arbor's own tools declare none: their
+   * `parameters` are the declaration.
+   */
+  schema?: JSONSchema;
   /**
    * Who declares it, when it is not the core's own: a plugin's name, or a
    * backend's. The tools list says where such a tool comes from, so the model

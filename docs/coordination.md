@@ -50,6 +50,7 @@ boundary. The kinds differ only in who receives them:
 | conversation update | live windows that touched the conversation ([below](#staying-current)) | nobody |
 | notice | live windows that touched the event's target | the judge |
 | broadcast | every live window | the judge, except for environment deltas |
+| environment delta, prompt delta, tools delta | every live window | nobody ([below](#broadcasts)) |
 
 Outside traffic - a message from a channel, or the result of a send - keeps a
 conversation current, so it reaches every live window that touched the target
@@ -69,7 +70,11 @@ the ref leads to the full event.
 
 - **Environment deltas** ([environment.md](environment.md#deltas-in-a-window))
   go to every live window, unfiltered and not held back by the protection
-  period, because they change what a window can call.
+  period, because they change what a window can call. So does a **tools delta**
+  - the direct tools a plugin or a backend declared that appeared or were
+  removed while the host runs
+  ([tools.md](tools.md#external-tools-that-change)) - and a plugin's prompt
+  section that moved ([prompting.md](prompting.md#plugin-sections-that-change)).
 - **Model broadcasts.** `windows.broadcast(text)` offers a message to every
   live window; the judge decides for each one whether it needs it
   ([dispatch.md](dispatch.md#judge-decisions)).

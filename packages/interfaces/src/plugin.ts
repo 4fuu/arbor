@@ -18,7 +18,7 @@ import type { EnvDraft } from "./environment.ts";
 import type { JudgeCriteria } from "./judge.ts";
 import type { Hooks } from "./hooks.ts";
 import type { TaskSource } from "./task.ts";
-import type { ExternalTool } from "./tools.ts";
+import type { ExternalTool, ExternalToolSource } from "./tools.ts";
 
 /** Connections to the outside world. */
 export interface PluginAdapters {
@@ -76,8 +76,13 @@ export interface Plugin {
    * them, and called in the turn through the same path a core tool takes
    * (docs/tools.md#external-tools). A name a core tool or a module already
    * declares is not registered; the host records the collision with its rule.
+   *
+   * The set may be a list or a source the host calls again on every refresh, so
+   * a plugin whose tools change while the host runs - the tools a harness
+   * around the host registered - answers with what stands now
+   * (docs/tools.md#external-tools-that-change).
    */
-  tools?: readonly ExternalTool[];
+  tools?: readonly ExternalTool[] | ExternalToolSource;
 
   hooks?: Hooks;
 

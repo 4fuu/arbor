@@ -10,17 +10,21 @@
 import type {
   Block,
   Delivery,
+  DirectToolSpec,
   EnvDelta,
   EnvItem,
+  ExternalToolChange,
   Handoff,
   Note,
   NoteSummary,
   Ref,
   TaskRef,
+  TextTable,
   WindowRef,
 } from "@4fu/arbor-interfaces";
 import type { Renderer } from "./render.ts";
 import { changedLines } from "./diff.ts";
+import { escapeText } from "./render.ts";
 import { textOf } from "./text.ts";
 import { formatTime } from "./time.ts";
 
@@ -299,6 +303,23 @@ export function environmentDeltaBlock(delta: EnvDelta, time: number): Block {
   };
 }
 
+/**
+ * One tools delta: the direct tools declared from outside the core that
+ * appeared, and the ones that were removed, one line each
+ * (docs/tools.md#external-tools-that-change). The window's own prefix is not
+ * rebuilt: it reads the change and calls what is new from its next tool call.
+ */
+export function toolDeltaBlock(changes: readonly ExternalToolChange[], time: number): Block {
+  const items: Block[] = changes.map((change) => ({
+    kind: "tool_change",
+    fields: { change: DELTA_MARK[change.change], name: change.name, source: change.source },
+  }));
+  return {
+    kind: "tools_delta",
+    fields: { time: formatTime(time), items },
+  };
+}
+
 /** The fixed notes of a continuation (docs/prompting.md#fixed-notes). */
 export function continuationBlocks(continuation: {
   previous: WindowRef;
@@ -395,6 +416,36 @@ export function envItemLine(item: EnvItem, renderer: Renderer): string {
         description: item.description,
         path: item.path,
       });
+}
+
+/**
+ * One direct tool's line, the same one the `<tools>` section writes and the one
+ * `tool_search` answers with (docs/tools.md#external-tools).
+ *
+ * A tool declared from outside the core says where it comes from, so the model
+ * knows whose it is wherever it meets the name. A tool that carries the JSON
+ * Schema its own harness declared shows it on the line too, so the model reads
+ * the parameters it will actually call with - `enum`, `items`, a nested
+ * object's own properties - and not a summary that dropped them. The schema is
+ * escaped like every other string from outside the framework: it cannot close
+ * the section it renders in.
+ */
+export function toolLine(table: TextTable, tool: DirectToolSpec): string {
+  const schema = tool.schema === undefined ? undefined : escapeText(JSON.stringify(tool.schema));
+  const withSource = tool.source !== undefined;
+  const key = withSource
+    ? schema === undefined
+      ? "system.tool.source"
+      : "system.tool.source.schema"
+    : schema === undefined
+      ? "system.tool"
+      : "system.tool.schema";
+  return textOf(table, key, {
+    name: tool.name,
+    description: tool.description,
+    ...(tool.source === undefined ? {} : { source: tool.source }),
+    ...(schema === undefined ? {} : { schema }),
+  });
 }
 
 /** The text one delivery is steered in as. */

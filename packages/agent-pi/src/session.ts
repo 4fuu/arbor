@@ -18,6 +18,7 @@ import { ToolCallArgumentsStream } from "@earendil-works/pi-ai";
 import type { AssistantMessage, Usage as PiUsage } from "@earendil-works/pi-ai";
 import type {
   Delivery,
+  DirectToolSpec,
   Handoff,
   StreamEvent,
   TokenUsage,
@@ -43,6 +44,12 @@ export interface PiSessionOptions {
   results?: Map<string, ToolResult>;
   /** The first turn, already started by the backend. */
   run: Promise<void>;
+  /**
+   * Replace the tools this window declares, when the host's set changed while
+   * the window runs. The backend owns the call path, so it builds them
+   * (docs/tools.md#external-tools-that-change).
+   */
+  refreshTools?: (tools: readonly DirectToolSpec[]) => void;
 }
 
 /** A queue of window events the host drains as they happen. */
@@ -99,10 +106,17 @@ export class PiWindowSession implements WindowSession {
    * JSON yet, so they are read with pi's own tolerant parser.
    */
   private readonly writing = new Map<number, ToolCallArgumentsStream>();
+  /**
+   * How this window's declared tools are replaced when the host's set changes.
+   * The backend owns the call path, so it builds them
+   * (docs/tools.md#external-tools-that-change).
+   */
+  private readonly refresh: ((tools: readonly DirectToolSpec[]) => void) | undefined;
 
   constructor(options: PiSessionOptions) {
     this.window = options.window;
     this.agent = options.agent;
+    this.refresh = options.refreshTools;
     this.renderer = options.renderer;
     this.results = options.results ?? new Map();
     this.current = { used: 0, limit: options.limits.limit, reserve: options.limits.reserve };
@@ -138,6 +152,18 @@ export class PiWindowSession implements WindowSession {
   async followUp(delivery: Delivery): Promise<void> {
     if (this.ended) return;
     this.enqueue(delivery, "followUp");
+  }
+
+  /**
+   * The tools this window may call changed. pi keeps its declaration on the
+   * agent's own state, which may be replaced while the window runs, so a tool
+   * that appeared is callable from the next model request and one that was
+   * removed is not - and the window's prefix is never rebuilt for it
+   * (docs/tools.md#external-tools-that-change).
+   */
+  refreshTools(tools: readonly DirectToolSpec[]): void {
+    if (this.ended) return;
+    this.refresh?.(tools);
   }
 
   async end(handoff?: Handoff, reason: WindowEndReason = "model_ended"): Promise<void> {

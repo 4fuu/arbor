@@ -9,9 +9,12 @@ in the journal ([journal.md](journal.md)).
 
 1. **Open.** The dispatcher opens a window for a task no live window should
    take ([dispatch.md](dispatch.md)), or the host opens one to continue a
-   window that ended.
+   window that ended. The direct tools declared from outside the core are read
+   again here, so the window opens with the set as it stands
+   ([tools.md](tools.md#external-tools-that-change)).
 2. **Run.** The model works and looks up what it needs. Related inputs enter
-   at tool-call boundaries under the insertion rules.
+   at tool-call boundaries under the insertion rules, and so does a change to
+   the tools the window may call.
 3. **Idle.** When the model ends its run, the window stays open for a while
    (`window.idle_s`, default 300 s, matched to the provider's cache lifetime),
    so a related input can still be inserted into a warm prefix.
@@ -45,10 +48,11 @@ in the journal ([journal.md](journal.md)).
   once, so its prefix rarely pays off in the cache; a standard prefix is
   shared by every window and stays cached.
 - **Snapshot epochs.** The system prompt and memory snapshot are rebuilt at
-  most every `snapshot.minIntervalMs` (default 10 minutes), and only when notes
-  or the environment ([environment.md](environment.md)) changed. Every window
-  opened in one epoch has the same prefix. Changes since the epoch go into
-  the first input.
+  most every `snapshot.minIntervalMs` (default 10 minutes), and only when notes,
+  the environment ([environment.md](environment.md)) or the direct tools
+  declared from outside the core ([tools.md](tools.md#external-tools-that-change))
+  changed. Every window opened in one epoch has the same prefix. Changes since
+  the epoch go into the first input.
 - The prefix never changes while a window is open. Rendering is
   deterministic: no timestamps or counters in the system prompt or snapshot.
 - **A plugin's prompt section can change under a running window.** It declares
@@ -69,8 +73,9 @@ in the journal ([journal.md](journal.md)).
 
 A host surface can show a window's output while the model is still writing it.
 The backend streams what the model writes, delta by delta, and the host hands
-every delta to the `windowStream` hook - the one way code outside the core sees
-them (docs/architecture.md#hooks):
+every delta to the `windowStream` hook and to whoever asked for that one window's
+stream with `Arbor.stream(window, onEvent)` - the two ways code outside the core
+sees them (docs/architecture.md#hooks):
 
 - **`text_delta`** - assistant text, as it is written.
 - **`tool_call_delta`** - one tool call's arguments, as they are written. What
@@ -80,8 +85,16 @@ them (docs/architecture.md#hooks):
   this is what makes a window's answer readable before the call is complete.
 
 The deltas of one window stay in order, and none of them is waited for: a
-surface that shows them must never hold up the window's own events. The hook
-observes - it can neither change nor refuse anything.
+surface that shows them must never hold up the window's own events. Both ways
+observe - they can neither change nor refuse anything.
+
+**`Arbor.stream` is the per-window one.** An embedding host - the driver that
+runs arbor inside another harness, a console, a chat bridge - takes the stream of
+the window it drives and nothing else: no plugin to register, and no other
+window's deltas to filter out. It answers with a function that lets the watcher
+go again. A watcher taken after a delta was emitted does not receive it: streams
+are best-effort and ephemeral, and the journal's durable events stay the only
+record.
 
 **Streams are best-effort and ephemeral.** They are not journaled, and the
 journal's durable events stay the only record: a tool call is recorded once,

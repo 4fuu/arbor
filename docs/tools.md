@@ -45,13 +45,24 @@ do.
   backend's - after its description, and `tool_search` answers with the same
   line. `tool_search` finds them like any direct tool: an exact name first, then
   a prefix, then a description.
+- **The schema is carried whole.** An outside harness already has a JSON Schema
+  for its tool, and that schema is what the model reads: the tool declares
+  `schema`, and the host passes it through untouched - `enum`, `items`, `oneOf`,
+  `additionalProperties`, a nested object's own properties. The `<tools>` line
+  and `tool_search` show it on the same line as the description, escaped like
+  every other string from outside the framework. A tool that declares no schema
+  declares `parameters` in arbor's own shape instead, which is what arbor's own
+  tools do. `ParameterSpec` is not grown to hold a schema: JSON Schema is
+  open-ended, arbor's own tools never need it, and deriving one from a summary is
+  what dropped `todo_write`'s item shape and its status enum in the first place.
 - **A core tool always wins.** A name the model already has - a core tool's, or
   a module's - is not registered for an external tool, and neither is a name
   another external tool took first. The collision is **recorded, not thrown**:
   one `tool_registration` event per tool that was left out, carrying the source,
   the tool and the rule `tool.name_taken`, so an operator sees which tool of
   which plugin the model will not get. The colliding plugin tool simply does not
-  exist for the model, and the window keeps working.
+  exist for the model, and the window keeps working. The rule runs on **every**
+  registration, not only the first one.
 - **A script may call one.** The guard in `code_exec` refuses a script that
   names one of arbor's own direct tools, because a decision or a plain command
   belongs in the turn, where the prompt and the record see it as the model's own
@@ -60,6 +71,35 @@ do.
   global of the same name and it runs through the same path. Called from a
   script it is recorded as part of the one `code_exec` call, exactly as a module
   function is.
+
+### External tools that change
+
+A harness around the host registers and unregisters its tools at runtime - a
+plugin of its own is loaded, upgraded or removed while the host runs. The set is
+therefore **refreshable**, and the host reads it again:
+
+- before every window opens, so the window's request and its prefix carry the
+  set as it stands then;
+- at every step boundary of a running window, the same place the host asks a
+  plugin's prompt section for its revision - one read per step, and a read that
+  changed nothing is delivered to nobody;
+- whenever a deployment calls `Arbor.refreshExternalTools()`, for a harness that
+  knows its own registry moved and wants the change to land now rather than at
+  the next boundary.
+
+A plugin's `tools` may be a list or a source the host calls again, so a plugin
+whose set changes answers with what stands now.
+
+A running window learns the change **the way it learns an environment change**: a
+`tools_delta` delivery at its next tool-call boundary, naming what was added
+(`+ todo_write（来自dsh）`) and what was removed. Its prefix is never rebuilt for
+it. A backend that can change a running window's declared tools does it through
+`WindowSession.refreshTools`, so a tool that appeared is callable in the window
+that is already running and one that was removed is not; a backend that cannot
+leaves its declaration alone, and a call still runs through the host's catalog,
+which holds the current set. A window that opens after the change carries the new
+set in its own request and gets no delta of its own opening, and the next
+snapshot epoch lists it in `<tools>`.
 
 ## Modules
 

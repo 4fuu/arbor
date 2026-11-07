@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
-import type { Effect, Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
+import type { Effect, Judge, JudgeAnswer, JudgeRequest, StreamEvent } from "@4fu/arbor-interfaces";
 import type { CallContext, DirectToolSpec, Settings, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
 import type {
   OutsideEvent,
@@ -48,6 +48,19 @@ class QuietJudge implements Judge {
 /** Let the host's watchers run, so a test observes what it recorded. */
 async function settle(): Promise<void> {
   for (let index = 0; index < 8; index += 1) await turn();
+}
+
+/**
+ * Wait for the live output a watcher sees. The host hands each delta on without
+ * waiting for the window, so a test waits for what it expects rather than for a
+ * fixed number of passes.
+ */
+async function streamed(seen: readonly StreamEvent[], count: number): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (seen.length >= count) return;
+    await turn();
+  }
+  throw new Error(`only ${seen.length} deltas reached the watcher`);
 }
 
 /** A tool group a test owns, so a call's result is exactly what it scripts. */
@@ -670,6 +683,146 @@ describe("one window end to end", () => {
     assert.ok(bodies[3]?.includes("第 6/7 条提醒"));
     assert.ok(bodies[3]?.includes("再开新工作前先轮换"));
     assert.ok(bodies[3]?.includes("如果不照做"));
+  });
+
+  it("hands one window's live output to whoever watches that window, and to no other", async () => {
+    const seen: StreamEvent[] = [];
+    const hooked: string[] = [];
+    const plugin: Plugin = {
+      name: "surface",
+      hooks: { windowStream: (context) => void hooked.push(context.window) },
+    };
+    const { arbor, backend } = await host({ plugins: [plugin] });
+    backend.script([{ textDelta: "第一个窗口" }, { text: "第一轮" }]);
+    const first = await arbor.open(task);
+    await backend.finished();
+
+    // An embedding host takes the stream of the window it drives, and only that
+    // one: no hook to register, and no other window's deltas to filter out
+    // (docs/windows.md#streaming).
+    const off = arbor.stream(first.window, (event) => seen.push(event));
+    backend.script([{ textDelta: "第二个窗口" }, { text: "第二轮" }]);
+    await arbor.open({ ...task, reason: "另一个任务" });
+    await backend.finished();
+    await settle();
+    // The other window's deltas went to the hook and not to this watcher.
+    assert.equal(seen.length, 0);
+    assert.deepEqual(hooked, ["c1", "c2"]);
+
+    // The watched window runs again, and its own deltas arrive in order.
+    backend.script([
+      { textDelta: "又说话了" },
+      { toolCallDelta: { name: "send", callId: "call_1_send", args: { to: "qq:group:1", content: "已修" } } },
+      { text: "第三轮" },
+    ]);
+    await arbor.deliver(
+      first.window,
+      {
+        kind: "inserted_task",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续处理" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+    await streamed(seen, 2);
+    assert.deepEqual(
+      seen.map((event) => (event.kind === "text_delta" ? `text ${event.delta}` : `send ${String(event.call.args.content)}`)),
+      ["text 又说话了", "send 已修"],
+    );
+
+    // What the watcher answers with lets it go again.
+    off();
+    backend.script([{ textDelta: "没人听了" }, { text: "第四轮" }]);
+    await arbor.deliver(
+      first.window,
+      {
+        kind: "inserted_task",
+        refs: ["t3"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "再来一次" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+    await settle();
+    assert.equal(seen.length, 2);
+  });
+
+  it("keeps the window running when a watcher of its live output throws", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ textDelta: "我看一下" }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    // A surface that shows a window's output must never hold it up.
+    arbor.stream(record.window, () => {
+      throw new Error("the surface is down");
+    });
+    await backend.finished();
+    await settle();
+    // The delta is lost, the window is not: it is still open, not failed.
+    const ended = await journal.list({ kinds: ["window_end"] });
+    assert.equal(ended.items.length, 0);
+    assert.equal(arbor.live()[0]?.state, "idle");
+  });
+
+  it("steers what a window can call into it at once, and queues a reminder of an ended run for the next turn", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    assert.equal(arbor.live()[0]?.state, "idle");
+    const session = backend.running()[0];
+    assert.ok(session !== undefined);
+
+    // What a window can call is never held back, not even by the protection
+    // period the window is still inside (docs/dispatch.md#insertion-timing).
+    await arbor.deliver(record.window, {
+      kind: "environment_delta",
+      refs: ["e7"],
+      time: 1700000000000,
+      content: [{ kind: "environment_delta", fields: { revision: "e7", time: "2026-11-07 07:42:35", items: [] } }],
+    });
+    // A notice about another target is only news, so it waits.
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "notice",
+        from: "c9",
+        refs: ["r44"],
+        time: 1700000000000,
+        content: [{ kind: "notice", fields: { from: "c9", refs: ["r44"], time: "2026-11-07 07:42:35", content: "窗口 c9 写入了 r44" } }],
+      },
+      { targets: ["gh:issue:8"] },
+    );
+    await settle();
+    assert.deepEqual(
+      session.deliveries.map((one) => one.kind),
+      ["environment_delta"],
+      "the delta went in at once; the notice waits",
+    );
+
+    // The window runs again and crosses a reminder tier. Its run has already
+    // ended, so the reminder is not injected into a turn: it is the input of the
+    // window's next one (docs/windows.md#usage-reminders).
+    backend.script([{ usage: { used: 30000, limit: 200000, reserve: 4000 } }]);
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "inserted_task",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续处理" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+    assert.deepEqual(
+      session.deliveries.map((one) => `${one.kind}:${one.how}`),
+      ["environment_delta:steer", "inserted_task:steer", "reminder:followUp"],
+    );
+    const reminders = await journal.list({ kinds: ["reminder"] });
+    assert.equal(reminders.items.length, 1);
   });
 
   it("keeps an ended run open for a related input, then ends it when quiet", async () => {

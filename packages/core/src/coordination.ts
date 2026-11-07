@@ -52,6 +52,9 @@ export const DELIVERY_PRIORITY: Record<Delivery["kind"], number> = {
   // A plugin's prompt section that changed says what the window's own prompt
   // now holds, so it goes in with the environment's deltas.
   prompt_delta: 1,
+  // The direct tools the window may call changed, which is the same kind of
+  // news: it says what the window can still call.
+  tools_delta: 1,
   // A direct answer to this window comes before anything that only informs it.
   window_message: 1,
   notice: 0,

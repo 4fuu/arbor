@@ -9,7 +9,9 @@
  * every direct tool.
  *
  * The `source` rides on each spec, so the tools list the model reads says where
- * a tool comes from and `tool_search` answers with the same line.
+ * a tool comes from and `tool_search` answers with the same line. So does the
+ * JSON Schema the outside harness declared, carried through untouched
+ * (docs/tools.md#external-tools).
  */
 
 import type {
@@ -40,7 +42,11 @@ export class ExternalToolGroup implements ToolGroup {
     return this.declared.map((tool) => ({
       name: tool.name,
       description: tool.description,
-      parameters: tool.parameters,
+      // A tool that declares a JSON Schema of its own needs no restatement of
+      // it in arbor's shape: the schema is the declaration
+      // (docs/tools.md#external-tools).
+      parameters: tool.parameters ?? {},
+      ...(tool.schema === undefined ? {} : { schema: tool.schema }),
       source: this.source,
     }));
   }

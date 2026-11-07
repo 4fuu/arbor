@@ -12,6 +12,8 @@
 import type {
   AgentBackend,
   Delivery,
+  DirectToolSpec,
+  ExternalTool,
   ModelInfo,
   OpenWindowRequest,
   TokenUsage,
@@ -104,7 +106,12 @@ export class ManualTimers {
   }
 }
 
-class ScriptedSession implements WindowSession {
+/**
+ * One scripted window: what the host handed it, so a test reads the contract a
+ * backend implements - which deliveries came through `steer` and which through
+ * `followUp`, and what its declared tools were refreshed with.
+ */
+export class ScriptedSession implements WindowSession {
   readonly window: WindowSession["window"];
 
   private readonly backend: ScriptedBackend;
@@ -119,6 +126,14 @@ class ScriptedSession implements WindowSession {
   private ended = false;
   /** The run's steps are used up, or the window ended. */
   settled = false;
+  /**
+   * How every delivery arrived, in order: `steer` for one the host inserts at
+   * the next tool-call boundary, `followUp` for one that becomes the input of
+   * the next turn (docs/dispatch.md#insertion-timing).
+   */
+  readonly deliveries: { kind: Delivery["kind"]; how: "steer" | "followUp" }[] = [];
+  /** What the host refreshed this window's declared tools with, in order. */
+  readonly refreshed: (readonly DirectToolSpec[])[] = [];
 
   constructor(backend: ScriptedBackend, window: string, usage: TokenUsage) {
     this.backend = backend;
@@ -141,12 +156,22 @@ class ScriptedSession implements WindowSession {
   }
 
   async steer(delivery: Delivery): Promise<void> {
+    this.deliveries.push({ kind: delivery.kind, how: "steer" });
     this.push({ kind: "steered", delivery });
     if (this.current === "idle") void this.backend.play(this);
   }
 
   async followUp(delivery: Delivery): Promise<void> {
+    this.deliveries.push({ kind: delivery.kind, how: "followUp" });
     this.push({ kind: "steered", delivery });
+  }
+
+  /**
+   * The host's tool set changed: a backend that can change a running window's
+   * declared tools does it here (docs/tools.md#external-tools-that-change).
+   */
+  refreshTools(tools: readonly DirectToolSpec[]): void {
+    this.refreshed.push([...tools]);
   }
 
   async end(handoff?: unknown, reason: WindowEndReason = "model_ended"): Promise<void> {
@@ -248,6 +273,13 @@ export class ScriptedBackend implements AgentBackend {
   /** Every window the host opened, in order. */
   readonly opened: OpenWindowRequest[] = [];
 
+  /**
+   * The direct tools this backend injects from the harness around it, which a
+   * test changes while a window runs - the way a harness whose plugins register
+   * tools at runtime does (docs/tools.md#external-tools-that-change).
+   */
+  readonly injected: ExternalTool[] = [];
+
   private steps: Step[] = [];
   private control: ScriptedControl | undefined;
   private readonly sessions = new Set<ScriptedSession>();
@@ -270,6 +302,10 @@ export class ScriptedBackend implements AgentBackend {
     throw new Error("the scripted backend has no providers");
   }
 
+  externalTools(): readonly ExternalTool[] {
+    return this.injected;
+  }
+
   async open(request: OpenWindowRequest): Promise<WindowSession> {
     this.opened.push(request);
     const session = new ScriptedSession(this, request.window, {
@@ -280,6 +316,16 @@ export class ScriptedBackend implements AgentBackend {
     this.sessions.add(session);
     void this.play(session);
     return session;
+  }
+
+  /**
+   * The windows this backend is running, so a test reads what the host handed
+   * the session it drives - the deliveries that reached it and how, and what
+   * its declared tools were refreshed with
+   * (docs/tools.md#external-tools-that-change).
+   */
+  running(): readonly ScriptedSession[] {
+    return [...this.sessions];
   }
 
   /** Run the scripted steps, then report that the run ended. */

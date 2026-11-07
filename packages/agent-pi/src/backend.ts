@@ -21,6 +21,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { isRetryableAssistantError } from "@earendil-works/pi-ai";
 import type {
   AgentBackend,
+  DirectToolSpec,
   LoginRequest,
   LoginResult,
   ModelInfo,
@@ -31,6 +32,7 @@ import type {
 } from "@4fu/arbor-interfaces";
 import { arborError } from "@4fu/arbor-errors";
 import { Renderer } from "@4fu/arbor-prompt";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { PiWindowSession } from "./session.ts";
 import { piTool } from "./tools.ts";
 
@@ -145,6 +147,14 @@ export class PiAgentBackend implements AgentBackend {
       });
     }
     const results = new Map<string, ToolResult>();
+    // The tools the window declares, built once here: the backend owns the call
+    // path, so it is the one that wires a spec to the host's catalog. A refresh
+    // while the window runs builds them again and replaces them on the agent's
+    // own state (docs/tools.md#external-tools-that-change).
+    const declareTools = (tools: readonly DirectToolSpec[]): AgentTool<Record<string, unknown>>[] =>
+      tools.map((tool) =>
+        piTool(tool, (args, callId) => this.callTool(request.window, tool.name, args, callId, results), this.renderer),
+      );
     const agent = new Agent({
       streamFn: (piModel, context, options) => this.runtime.streamSimple(piModel, context, options),
       getApiKey: async (provider: string) => {
@@ -154,9 +164,7 @@ export class PiAgentBackend implements AgentBackend {
       initialState: {
         systemPrompt: systemPromptOf(request),
         model,
-        tools: request.tools.map((tool) =>
-          piTool(tool, (args, callId) => this.callTool(request.window, tool.name, args, callId, results), this.renderer),
-        ),
+        tools: declareTools(request.tools),
       },
       steeringMode: "all",
       followUpMode: "all",
@@ -175,6 +183,9 @@ export class PiAgentBackend implements AgentBackend {
       limits: { limit: request.limits.contextTokens, reserve: request.limits.reserveTokens },
       results,
       run,
+      refreshTools: (tools) => {
+        agent.state.tools = declareTools(tools);
+      },
     });
   }
 

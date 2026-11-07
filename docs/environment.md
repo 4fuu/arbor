@@ -169,7 +169,10 @@ skills hold the procedure, and every refusal names the section to read.
   changed); -mcp old-db`.
 - New abilities always enter as modules, never as direct tools, because
   changing a window's declared tools would change its prefix. A change to the
-  direct tool set applies to new windows only.
+  direct tool set applies to new windows only - except for the tools declared
+  from outside the core, which a harness registers while the host runs and which
+  reach a live window as a `tools_delta` at its next tool-call boundary
+  ([tools.md](tools.md#external-tools-that-change)).
 - `tool_search` and `tool_describe` read the window's catalog: the one frozen
   when it opened plus every delta since, so the lookup and the deltas never
   disagree.

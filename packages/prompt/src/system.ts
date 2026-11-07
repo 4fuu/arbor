@@ -18,6 +18,7 @@ import type {
 import type { Block } from "@4fu/arbor-interfaces";
 import { Renderer } from "./render.ts";
 import { textOf } from "./text.ts";
+import { toolLine } from "./build.ts";
 
 /** What one epoch's system prompt is built from. */
 export interface SystemPromptInput {
@@ -92,13 +93,11 @@ function sectionsOf(input: SystemPromptInput, table: TextTable, outside: boolean
   if (input.tools.length > 0) {
     sections.push({
       tag: "tools",
-      // A tool a plugin or a backend declared says where it comes from, so the
-      // model knows whose it is (docs/tools.md#external-tools).
-      lines: input.tools.map((tool) =>
-        tool.source === undefined
-          ? textOf(table, "system.tool", { name: tool.name, description: tool.description })
-          : textOf(table, "system.tool.source", { name: tool.name, description: tool.description, source: tool.source }),
-      ),
+      // A tool a plugin or a backend declared says where it comes from, and one
+      // that carries the JSON Schema its own harness declared shows it, so the
+      // model knows whose it is and reads the parameters it will call with
+      // (docs/tools.md#external-tools).
+      lines: input.tools.map((tool) => toolLine(table, tool)),
     });
   }
   if (input.modules.length > 0) {

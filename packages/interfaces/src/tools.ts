@@ -10,6 +10,7 @@
  */
 
 import type { DirectToolSpec, FunctionSpec, ModuleSpec, ParameterSpec, ToolCall, ToolResult } from "./agent.ts";
+import type { JSONSchema } from "./agent.ts";
 import type { EventRef, WindowRef } from "./refs.ts";
 import type { WorkspaceMount } from "./workspace.ts";
 
@@ -55,7 +56,37 @@ export interface ExternalTool {
   readonly name: string;
   /** What it does and when to use it; side effects. 1 to 4 sentences. */
   readonly description: string;
-  readonly parameters: Record<string, ParameterSpec>;
+  /**
+   * The parameters in arbor's own declaration shape. Optional for a tool that
+   * declares `schema` instead: an outside harness already has a JSON Schema for
+   * its tool, and restating it in this shape would only lose what the schema
+   * says.
+   */
+  readonly parameters?: Record<string, ParameterSpec>;
+  /**
+   * The parameters as the JSON Schema the outside harness declared them,
+   * carried verbatim (docs/tools.md#external-tools). What the model reads when
+   * the tool has one; `parameters` is the declaration for a tool that has none.
+   */
+  readonly schema?: JSONSchema;
   /** Run one call. The same path a core tool takes. */
   execute(request: ToolCall, context: CallContext): Promise<ToolResult>;
+}
+
+/**
+ * Where a plugin's external tools come from: a list, or a call that answers
+ * with the current one. The host reads the source again on every refresh, so a
+ * plugin whose tools change at runtime - the tools a harness around the host
+ * registered - answers with what stands now
+ * (docs/tools.md#external-tools-that-change).
+ */
+export type ExternalToolSource = () => readonly ExternalTool[] | Promise<readonly ExternalTool[]>;
+
+/** What one refresh of the external tools changed about one tool. */
+export interface ExternalToolChange {
+  change: "added" | "removed";
+  /** The tool's own name, as the model calls it. */
+  name: string;
+  /** Who declares it: the plugin's name, or the backend's. */
+  source: string;
 }

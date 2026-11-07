@@ -39,6 +39,7 @@ import type {
   Event,
   EventRef,
   ExternalTool,
+  ExternalToolChange,
   Handoff,
   Journal,
   Judge,
@@ -106,6 +107,7 @@ import {
   renderPluginSections,
   sectionRevision,
   textOf,
+  toolDeltaBlock,
   usedPercent,
   zhTextTable,
 } from "@4fu/arbor-prompt";
@@ -328,6 +330,8 @@ export class Arbor {
    * are never waited for (docs/windows.md#streaming).
    */
   private readonly streaming = new Map<WindowRef, Promise<void>>();
+  /** Who asked for one window's live output with `stream`. */
+  private readonly streamWatchers = new Map<WindowRef, ((event: StreamEvent) => void)[]>();
   /** The prompt sections the plugins registered, one per plugin. */
   private readonly sections: PromptSection[] = [];
   /** The environment as the catalog reads it, kept in step with every change. */
@@ -340,6 +344,13 @@ export class Arbor {
   private settings: Settings | undefined;
   /** The environment, loaded once: the plugins' items installed, the catalog current. */
   private loading: Promise<void> | undefined;
+  /**
+   * The declaration of the external tool set the catalog holds, so a refresh
+   * that changed nothing is not delivered to anybody.
+   */
+  private externalSignature = "";
+  /** The read in flight, so several windows asking at once share one. */
+  private refreshing: Promise<readonly ExternalToolChange[]> | undefined;
 
   constructor(options: ArborOptions) {
     this.options = options;
@@ -474,29 +485,124 @@ export class Arbor {
     // (docs/dispatch.md#tasks). One with a push source of its own is subscribed
     // at `start`, exactly the way a channel is.
     for (const source of plugin.adapters?.taskSources ?? []) this.registeredTaskSources.push(source);
-    // The plugin's own direct tools, declared to the model and called in the
-    // turn (docs/tools.md#external-tools). A name the model already has is not
-    // registered, and the collision is recorded with its rule.
-    this.registerExternal(plugin.tools ?? [], plugin.name);
+    // The plugin's own direct tools are read again with every refresh, so a
+    // plugin whose tools change while the host runs says so by answering with
+    // what stands now (docs/tools.md#external-tools-that-change).
     // A plugin's items arrive in `/env` on the next load, so its abilities reach
     // live windows as a delta and new ones through their prefix.
     this.loading = undefined;
   }
 
   /**
-   * Direct tools declared from outside the core: a plugin's own, or the ones a
-   * backend injects from the harness the host is embedded in
-   * (docs/tools.md#external-tools). Both take the same shape and reach the
-   * model the same way, so there is one path and not two.
+   * Read every external tool source again and apply what changed: the tools the
+   * backend injects from the harness around the host, and every plugin's own
+   * (docs/tools.md#external-tools-that-change).
    *
-   * A name the model already has is not registered - a core tool always wins,
-   * and so does the tool that arrived first. That is recorded with its rule
-   * rather than thrown: the operator sees which tool of which source was left
-   * out, and the window keeps working.
+   * The host does this itself - before every window opens and at every step
+   * boundary - so a tool a harness registers while the host runs reaches the
+   * model without a restart. A deployment calls it when it wants the change to
+   * land now rather than at the next boundary: a harness whose plugins register
+   * tools from its own signal.
+   *
+   * Every refresh runs the same collision rule the first read runs: a core tool
+   * always wins, so does the tool that arrived first, and what was left out is
+   * recorded as a `tool_registration` event rather than thrown. What this
+   * returns is what moved, so a caller can tell a refresh that changed
+   * something from one that did not.
    */
-  private registerExternal(tools: readonly ExternalTool[], source: string): void {
-    if (tools.length === 0) return;
-    this.recordRefusals(this.catalog.external(tools, source));
+  async refreshExternalTools(): Promise<readonly ExternalToolChange[]> {
+    // One read at a time: several windows ask at the same step boundary, and one
+    // read serves them all.
+    const reading = (this.refreshing ??= this.readExternalTools());
+    try {
+      const changes = await reading;
+      await this.applyToolChanges(changes);
+      return changes;
+    } finally {
+      if (this.refreshing === reading) this.refreshing = undefined;
+    }
+  }
+
+  /**
+   * The external tool sources as they stand now, registered, and what that
+   * changed: one per plugin in the order they registered, then the backend's.
+   * The order is the order the collision rule resolves in - what came first wins
+   * - so a plugin's own tool keeps the place it had when the host was built.
+   *
+   * A source that cannot be read leaves the set as it stands, so a window keeps
+   * the tools it has rather than losing them to a failed read.
+   */
+  private async readExternalTools(): Promise<readonly ExternalToolChange[]> {
+    const sources: { source: string; tools: readonly ExternalTool[] }[] = [];
+    try {
+      for (const plugin of this.plugins) {
+        const tools = plugin.tools;
+        if (tools === undefined) continue;
+        sources.push({ source: plugin.name, tools: typeof tools === "function" ? await tools() : tools });
+      }
+      const injected = this.backend.externalTools === undefined ? [] : await this.backend.externalTools();
+      sources.push({ source: this.backend.name, tools: injected });
+    } catch {
+      return [];
+    }
+    // The declaration is what the model reads, so it is what a refresh compares:
+    // a name, its description, its parameters and its schema. The `execute` is
+    // the source's own and carries nothing the model can see.
+    const signature = JSON.stringify(
+      sources.map((one) => [
+        one.source,
+        one.tools.map((tool) => [tool.name, tool.description, tool.parameters ?? null, tool.schema ?? null]),
+      ]),
+    );
+    if (signature === this.externalSignature) return [];
+    const before = this.declaredExternal();
+    this.externalSignature = signature;
+    for (const one of sources) this.recordRefusals(this.catalog.external(one.tools, one.source));
+    return changedTools(before, this.declaredExternal());
+  }
+
+  /** The external tools the catalog declares now, by source and name. */
+  private declaredExternal(): Map<string, { name: string; source: string }> {
+    const declared = new Map<string, { name: string; source: string }>();
+    for (const tool of this.catalog.tools()) {
+      if (tool.source === undefined) continue;
+      declared.set(`${tool.source}\u0000${tool.name}`, { name: tool.name, source: tool.source });
+    }
+    return declared;
+  }
+
+  /**
+   * What one refresh moved, handed to every window that can still read it: the
+   * window's own declaration replaced when its backend can do that, and the
+   * change delivered as a delta at its next tool-call boundary - never a rebuilt
+   * prefix (docs/tools.md#external-tools-that-change).
+   */
+  private async applyToolChanges(changes: readonly ExternalToolChange[]): Promise<void> {
+    if (changes.length === 0) return;
+    const time = this.clock();
+    const block = toolDeltaBlock(changes, time);
+    // The `<tools>` section of the prefix is rebuilt for the next window, so a
+    // window that opens now carries the set as it stands instead of the one the
+    // last epoch was built with (docs/windows.md#prompt-layout).
+    this.snapshots.invalidate();
+    for (const record of this.live()) {
+      const session = record.session;
+      // A window still opening has no session yet: it opens with the current set
+      // in its own request, so it is told nothing about the change.
+      if (session === undefined || record.state === "ended") continue;
+      // A backend that can change a running window's declared tools does it
+      // here, so a tool that appeared is callable in this window and one that
+      // was removed is not.
+      await session.refreshTools?.(this.catalog.tools());
+      // The window learns the change the way it learns an environment change: a
+      // delta at its next tool-call boundary, never a rebuilt prefix.
+      await this.deliver(record.window, {
+        kind: "tools_delta",
+        refs: [],
+        time,
+        content: [block],
+      });
+    }
   }
 
   /** One journal event per tool that was not registered, with the rule. */
@@ -548,12 +654,13 @@ export class Arbor {
 
   /** What the host loads once, before the first window opens. */
   private async loadHost(): Promise<void> {
-    // The tools a backend injects from the harness the host is embedded in are
-    // declared to the model like any other direct tool
-    // (docs/tools.md#external-tools). They are read once, here, so the first
-    // window opens with them.
-    const injected = this.backend.externalTools === undefined ? [] : await this.backend.externalTools();
-    this.registerExternal(injected, this.backend.name);
+    // The tools a backend injects from the harness the host is embedded in, and
+    // the ones the plugins declare, are declared to the model like any other
+    // direct tool (docs/tools.md#external-tools). They are read here, so the
+    // first window opens with them - and read again whenever they move, so a
+    // tool registered later reaches the model without a restart
+    // (docs/tools.md#external-tools-that-change).
+    await this.refreshExternalTools();
     const environment = this.options.environment;
     if (environment === undefined) return;
     await this.installPluginItems();
@@ -889,6 +996,12 @@ export class Arbor {
   /** Open a window for one task, at a model tier. */
   async open(task: TaskInput & { ref?: TaskRef }, tier?: string): Promise<WindowRecord> {
     await this.load();
+    // The tools a backend or a plugin declares may have moved since the last
+    // window opened: read them again before this window's prefix and its request
+    // are built, so the window opens with the current set and the windows
+    // already running learn what changed
+    // (docs/tools.md#external-tools-that-change).
+    await this.refreshExternalTools();
     const window = this.refs.nextWindow();
     // A dispatched task already carries its ref, so the window names the task it
     // was opened for rather than a second one.
@@ -1200,10 +1313,11 @@ export class Arbor {
       time: this.clock(),
       // Environment deltas, prompt deltas and conversation updates are never
       // held back: they say what the window can still call and what changed
-      // under it.
+      // under it. A tools delta is the same kind of news.
       ...(delivery.kind === "environment_delta" ||
       delivery.kind === "prompt_delta" ||
-      delivery.kind === "conversation_update"
+      delivery.kind === "conversation_update" ||
+      delivery.kind === "tools_delta"
         ? { unfiltered: true }
         : {}),
       delivery,
@@ -1597,8 +1711,12 @@ export class Arbor {
             this.board.update(record.window, { usage: event.usage, state: "running" });
             // A plugin's prompt section that changed is learned the way an
             // environment change is: the revision is asked for here, once per
-            // step, and the delta goes in at the next tool-call boundary.
+            // step, and the delta goes in at the next tool-call boundary. The
+            // tools a backend or a plugin declares are read the same way, so a
+            // tool registered while this window runs reaches the model without
+            // a restart (docs/tools.md#external-tools-that-change).
             await this.deliverPromptSections(record);
+            await this.refreshExternalTools();
             await this.remind(record);
             break;
           case "steered":
@@ -1633,18 +1751,70 @@ export class Arbor {
    * its own deltas and never the window (docs/windows.md#streaming).
    */
   private streamOut(window: WindowRef, event: StreamEvent): void {
-    if (this.hooks.empty) return;
-    const handed = (this.streaming.get(window) ?? Promise.resolve())
-      .then(() => this.hooks.after("windowStream", { window, event }))
-      .then(
-        () => undefined,
-        () => undefined,
-      )
-      .catch(() => {});
-    this.streaming.set(window, handed);
-    void handed.then(() => {
-      if (this.streaming.get(window) === handed) this.streaming.delete(window);
-    });
+    if (!this.hooks.empty) {
+      const handed = (this.streaming.get(window) ?? Promise.resolve())
+        .then(() => this.hooks.after("windowStream", { window, event }))
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .catch(() => {});
+      this.streaming.set(window, handed);
+      void handed.then(() => {
+        if (this.streaming.get(window) === handed) this.streaming.delete(window);
+      });
+    }
+    this.handToWatchers(window, event);
+  }
+
+  /**
+   * The same delta to whoever asked for this window's stream with `stream`. It
+   * is handed on synchronously and in order, and a watcher that throws loses its
+   * own delta rather than the window's - exactly what a `windowStream` hook is
+   * promised (docs/windows.md#streaming).
+   */
+  private handToWatchers(window: WindowRef, event: StreamEvent): void {
+    const watchers = this.streamWatchers.get(window);
+    if (watchers === undefined) return;
+    for (const watcher of [...watchers]) {
+      try {
+        watcher(event);
+      } catch {
+        // A surface that shows a window's output must never hold it up.
+      }
+    }
+  }
+
+  /**
+   * Watch one window's live output: the same deltas the `windowStream` hook
+   * sees, for the window the caller names, without registering a hook and
+   * filtering every window's deltas out
+   * (docs/windows.md#streaming).
+   *
+   * This is the way an embedding host reads what the window it drives is
+   * writing - the assistant text, and above all the `send` it is composing,
+   * which is what makes a window's answer readable before the call is complete.
+   * The deltas arrive in order and are handed on without being waited for, so a
+   * watcher that throws or is slow loses its own deltas rather than the window.
+   * Streams are best-effort and ephemeral: a watcher taken after a delta was
+   * emitted does not receive it, and nothing here is journaled.
+   *
+   * What it answers with lets the watcher go again.
+   */
+  stream(window: WindowRef, onEvent: (event: StreamEvent) => void): Unsubscribe {
+    const watchers = this.streamWatchers.get(window) ?? [];
+    watchers.push(onEvent);
+    this.streamWatchers.set(window, watchers);
+    let off = false;
+    return () => {
+      if (off) return;
+      off = true;
+      const left = this.streamWatchers.get(window);
+      if (left === undefined) return;
+      const kept = left.filter((one) => one !== onEvent);
+      if (kept.length === 0) this.streamWatchers.delete(window);
+      else this.streamWatchers.set(window, kept);
+    };
   }
 
   /**
@@ -1726,6 +1896,10 @@ export class Arbor {
       ...(wanted === undefined ? {} : { refs: [...wanted.refs] }),
     });
     this.board.close(record.window);
+    // An ended window streams nothing more, so whoever watched its live output
+    // is let go rather than held for a window that will never write again.
+    this.streamWatchers.delete(record.window);
+    this.streaming.delete(record.window);
     await this.release(record);
     // A window a `close` stopped goes on at the next `start`, not here: closing
     // a host starts no new turn (docs/windows.md#restart).
@@ -1771,6 +1945,10 @@ export class Arbor {
     const window = this.refs.nextWindow();
     const taskRef = this.refs.nextTask();
     const reason = textOf(this.table, "continuation.reason", { window: previous });
+    // The tools a backend or a plugin declares may have moved since this chain's
+    // last window opened: read them again before the continuation's prefix and
+    // its request are built (docs/tools.md#external-tools-that-change).
+    await this.refreshExternalTools();
     // A hook may change the handoff, or refuse the continuation.
     const continued = await this.hooks.before("windowContinue", {
       window,
@@ -2718,6 +2896,28 @@ function scrubRecord(record: DecisionRecord, secrets: SecretScrub): DecisionReco
     state: secrets.applyJson(record.state),
     ...(record.answer === undefined ? {} : { answer: secrets.applyJson(record.answer) as DecisionRecord["answer"] }),
   };
+}
+
+/**
+ * What one refresh of the external tools changed: what is declared now and was
+ * not, then what was and is not (docs/tools.md#external-tools-that-change). A
+ * tool the same source declares again is neither, so a refresh that changes
+ * nothing a window can see reports nothing.
+ */
+function changedTools(
+  before: ReadonlyMap<string, { name: string; source: string }>,
+  after: ReadonlyMap<string, { name: string; source: string }>,
+): readonly ExternalToolChange[] {
+  const changes: ExternalToolChange[] = [];
+  for (const [key, tool] of after) {
+    if (before.has(key)) continue;
+    changes.push({ change: "added", name: tool.name, source: tool.source });
+  }
+  for (const [key, tool] of before) {
+    if (after.has(key)) continue;
+    changes.push({ change: "removed", name: tool.name, source: tool.source });
+  }
+  return changes;
 }
 
 export { Board, type BoardEntry, EffectQueue, HookRunner, HookedJournal, RefAllocator, SnapshotBuilder };

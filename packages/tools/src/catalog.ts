@@ -26,7 +26,7 @@ import type {
   ToolGroup,
   ToolResult,
 } from "@4fu/arbor-interfaces";
-import { textOf } from "@4fu/arbor-prompt";
+import { textOf, toolLine } from "@4fu/arbor-prompt";
 import { directToolIn, runScript, type CodeExecContext, type ScriptCatalog } from "./code-exec.ts";
 import type { ToolServices } from "./host.ts";
 import { boundResult } from "./bound.ts";
@@ -85,8 +85,19 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
   private readonly services: ToolServices;
   /** The groups the core declares itself, which no external tool may shadow. */
   private readonly own: readonly ToolGroup[];
-  /** Every group, the core's own first, then what a deployment registered. */
-  private readonly groups: ToolGroup[];
+  /**
+   * The groups a deployment registered - the core's own, what the workspace
+   * implementation contributes, and a plugin's own groups - which no external
+   * tool may shadow either.
+   */
+  private readonly base: readonly ToolGroup[];
+  /**
+   * One group per source that declared external tools, the source's name as the
+   * key. A refresh replaces the group its source declared before, so a tool the
+   * source dropped is no longer declared and no longer callable
+   * (docs/tools.md#external-tools-that-change).
+   */
+  private readonly externalGroups = new Map<string, ExternalToolGroup>();
 
   constructor(options: ToolCatalogOptions) {
     this.services = options.services;
@@ -105,13 +116,18 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       new EnvToolGroup(options.services),
       new EnvModuleGroup(options.services),
     ];
-    this.groups = [
+    this.base = [
       ...this.own,
       // What the workspace implementation contributes: a capability the core
       // does not name, such as showing another window's directory.
       ...(options.services.workspace?.groups?.(options.services.table) ?? []),
       ...(options.groups ?? []),
     ];
+  }
+
+  /** Every group: the base, then one per source that declared external tools. */
+  private get groups(): ToolGroup[] {
+    return [...this.base, ...this.externalGroups.values()];
   }
 
   /**
@@ -122,10 +138,19 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
    * A name the model already has is not registered: a core tool always wins,
    * and so does the external tool that arrived first. The collisions come back
    * with the rule that refused them, so the host records them for the operator
-   * instead of throwing.
+   * instead of throwing. The rule runs on every call, so every refresh of the
+   * set is checked the same way.
+   *
+   * What this source declared before is replaced, so a refresh that drops a
+   * tool leaves it undeclared and uncallable - and a tool the source declares
+   * again is not a collision with itself.
    */
   external(tools: readonly ExternalTool[], source: string): readonly ExternalToolRefusal[] {
-    const taken = new Set([...this.tools().map((tool) => tool.name), ...this.modules().map((module) => module.name)]);
+    const others = [...this.base, ...[...this.externalGroups].filter(([name]) => name !== source).map(([, group]) => group)];
+    const taken = new Set([
+      ...others.flatMap((group) => group.tools()).map((tool) => tool.name),
+      ...others.flatMap((group) => group.modules()).map((module) => module.name),
+    ]);
     const refused: ExternalToolRefusal[] = [];
     const declared: ExternalTool[] = [];
     for (const tool of tools) {
@@ -136,7 +161,7 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       taken.add(tool.name);
       declared.push(tool);
     }
-    if (declared.length > 0) this.groups.push(new ExternalToolGroup(declared, source, this.services));
+    this.externalGroups.set(source, new ExternalToolGroup(declared, source, this.services));
     return refused;
   }
 
@@ -363,6 +388,7 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
       lines.push(textOf(table, "result.tool_search.modules", { names: found.modules.join(", ") }));
     }
     for (const tool of found.tools) {
+      // The renderer's own rule, so the lookup and the prompt never disagree.
       lines.push(toolLine(table, tool));
     }
     for (const name of found.functions) {
@@ -399,16 +425,6 @@ export class ToolCatalog implements ToolGroup, ScriptCatalog {
 function stringArg(args: Record<string, unknown>, name: string): string {
   const value = args[name];
   return typeof value === "string" ? value : "";
-}
-
-/**
- * One tool's line, the same one the tools list writes: a tool declared from
- * outside the core says where it comes from, so the model knows whose it is
- * wherever it meets the name (docs/tools.md#external-tools).
- */
-function toolLine(table: TextTable, tool: DirectToolSpec): string {
-  const key = tool.source === undefined ? "system.tool" : "system.tool.source";
-  return lookup(table, key, { name: tool.name, description: tool.description, source: tool.source ?? "" });
 }
 
 /**

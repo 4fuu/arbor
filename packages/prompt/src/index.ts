@@ -49,6 +49,8 @@ export {
   reminderBlock,
   renderDelivery,
   taskBlock,
+  toolDeltaBlock,
+  toolLine,
   toolResultBlock,
   windowMessageBlock,
 } from "./build.ts";

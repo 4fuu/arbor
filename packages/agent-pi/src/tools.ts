@@ -11,7 +11,7 @@
  */
 
 import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
-import type { ParameterSpec, ToolResult } from "@4fu/arbor-interfaces";
+import type { JSONSchema, ParameterSpec, ToolResult } from "@4fu/arbor-interfaces";
 import type { Renderer } from "@4fu/arbor-prompt";
 import { errorBlock, toolResultBlock } from "@4fu/arbor-prompt";
 
@@ -50,8 +50,21 @@ function jsonType(type: ParameterSpec["type"]): string {
   }
 }
 
-/** The JSON Schema one tool declares to pi. */
-export function toolParameters(parameters: Record<string, ParameterSpec>): Record<string, unknown> {
+/**
+ * The JSON Schema one tool declares to pi.
+ *
+ * A tool declared from outside the core hands over the JSON Schema its own
+ * harness declared, and that is what pi sends: `enum`, `items`, `oneOf`, a
+ * nested object's own properties, all of it, because the model calls the tool
+ * with the schema it was given and a summary of it would only drop what it says
+ * (docs/tools.md#external-tools). A tool that declares none - arbor's own - is
+ * built from its `ParameterSpec`s, which is the declaration for those.
+ */
+export function toolParameters(
+  parameters: Record<string, ParameterSpec>,
+  schema?: JSONSchema,
+): Record<string, unknown> {
+  if (schema !== undefined) return schema;
   const properties: Record<string, unknown> = {};
   const required: string[] = [];
   for (const [name, parameter] of Object.entries(parameters)) {
@@ -98,7 +111,7 @@ export function toolResultOf(result: ToolResult, renderer: Renderer): AgentToolR
 
 /** One direct tool, declared and wired to the core's call path. */
 export function piTool(
-  spec: { name: string; description: string; parameters: Record<string, ParameterSpec> },
+  spec: { name: string; description: string; parameters: Record<string, ParameterSpec>; schema?: JSONSchema },
   call: (args: Record<string, unknown>, callId: string) => Promise<ToolResult>,
   renderer: Renderer,
 ): AgentTool<Record<string, unknown>> {
@@ -106,7 +119,7 @@ export function piTool(
     name: spec.name,
     label: spec.name,
     description: spec.description,
-    parameters: toolParameters(spec.parameters),
+    parameters: toolParameters(spec.parameters, spec.schema),
     execute: async (callId: string, params: unknown) => {
       const result = await call((params ?? {}) as Record<string, unknown>, callId);
       return toolResultOf(result, renderer);

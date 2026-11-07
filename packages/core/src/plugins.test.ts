@@ -152,24 +152,6 @@ interface Harness {
   timers: ManualTimers;
 }
 
-/**
- * A backend that injects the tools an outside harness registered, the way a
- * host embedded in one hands them in
- * (docs/tools.md#external-tools). Same shape a plugin declares, one path.
- */
-class InjectingBackend extends ScriptedBackend {
-  private readonly injected: readonly ExternalTool[];
-
-  constructor(injected: readonly ExternalTool[] = []) {
-    super();
-    this.injected = injected;
-  }
-
-  externalTools(): readonly ExternalTool[] {
-    return this.injected;
-  }
-}
-
 async function host(
   options: {
     plugins?: readonly Plugin[];
@@ -184,7 +166,10 @@ async function host(
 ): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const root = await mkdtemp(join(tmpdir(), "arbor-plugin-"));
-  const backend = new InjectingBackend(options.injected ?? []);
+  const backend = new ScriptedBackend();
+  // The tools the harness around the host registered, handed in the way a host
+  // embedded in one hands them in (docs/tools.md#external-tools).
+  backend.injected.push(...(options.injected ?? []));
   const timers = new ManualTimers();
   const arbor = new Arbor({
     journal,
