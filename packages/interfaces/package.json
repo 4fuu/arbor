@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-interfaces",
-  "version": "2026.1107.0",
+  "version": "2026.1107.1",
   "private": true,
   "type": "module",
   "description": "Every replaceable interface in arbor, and the core's own shapes.",

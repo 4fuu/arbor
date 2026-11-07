@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-segmenter-jieba",
-  "version": "2026.1107.0",
+  "version": "2026.1107.1",
   "private": true,
   "type": "module",
   "description": "The default Segmenter: jieba's dictionary segmentation for the journal's word index.",

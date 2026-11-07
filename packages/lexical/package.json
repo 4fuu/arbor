@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-lexical",
-  "version": "2026.1107.0",
+  "version": "2026.1107.1",
   "private": true,
   "type": "module",
   "description": "The lexical search the journal and notes share: word segmentation, the FTS5 helpers and the merge order.",
