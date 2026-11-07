@@ -108,11 +108,17 @@ is public under the `@4fu` scope, which is why each carries
 
 - **No provenance.** A provenance attestation needs a supported CI runner, so
   a release run by hand publishes without one.
-- **The optional peer.** `@4fu/arbor-journal-sqlite` takes
-  `@4fu/arbor-segmenter-jieba` as an optional peer: installed, the journal's
-  word index uses jieba's segmentation; absent, it falls back to a
-  per-character approximation and nothing else changes
-  ([journal.md](journal.md#search)).
+- **The optional peers.** `@4fu/arbor-lexical` takes
+  `@4fu/arbor-segmenter-jieba` as an optional peer: installed, the word index
+  uses jieba's segmentation; absent, it falls back to a per-character
+  approximation and nothing else changes. `@4fu/arbor-journal-sqlite` takes
+  `@4fu/arbor-search-zvec` as an optional peer: installed, event text is
+  embedded and searched by meaning; absent - or when zvec's prebuilt binary does
+  not load, or no embedding model is available - search is lexical and nothing
+  else changes ([journal.md](journal.md#search)). `@4fu/arbor-search-zvec` takes
+  `@huggingface/transformers` as an optional peer for its default model; a
+  deployment passes its own `Embedder` instead, which is the only way text
+  reaches anything outside the host.
 - **Nothing is published from a working tree that has not been built.** The
   publish step packs whatever `dist` holds, so `pnpm build` runs first and the
   entry points are checked before anything is packed.

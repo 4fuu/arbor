@@ -130,7 +130,11 @@ export interface SearchHit {
   kind: EventKind;
   time: number;
   match: MatchKind;
-  /** Relevance in 0..1 within its index; higher is better. */
+  /**
+   * Relevance in 0..1 across the channels that found the hit; higher is better.
+   * Fused with reciprocal rank fusion, so a hit two channels found outranks one
+   * only one did.
+   */
   score: number;
   /** The event's opening words, for a one-line result. */
   summary: string;

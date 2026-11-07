@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Segmenter } from "@4fu/arbor-interfaces";
-import { fallbackSegmenter } from "./segmenter.ts";
+import { fallbackSegmenter } from "@4fu/arbor-lexical";
 import { SqliteJournal } from "./sqlite-journal.ts";
 
 let jieba: Segmenter | null = null;

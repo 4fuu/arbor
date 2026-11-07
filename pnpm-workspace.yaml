@@ -1,7 +1,16 @@
 packages:
   - packages/*
+# Optional peers are declared for a deployment to install, not for this
+# repository to carry: pnpm installs peers automatically by default, which would
+# put the default embedding model's runtime (hundreds of megabytes of ONNX
+# runtimes) in every checkout. A package that needs an optional peer for its own
+# tests names it as a devDependency instead.
+autoInstallPeers: false
 allowBuilds:
   # pi-ai's optional postinstall steps: neither is needed, the published
   # packages ship their generated artifacts.
   '@google/genai': false
   protobufjs: false
+  # The optional semantic channel's vector store: a prebuilt native binding per
+  # platform, whose script only checks that one resolved for this platform.
+  '@zvec/zvec': true

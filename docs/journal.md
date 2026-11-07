@@ -113,13 +113,46 @@ substring hits first, and each carries its ref and window.
 The word index segments with jieba's dictionary, cut in search mode: a long
 word is also indexed as the words inside it, and punctuation and spaces are not
 words, so a query that carries them still matches. The default segments this
-way through `@4fu/arbor-segmenter-jieba`, which `@4fu/arbor-journal-sqlite` takes as an
+way through `@4fu/arbor-segmenter-jieba`, which `@4fu/arbor-lexical` takes as an
 optional peer dependency. When that package is not installed, or its prebuilt
 binary does not load on the platform, the word index falls back to segmenting
 Chinese, Japanese and Korean text per character and per bigram and every other
 script per word, which is what makes a two-character query find the phrase it
 appears in without a dictionary. A deployment replaces either one by
 implementing `Segmenter` and registering it with the journal.
+
+### The semantic channel
+
+A query whose meaning matches an event but whose words do not finds nothing
+lexically. A deployment that wants that installs `@4fu/arbor-search-zvec`, which
+`@4fu/arbor-journal-sqlite` takes as an optional peer: event text is embedded
+and searched by meaning with zvec, an embedded vector database. The channel is
+absent - and search is exactly what the paragraph above describes - when the
+package is not installed, when zvec's prebuilt binary does not load on the
+platform, when another host holds the vector store's `LOCK` (one host per data
+directory), or when no embedding model is available.
+
+The default embedder runs a small bilingual retrieval model locally through
+transformers.js and needs no key. Its files are fetched from the Hugging Face
+Hub on first use and cached; nothing a host holds leaves it. The fetch never
+blocks opening a journal or a search: until the model arrives the channel
+answers nothing and holds the text it was given, and events appended meanwhile
+are indexed once it is. A fetch that fails degrades to lexical search with one
+warning and is retried later. A deployment names a local model directory, a
+mirror endpoint, or its own `Embedder` - the only way text reaches anything
+outside the host - in the package's README.
+
+Each event's text is indexed when the event is appended, and
+`journal.catchUpSemantic()` indexes what the channel does not hold: after a
+restart over an existing database, once the model arrives, and after an indexing
+attempt that failed. A redaction erases the event's vector with its content.
+
+The channels merge through `@4fu/arbor-lexical`'s `mergeHits`, each keeping the
+order it arrives in: exact substring hits first, then word hits, then the hits
+only the semantic channel found, which carry `match: "semantic"`. The filters a
+read applies - window, kinds, targets, the sequence range - are applied by the
+journal as well as by the channel, so a channel that filters less than the
+journal does still answers the read it was asked.
 
 ## Media
 

@@ -8,7 +8,7 @@ export type { SqliteJournalOptions } from "./sqlite-journal.ts";
 export { FsBlobStore, blobIdOf, blobRefOf } from "./blob-store.ts";
 export type { BlobEntry, BlobRegistry } from "./blob-store.ts";
 
-export { fallbackSegmenter, resolveSegmenter, indexText } from "./segmenter.ts";
+export { resolveSemanticIndex } from "./semantic.ts";
 
 export {
   SCHEMA_VERSION,
@@ -18,16 +18,7 @@ export {
   createSchema,
 } from "./schema.ts";
 
-export {
-  buildFilters,
-  escapeLike,
-  likePattern,
-  quoteFts,
-  ranked,
-  substring,
-  trigramMatch,
-  wordMatch,
-} from "./search.ts";
-export type { FilterSql, Ranked, SearchFilters } from "./search.ts";
+export { buildFilters } from "./search.ts";
+export type { FilterSql, SearchFilters } from "./search.ts";
 
-export { MIN_TRIGRAM_CHARS } from "./sqlite-journal.ts";
+export { MIN_TRIGRAM_CHARS } from "@4fu/arbor-lexical";

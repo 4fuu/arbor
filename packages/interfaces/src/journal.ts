@@ -72,6 +72,59 @@ export interface Segmenter {
   segment(text: string): string[];
 }
 
+/** The filters a semantic search applies, as the journal's own read applies them. */
+export interface SemanticFilters {
+  kinds?: readonly string[];
+  window?: WindowRef | null;
+  afterSeq?: number;
+  beforeSeq?: number;
+}
+
+/** The scalar fields a semantic filter reads, beside an event's text. */
+export interface SemanticFields {
+  kind?: string;
+  window?: WindowRef | null;
+}
+
+/**
+ * Embedding text into vectors. The default is a small local model that needs no
+ * key (docs/journal.md#search); a deployment replaces it with its own, which is
+ * the only way text reaches anything outside the host.
+ */
+export interface Embedder {
+  /** The dimension every vector this embedder returns has. */
+  readonly dimension: number;
+  /** Embed each text, in the order given. */
+  embed(texts: readonly string[]): Promise<readonly number[][]>;
+}
+
+/**
+ * The semantic channel: text search by meaning, beside the lexical indexes
+ * (docs/journal.md#search).
+ *
+ * The journal takes one as an optional peer, the way it takes a `Segmenter`.
+ * When none is registered - the package is not installed, its vector store will
+ * not open on the platform, or no embedding model is available - search is
+ * lexical and nothing else changes. A channel that is registered but not ready
+ * yet - the model is still downloading, or the download failed and is waiting to
+ * be retried - answers `ready()` with `false`, an empty `search`, and keeps
+ * what `add` handed it until it is.
+ */
+export interface SemanticIndex {
+  /** Embed and store one event's text, replacing what is stored for it. */
+  add(ref: EventRef, text: string, fields?: SemanticFields): Promise<void>;
+  /** Forget one event's text, as a redaction does. */
+  remove(ref: EventRef): Promise<void>;
+  /** The refs nearest a query, best first, already filtered. Empty until ready. */
+  search(query: string, limit: number, filters: SemanticFilters): Promise<readonly EventRef[]>;
+  /** Whether the channel can answer a query now. */
+  ready(): Promise<boolean>;
+  /** Every ref the channel holds, so a caller can index what it is missing. */
+  held(): Promise<ReadonlySet<EventRef>>;
+  /** Release the underlying store. */
+  close(): Promise<void>;
+}
+
 export interface Journal {
   /** Append one event. Assigns `ref` and `seq`; a redelivered `external` id is stored once. */
   append(input: EventInput): Promise<Event>;
@@ -88,7 +141,11 @@ export interface Journal {
   /** The events around one, in the global order. */
   around(ref: EventRef, options?: AroundOptions): Promise<Event[]>;
 
-  /** Lexical search: exact substring hits first, then word hits, each with its ref and window. */
+  /**
+   * Text search: exact substring hits first, then word hits and semantic hits
+   * fused by reciprocal rank, each with its ref and window
+   * (docs/journal.md#search).
+   */
   search(query: string, options?: SearchOptions): Promise<SearchPage>;
 
   /** Related items by weight, with the call that pages the rest. */

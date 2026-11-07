@@ -45,6 +45,8 @@ import type {
   SearchOptions,
   SearchPage,
   Segmenter,
+  SemanticFilters,
+  SemanticIndex,
   Target,
   TargetGap,
   TraceNode,
@@ -53,14 +55,23 @@ import type {
 } from "@4fu/arbor-interfaces";
 import type { BlobRegistry } from "./blob-store.ts";
 import { FsBlobStore, blobIdOf } from "./blob-store.ts";
-import { indexText, resolveSegmenter } from "./segmenter.ts";
+import { indexText, mergeHits, resolveSegmenter, MIN_TRIGRAM_CHARS } from "@4fu/arbor-lexical";
+import type { MergedHit, Ranked } from "@4fu/arbor-lexical";
+import { resolveSemanticIndex } from "./semantic.ts";
 import { IMPLICIT_CITE_WEIGHT, TRIGRAM_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 import { buildFilters, likePattern, ranked, substring, trigramMatch, wordMatch } from "./search.ts";
-import type { Ranked, SearchFilters } from "./search.ts";
+import type { SearchFilters } from "./search.ts";
 import { storedBlobRef, storedExternalRef, storedRef, storedWindowRef } from "./stored.ts";
 
-/** A query shorter than this cannot use the trigram index. */
-export const MIN_TRIGRAM_CHARS = 3;
+export { MIN_TRIGRAM_CHARS };
+
+/**
+ * The fewest candidates the semantic channel is asked for. A page of one still
+ * fuses the channels over a handful of candidates, so a hit the word index
+ * ranked first is not lost to a semantic hit the channel would have ranked
+ * second.
+ */
+const MIN_SEMANTIC_CANDIDATES = 10;
 
 /** How many related items one read appends (docs/prompting.md). */
 const RELATED_LIMIT = 3;
@@ -94,6 +105,14 @@ export interface SqliteJournalOptions {
   blobs?: BlobStore;
   /** Word segmentation for the word index. */
   segmenter?: Segmenter;
+  /**
+   * The semantic channel: event text embedded and searched by meaning
+   * (docs/journal.md#search). Omitted, the zvec channel is used when
+   * `@4fu/arbor-search-zvec` is installed and its store opens, and there is no
+   * channel otherwise. `null` forces lexical search even when the package is
+   * installed.
+   */
+  semantic?: SemanticIndex | null;
   /** The clock. Tests pass a fixed one. */
   now?: () => number;
 }
@@ -195,8 +214,11 @@ export class SqliteJournal implements Journal {
 
   private readonly db: DatabaseSync;
   private readonly segmenter: Segmenter;
+  private readonly semantic: SemanticIndex | null;
   private readonly clock: () => number;
   private readonly ownedBlobDirectory: string | null;
+  private semanticReady = false;
+  private semanticCaughtUp = false;
   private closed = false;
 
   constructor(options: SqliteJournalOptions = {}) {
@@ -206,13 +228,14 @@ export class SqliteJournal implements Journal {
     this.segmenter = options.segmenter ?? resolveSegmenter();
     this.clock = options.now ?? (() => Date.now());
 
+    // An in-memory journal has no directory of its own; give it a temporary one
+    // and take it away on close. The blob store and the semantic channel's own
+    // store both live under it.
+    const root = this.path === ":memory:" ? join(tmpdir(), `arbor-journal-${randomUUID()}`) : null;
     if (options.blobs !== undefined) {
       this.blobs = options.blobs;
-      this.ownedBlobDirectory = null;
-    } else if (this.path === ":memory:") {
-      // An in-memory journal has no directory of its own; give it a temporary
-      // one and take it away on close.
-      const root = join(tmpdir(), `arbor-journal-${randomUUID()}`);
+      this.ownedBlobDirectory = root;
+    } else if (root !== null) {
       this.blobs = new FsBlobStore(join(root, "blobs"), new SqlBlobRegistry(this.db, join(root, "blobs")));
       this.ownedBlobDirectory = root;
     } else {
@@ -220,6 +243,11 @@ export class SqliteJournal implements Journal {
       this.blobs = new FsBlobStore(directory, new SqlBlobRegistry(this.db, directory));
       this.ownedBlobDirectory = null;
     }
+
+    this.semantic =
+      options.semantic === undefined
+        ? resolveSemanticIndex(root === null ? `${this.path}.vectors` : join(root, "vectors"))
+        : options.semantic;
   }
 
   async append(input: EventInput): Promise<Event> {
@@ -258,6 +286,14 @@ export class SqliteJournal implements Journal {
       return assigned;
     });
 
+    // The semantic channel is asynchronous, so it is indexed once the event is
+    // committed: an append never waits on a model, and a channel that is not
+    // ready yet holds the text until it is. With no channel there is nothing to
+    // wait for, and the append takes the path it always did.
+    const body = input.body;
+    if (this.semantic !== null && body !== null && body !== undefined && body !== "") {
+      await this.addToSemantic(seq, body, input.kind, input.window ?? null);
+    }
     return this.readEvent(seq) as Event;
   }
 
@@ -345,7 +381,16 @@ export class SqliteJournal implements Journal {
       substrings = substring(this.db, likePattern(trimmed), filters);
     }
 
-    const merged = mergeHits(substrings, words);
+    const semantic =
+      this.semantic === null ? [] : await this.semanticHits(trimmed, limit, filters);
+    // Exact substring hits first, then word hits, then the hits only the
+    // semantic channel found: the vector channel adds what the lexical indexes
+    // missed and never moves what they found (docs/journal.md#search).
+    const merged = mergeHits(
+      { channel: "substring", hits: substrings },
+      { channel: "word", hits: words },
+      { channel: "semantic", hits: semantic },
+    );
     const page = merged.slice(offset, offset + limit);
     const items = page.map((hit) => this.toSearchHit(hit));
     return {
@@ -542,6 +587,9 @@ export class SqliteJournal implements Journal {
     });
 
     for (const blob of redaction.erased) await this.blobs.delete(storedBlobRef(blob));
+    // The vector the event left behind goes with its content: a redaction erases
+    // what the journal holds, and the semantic channel is one of those places.
+    if (this.semantic !== null) await this.removeFromSemantic(seq);
     return this.readEvent(redaction.by) as Event;
   }
 
@@ -549,12 +597,132 @@ export class SqliteJournal implements Journal {
     if (this.closed) return;
     this.closed = true;
     this.db.close();
+    if (this.semantic !== null) await this.semantic.close();
     if (this.ownedBlobDirectory !== null) {
       await rm(this.ownedBlobDirectory, { recursive: true, force: true });
     }
   }
 
+  /**
+   * Index the events the semantic channel does not hold yet, and say how many.
+   *
+   * A restart over an existing database, a channel that was not ready when the
+   * events arrived, and an append whose indexing failed all leave events to
+   * catch up on. A channel that is not ready yet holds what it was given and
+   * indexes that itself, so this answers 0 until it is.
+   */
+  async catchUpSemantic(): Promise<number> {
+    this.ensureOpen();
+    if (this.semantic === null || !(await this.semantic.ready())) return 0;
+    const held = await this.semantic.held();
+    const rows = this.db
+      .prepare(
+        `SELECT seq, kind, window, body FROM events
+         WHERE body IS NOT NULL AND redacted IS NULL ORDER BY seq`,
+      )
+      .all() as Array<{ seq: number; kind: string; window: string | null; body: string }>;
+    let indexed = 0;
+    for (const row of rows) {
+      const seq = toNumber(row.seq);
+      if (held.has(eventRefOf(seq))) continue;
+      await this.addToSemantic(seq, row.body, row.kind, storedWindowRef(row.window));
+      indexed += 1;
+    }
+    return indexed;
+  }
+
   // --- internals ---------------------------------------------------------
+
+  /** Hand one event's text to the semantic channel, when there is one. */
+  private async addToSemantic(
+    seq: number,
+    body: string,
+    kind: string,
+    window: WindowRef | null,
+  ): Promise<void> {
+    if (this.semantic === null) return;
+    try {
+      await this.semantic.add(eventRefOf(seq), body, { kind, window });
+    } catch {
+      // An optional channel that refuses leaves the event searchable lexically;
+      // a catch-up indexes it once the channel answers again.
+    }
+  }
+
+  /** Take one event's text back out of the semantic channel, when there is one. */
+  private async removeFromSemantic(seq: number): Promise<void> {
+    if (this.semantic === null) return;
+    try {
+      await this.semantic.remove(eventRefOf(seq));
+    } catch {
+      // As with an append: the channel is optional, and the event is gone from
+      // every index the journal owns.
+    }
+  }
+
+  /**
+   * The semantic channel's candidates, as ranks in the order it gave them.
+   *
+   * An absent channel, one that is not ready yet, and one that refuses all
+   * answer with nothing, and the search is exactly the lexical one. The
+   * journal's own filters decide which candidates count, so a channel that
+   * filters less than the journal does still answers the read it was asked for.
+   */
+  private async semanticHits(
+    query: string,
+    limit: number,
+    filters: SearchFilters,
+  ): Promise<Ranked[]> {
+    if (this.semantic === null) return [];
+    const ready = await this.semantic.ready();
+    if (ready !== this.semanticReady) {
+      // The channel just became usable, or stopped being: index what it missed
+      // while it was not.
+      this.semanticReady = ready;
+      this.semanticCaughtUp = false;
+    }
+    if (!this.semanticCaughtUp) {
+      this.semanticCaughtUp = true;
+      await this.catchUpSemantic();
+    }
+    if (!ready) return [];
+
+    const asked: SemanticFilters = {
+      ...(filters.kinds === undefined ? {} : { kinds: filters.kinds }),
+      ...(filters.window === undefined ? {} : { window: filters.window }),
+      ...(filters.afterSeq === undefined ? {} : { afterSeq: filters.afterSeq }),
+      ...(filters.beforeSeq === undefined ? {} : { beforeSeq: filters.beforeSeq }),
+    };
+    const refs = await this.semantic.search(query, Math.max(limit, MIN_SEMANTIC_CANDIDATES), asked);
+    const allowed = this.allowedSeqs(refs, filters);
+    // The channel's order, as ranks the shared merge reads: the nearest hit
+    // carries the most negative rank, so it normalizes to the best score.
+    return allowed.map((rowid, index) => ({ rowid, rank: index - allowed.length }));
+  }
+
+  /**
+   * The sequences among `refs` the journal's own filters allow, in the order
+   * given. A redacted event and one with no text are not among them, so a
+   * vector that outlived its content never reaches a page.
+   */
+  private allowedSeqs(refs: readonly EventRef[], filters: SearchFilters): number[] {
+    const seqs: number[] = [];
+    for (const ref of refs) {
+      const seq = parseEventRef(ref);
+      if (seq !== null) seqs.push(seq);
+    }
+    if (seqs.length === 0) return [];
+    const built = buildFilters(filters);
+    const placeholders = seqs.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `SELECT e.seq AS seq FROM events e
+         WHERE e.seq IN (${placeholders}) AND e.body IS NOT NULL AND e.redacted IS NULL${built.sql}`,
+      )
+      .all(...seqs, ...built.params) as Array<{ seq: number }>;
+    const allowed = new Set(rows.map((row) => toNumber(row.seq)));
+    return seqs.filter((seq) => allowed.has(seq));
+  }
 
   private ensureOpen(): void {
     if (this.closed) {
@@ -699,8 +867,8 @@ export class SqliteJournal implements Journal {
     return { window: event.window, time: event.time, summary: summaryOf(event.body) };
   }
 
-  private toSearchHit(hit: { seq: number; match: "substring" | "word"; score: number }): SearchHit {
-    const event = this.readEvent(hit.seq);
+  private toSearchHit(hit: MergedHit): SearchHit {
+    const event = this.readEvent(hit.rowid);
     if (event === null) {
       throw arborError({
         code: "internal",
@@ -715,7 +883,7 @@ export class SqliteJournal implements Journal {
       window: event.window,
       kind: event.kind,
       time: event.time,
-      match: hit.match,
+      match: hit.channel,
       score: hit.score,
       summary: summaryOf(event.body),
     };
@@ -748,38 +916,6 @@ export function deriveLinks(
     links.push({ kind: "cite", from, to: ref, weight: IMPLICIT_CITE_WEIGHT, time });
   }
   return links;
-}
-
-interface MergedHit {
-  seq: number;
-  match: "substring" | "word";
-  score: number;
-}
-
-/**
- * Merge the two indexes: exact substring hits first, then word hits that are
- * not already there, each ordered by its own relevance.
- */
-function mergeHits(substrings: readonly Ranked[], words: readonly Ranked[]): MergedHit[] {
-  const seen = new Set<number>();
-  const merged: MergedHit[] = [];
-  const push = (hits: readonly Ranked[], match: "substring" | "word") => {
-    const best = Math.min(...hits.map((hit) => hit.rank));
-    for (const hit of hits) {
-      if (seen.has(hit.seq)) continue;
-      seen.add(hit.seq);
-      merged.push({ seq: hit.seq, match, score: normalize(hit.rank, best) });
-    }
-  };
-  push(substrings, "substring");
-  push(words, "word");
-  return merged;
-}
-
-/** Relevance in 0..1 within one index; higher is better. */
-function normalize(rank: number, best: number): number {
-  if (best === 0) return 1;
-  return Math.max(0, Math.min(1, rank / best));
 }
 
 function filtersOf(options: ListOptions | SearchOptions): SearchFilters {

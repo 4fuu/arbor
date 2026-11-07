@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { SqliteJournal } from "./sqlite-journal.ts";
-import { fallbackSegmenter } from "./segmenter.ts";
+import { fallbackSegmenter } from "@4fu/arbor-lexical";
 
 // The fixture pins the approximation, so these hold whether or not the optional
 // jieba package is installed; search-jieba.test.ts covers the other one.

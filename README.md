@@ -56,7 +56,9 @@ npm install @4fu/arbor-core @4fu/arbor-journal-sqlite @4fu/arbor-notes-sqlite \
 ```
 
 `@4fu/arbor-plugin-http` is optional; it is the example plugin below.
-`@4fu/arbor-segmenter-jieba` is an optional peer of the journal.
+`@4fu/arbor-segmenter-jieba` is an optional peer of the lexical package, and
+`@4fu/arbor-search-zvec` an optional peer of the journal: absent either one, the
+journal searches lexically and nothing else changes.
 
 ## A minimal host
 
@@ -121,6 +123,7 @@ window gets, and how a continuation keeps working in it, are in
 | [`@4fu/arbor-notes-sqlite`](packages/notes-sqlite) | the default `NoteStore` on SQLite, beside the journal |
 | [`@4fu/arbor-segmenter-jieba`](packages/segmenter-jieba) | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
 | [`@4fu/arbor-lexical`](packages/lexical) | the lexical search the journal and notes share: word segmentation, the FTS5 helpers and the merge order |
+| [`@4fu/arbor-search-zvec`](packages/search-zvec) | the optional semantic channel: event text embedded and searched by meaning with zvec |
 | [`@4fu/arbor-workspace-dir`](packages/workspace-dir) | the fallback `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
 | [`@4fu/arbor-workspace-ovnfs`](packages/workspace-ovnfs) | the default `Workspace` when ovnfs is installed: one shared folder, per-window copy-on-write checkouts the model opens and applies back |
 | [`@4fu/arbor-environment-dir`](packages/environment-dir) | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |

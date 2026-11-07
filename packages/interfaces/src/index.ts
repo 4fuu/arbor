@@ -67,6 +67,10 @@ export type {
   BlobInfo,
   BlobStore,
   Segmenter,
+  SemanticFilters,
+  SemanticFields,
+  Embedder,
+  SemanticIndex,
   Journal,
 } from "./journal.ts";
 

@@ -92,8 +92,11 @@ export type LinkKind =
   | "reply"
   | (string & {});
 
-/** How a search hit matched: an exact substring, or a word. */
-export type MatchKind = "substring" | "word";
+/**
+ * How a search hit matched: an exact substring, a word, or meaning alone. A hit
+ * the semantic channel found and no lexical index did is `semantic`.
+ */
+export type MatchKind = "substring" | "word" | "semantic";
 
 /** Page size default shared by every read that returns a page. */
 export const DEFAULT_PAGE_LIMIT = 20;

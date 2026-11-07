@@ -3,7 +3,7 @@
   "version": "2026.1106.1",
   "private": true,
   "type": "module",
-  "description": "The default Journal: append-only events with a global sequence, targets, native ids, refs, blobs and lexical search on SQLite.",
+  "description": "The default Journal: append-only events with a global sequence, targets, native ids, refs, blobs and search on SQLite: lexical, and semantic when the optional channel is installed.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -33,17 +33,19 @@
   },
   "dependencies": {
     "@4fu/arbor-errors": "workspace:*",
-    "@4fu/arbor-interfaces": "workspace:*"
+    "@4fu/arbor-interfaces": "workspace:*",
+    "@4fu/arbor-lexical": "workspace:*"
   },
   "peerDependencies": {
-    "@4fu/arbor-segmenter-jieba": "workspace:*"
+    "@4fu/arbor-search-zvec": "workspace:*"
   },
   "peerDependenciesMeta": {
-    "@4fu/arbor-segmenter-jieba": {
+    "@4fu/arbor-search-zvec": {
       "optional": true
     }
   },
   "devDependencies": {
+    "@4fu/arbor-search-zvec": "workspace:*",
     "@4fu/arbor-segmenter-jieba": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"

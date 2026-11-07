@@ -12,11 +12,17 @@
  * its own schema, its own filters and its own read of the rows a match names.
  */
 
+import type { MatchKind } from "@4fu/arbor-interfaces";
+
 /** A query shorter than this cannot use the trigram index. */
 export const MIN_TRIGRAM_CHARS = 3;
 
-/** Which index a match came from. */
-export type SearchChannel = "substring" | "word";
+/**
+ * Which channel a match came from, and the `match` a hit carries. The two
+ * lexical channels are `substring` and `word`; `semantic` is the one a store adds
+ * when a deployment gave it an embedding channel (docs/journal.md#search).
+ */
+export type SearchChannel = MatchKind;
 
 /** One match from one index, with its raw relevance. Lower `rank` is better. */
 export interface Ranked {
@@ -74,6 +80,9 @@ export function wordMatch(tokens: readonly string[]): string {
  * first one put it. The channels are named at the call site in the order they
  * merge, so a later one - a vector index, say - plugs in as one more argument
  * and nothing here changes.
+ *
+ * A store with a semantic channel names it last, so the vector channel adds the
+ * hits no lexical index found and never moves one it did.
  */
 export function mergeHits(...channels: readonly ChannelHits[]): MergedHit[] {
   const seen = new Set<number>();
