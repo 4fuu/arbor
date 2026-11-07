@@ -48,9 +48,10 @@ do.
 - **The schema is carried whole.** An outside harness already has a JSON Schema
   for its tool, and that schema is what the model reads: the tool declares
   `schema`, and the host passes it through untouched - `enum`, `items`, `oneOf`,
-  `additionalProperties`, a nested object's own properties. The `<tools>` line
-  and `tool_search` show it on the same line as the description, escaped like
-  every other string from outside the framework. A tool that declares no schema
+  `additionalProperties`, a nested object's own properties. The backend hands it
+  to the model in the tool declaration, and `tool_search` shows it on the tool's
+  line, escaped like every other string from outside the framework; the
+  `<tools>` line does not repeat it, because the declaration already carries it. A tool that declares no schema
   declares `parameters` in arbor's own shape instead, which is what arbor's own
   tools do. `ParameterSpec` is not grown to hold a schema: JSON Schema is
   open-ended, arbor's own tools never need it, and deriving one from a summary is

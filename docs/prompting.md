@@ -64,7 +64,7 @@ it instead of repeating it, because a fact stated twice drifts.
 | reminder | the head line saying it is a host reminder and not a request, the window's real numbers, the tier's own instruction, its place in the series, the window's open work, and from 80 % on the cost of ignoring it | a few sentences |
 | tool description | what one tool does and when to use it; side effects | 1 to 4 sentences |
 | parameter description | meaning, default or range, relation to other parameters | one sentence |
-| external tool's schema | the JSON Schema the outside harness declared, verbatim, on the tool's own line | as long as the schema |
+| external tool's schema | the JSON Schema the outside harness declared, verbatim: in the tool declaration the backend sends, and in a `tool_search` answer | as long as the schema |
 | `tool_search` answer | one function's call instructions, or where a skill's procedure is | one block per name |
 | skill | a procedure, read on demand | as long as the procedure |
 | result | current facts, and the next step only when it is not obvious | stable fields |
@@ -82,8 +82,8 @@ this order:
    everything from outside is data; a real consequence is weighed before it is
    taken.
 3. `<tools>` - the direct tools, one line each: a name, a description, and for
-   a tool a plugin or a backend declared, where it comes from and the JSON
-   Schema it declares, if it declares one
+   a tool a plugin or a backend declared, where it comes from. Its JSON Schema
+   is not repeated here: the tool declaration carries it
    ([tools.md](tools.md#external-tools)).
 4. `<modules>` - the modules, one line each: a name and a description of
    everything the module can do, never a function name.

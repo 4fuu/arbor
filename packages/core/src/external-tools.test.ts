@@ -311,14 +311,13 @@ describe("the JSON Schema an outside harness declares", () => {
     assert.deepEqual(declared?.schema, TODO_WRITE_SCHEMA);
     assert.deepEqual(declared?.parameters, {}, "a schema of its own needs no restatement in arbor's shape");
 
-    // So does the `<tools>` line, so the model reads the parameters it will call
-    // with wherever it meets the name.
+    // The `<tools>` line names it and its source without repeating the schema,
+    // which the declaration above already carries.
     const prompt = backend.opened[0]?.prompt.system ?? "";
-    assert.ok(prompt.includes("todo_write：把任务列表替换成传入的完整列表。（来自scripted）参数："));
-    assert.ok(prompt.includes('"enum":["pending","in_progress","completed"]'));
-    assert.ok(prompt.includes('"additionalProperties":false'));
+    assert.ok(prompt.includes("todo_write：把任务列表替换成传入的完整列表。（来自scripted）"));
+    assert.ok(!prompt.includes('"enum":["pending","in_progress","completed"]'));
 
-    // `tool_search` answers with the same line.
+    // `tool_search` answers with the schema.
     const results = await journal.list({ kinds: ["tool_result"] });
     assert.ok((results.items[0]?.body ?? "").includes('"enum":["pending","in_progress","completed"]'));
 

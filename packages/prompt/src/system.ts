@@ -93,11 +93,11 @@ function sectionsOf(input: SystemPromptInput, table: TextTable, outside: boolean
   if (input.tools.length > 0) {
     sections.push({
       tag: "tools",
-      // A tool a plugin or a backend declared says where it comes from, and one
-      // that carries the JSON Schema its own harness declared shows it, so the
-      // model knows whose it is and reads the parameters it will call with
+      // A tool a plugin or a backend declared says where it comes from. Its
+      // JSON Schema is not repeated here: the backend hands the model the whole
+      // schema in the tool declaration itself, and `tool_search` shows it
       // (docs/tools.md#external-tools).
-      lines: input.tools.map((tool) => toolLine(table, tool)),
+      lines: input.tools.map((tool) => toolLine(table, { ...tool, schema: undefined })),
     });
   }
   if (input.modules.length > 0) {
