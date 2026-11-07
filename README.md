@@ -120,6 +120,7 @@ window gets, and how a continuation keeps working in it, are in
 | [`@4fu/arbor-journal-sqlite`](packages/journal-sqlite) | the default `Journal` and `BlobStore` on SQLite |
 | [`@4fu/arbor-notes-sqlite`](packages/notes-sqlite) | the default `NoteStore` on SQLite, beside the journal |
 | [`@4fu/arbor-segmenter-jieba`](packages/segmenter-jieba) | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
+| [`@4fu/arbor-lexical`](packages/lexical) | the lexical search the journal and notes share: word segmentation, the FTS5 helpers and the merge order |
 | [`@4fu/arbor-workspace-dir`](packages/workspace-dir) | the fallback `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place |
 | [`@4fu/arbor-workspace-ovnfs`](packages/workspace-ovnfs) | the default `Workspace` when ovnfs is installed: one shared folder, per-window copy-on-write checkouts the model opens and applies back |
 | [`@4fu/arbor-environment-dir`](packages/environment-dir) | the default `Environment`: one `/env` directory, a revision per item, validation and deltas |
@@ -171,6 +172,7 @@ tarball would contain ([docs/release.md](docs/release.md)).
 | `packages/errors` | the error shape every refusal uses: the rule and the next action |
 | `packages/journal-sqlite` | the default `Journal` and `BlobStore` on SQLite |
 | `packages/segmenter-jieba` | the default `Segmenter`: jieba's dictionary segmentation for the word index, optional |
+| `packages/lexical` | the lexical search the journal and notes share: word segmentation, the FTS5 helpers and the merge order |
 | `packages/notes-sqlite` | the default `NoteStore` on SQLite, beside the journal |
 | `packages/judge-jev` | the default `Judge`: Jev, TypeSafe AI's System One classifier, answering the dispatch decisions |
 | `packages/workspace-dir` | the default `Workspace`: one directory per window, with a continuation working in its predecessor's directory in place, and the lookup of another window's directory it contributes to the catalog |

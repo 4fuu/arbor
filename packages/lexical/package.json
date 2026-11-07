@@ -1,0 +1,50 @@
+{
+  "name": "@4fu/arbor-lexical",
+  "version": "2026.1106.1",
+  "private": true,
+  "type": "module",
+  "description": "The lexical search the journal and notes share: word segmentation, the FTS5 helpers and the merge order.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4fuu/arbor.git",
+    "directory": "packages/lexical"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@4fu/arbor-interfaces": "workspace:*"
+  },
+  "peerDependencies": {
+    "@4fu/arbor-segmenter-jieba": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@4fu/arbor-segmenter-jieba": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@4fu/arbor-segmenter-jieba": "workspace:*",
+    "@types/node": "^26.0.0",
+    "typescript": "^5.9.2"
+  }
+}

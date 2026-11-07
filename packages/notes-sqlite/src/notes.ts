@@ -52,10 +52,12 @@ import type {
   NoteStore,
   Page,
   Ref,
+  Segmenter,
   SnapshotOptions,
   Target,
   WindowRef,
 } from "@4fu/arbor-interfaces";
+import { indexText, resolveSegmenter } from "@4fu/arbor-lexical";
 import { bodyDiff } from "./diff.ts";
 import {
   noteIdOf,
@@ -66,11 +68,10 @@ import {
   storedEventRef,
   storedWindowRef,
 } from "./refs.ts";
-import { FTS_TABLE, createSchema } from "./schema.ts";
+import { FTS_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 import { USE_WEIGHTS, applyJudgeShare, pickByBudget, scoreNotes } from "./score.ts";
 import type { ScoredNote } from "./score.ts";
-import type { SubstringClause } from "./search.ts";
-import { holdingIds, substringClause } from "./search.ts";
+import { holdingIds, matchedIds } from "./search.ts";
 import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 
 /** A summary is at most this many characters (docs/memory.md). */
@@ -175,6 +176,8 @@ export interface SqliteNoteStoreOptions {
   now?: () => number;
   /** Usage loses half of its weight this often. 24 hours. */
   usageHalfLifeMs?: number;
+  /** Word segmentation for the word index. Defaults to jieba, or the approximation. */
+  segmenter?: Segmenter;
   /**
    * One fixed string from the deployment's text table, so this implementation
    * writes none of its own (docs/prompting.md#language-and-the-text-table).
@@ -309,6 +312,7 @@ export class SqliteNoteStore implements NoteStore {
   private readonly db: DatabaseSync;
   private readonly journal: Journal;
   private readonly clock: () => number;
+  private readonly segmenter: Segmenter;
   private readonly halfLifeMs: number;
   /** The table every refusal this store raises is written from. */
   private readonly text: (key: string, args?: Record<string, string | number>) => string;
@@ -319,7 +323,10 @@ export class SqliteNoteStore implements NoteStore {
   constructor(options: SqliteNoteStoreOptions) {
     this.path = options.path ?? ":memory:";
     this.db = new DatabaseSync(this.path);
-    createSchema(this.db);
+    this.segmenter = options.segmenter ?? resolveSegmenter();
+    // The segmenter is resolved first: a version-1 database migrates by
+    // segmenting the notes it already holds into the word index.
+    createSchema(this.db, this.segmenter);
     this.journal = options.journal;
     this.clock = options.now ?? (() => Date.now());
     this.halfLifeMs = options.usageHalfLifeMs ?? DEFAULT_HALF_LIFE_MS;
@@ -539,12 +546,21 @@ export class SqliteNoteStore implements NoteStore {
       )
       .run(id, revision, input.title, summary, body, deleted ? 1 : 0, time, window, anchorJson, refs);
 
-    // The search index holds the current state; a deleted note is not found.
+    // The search indexes hold the current state; a deleted note is not found.
     this.db.prepare(`DELETE FROM ${FTS_TABLE} WHERE rowid = ?`).run(id);
+    this.db.prepare(`DELETE FROM ${WORD_TABLE} WHERE rowid = ?`).run(id);
     if (!deleted) {
       this.db
         .prepare(`INSERT INTO ${FTS_TABLE} (rowid, title, summary, body) VALUES (?, ?, ?, ?)`)
         .run(id, input.title, summary, body);
+      this.db
+        .prepare(`INSERT INTO ${WORD_TABLE} (rowid, title, summary, body) VALUES (?, ?, ?, ?)`)
+        .run(
+          id,
+          indexText(input.title, this.segmenter),
+          indexText(summary, this.segmenter),
+          indexText(body, this.segmenter),
+        );
     }
 
     // The refs the revision names: what it cites and what it holds as
@@ -584,6 +600,7 @@ export class SqliteNoteStore implements NoteStore {
         .prepare("DELETE FROM note_refs WHERE note = ? AND revision = ?")
         .run(written.id, written.revision);
       this.db.prepare(`DELETE FROM ${FTS_TABLE} WHERE rowid = ?`).run(written.id);
+      this.db.prepare(`DELETE FROM ${WORD_TABLE} WHERE rowid = ?`).run(written.id);
       if (written.created) {
         this.db.prepare("DELETE FROM notes WHERE id = ?").run(written.id);
         return;
@@ -611,6 +628,14 @@ export class SqliteNoteStore implements NoteStore {
         this.db
           .prepare(`INSERT INTO ${FTS_TABLE} (rowid, title, summary, body) VALUES (?, ?, ?, ?)`)
           .run(written.id, previous.title, previous.summary, previous.body);
+        this.db
+          .prepare(`INSERT INTO ${WORD_TABLE} (rowid, title, summary, body) VALUES (?, ?, ?, ?)`)
+          .run(
+            written.id,
+            indexText(previous.title, this.segmenter),
+            indexText(previous.summary, this.segmenter),
+            indexText(previous.body, this.segmenter),
+          );
       }
     });
   }
@@ -703,14 +728,19 @@ export class SqliteNoteStore implements NoteStore {
     // in weight order; a text match narrows that set.
     if (query.about !== undefined || query.linked !== undefined) {
       const ordered = await this.linkedNoteIds(query.about, query.linked);
-      const holding = text === "" ? null : new Set(holdingIds(this.db, text, ordered));
+      const holding = text === "" ? null : new Set(holdingIds(this.db, text, ordered, this.segmenter));
       const chosen = holding === null ? ordered : ordered.filter((id) => holding.has(id));
       const page = this.summaryPageByIds(chosen, query, limit, offset);
       return { ...page, nextCall: searchCall(query, offset, limit) };
     }
 
-    const match = text === "" ? null : substringClause(text);
-    const page = this.summaryPageBySql(query, limit, offset, match);
+    // No query lists every note by id; a query is answered by the three
+    // channels, merged: exact substring hits first, then word hits.
+    const matched = text === "" ? null : matchedIds(this.db, text, this.segmenter, query.status);
+    const page =
+      matched === null
+        ? this.summaryPageBySql(query, limit, offset)
+        : this.summaryPage(matched, limit, offset);
     return { ...page, nextCall: searchCall(query, offset, limit) };
   }
 
@@ -957,14 +987,11 @@ export class SqliteNoteStore implements NoteStore {
     query: NoteQuery,
     limit: number,
     offset: number,
-    match: SubstringClause | null,
   ): { items: NoteSummary[]; total: number; limit: number } {
-    const clauses: string[] = [];
+    // A delete leaves the row and marks it, and this reads the notes table
+    // itself, so it leaves the deleted ones out on its own (docs/memory.md).
+    const clauses = ["n.status <> 'deleted'"];
     const params: SQLInputValue[] = [];
-    if (match !== null) {
-      clauses.push(match.sql);
-      params.push(...match.params);
-    }
     if (query.status !== undefined) {
       clauses.push("n.status = ?");
       params.push(query.status);
@@ -987,6 +1014,28 @@ export class SqliteNoteStore implements NoteStore {
     return { items: rows.map(toSummary), total, limit };
   }
 
+  /** One page of an ordered id list, in the order the list gives. */
+  private summaryPage(
+    ordered: readonly number[],
+    limit: number,
+    offset: number,
+  ): { items: NoteSummary[]; total: number; limit: number } {
+    const page = ordered.slice(offset, offset + limit);
+    if (page.length === 0) return { items: [], total: ordered.length, limit };
+    const rows = this.db
+      .prepare(
+        `SELECT id, revision, title, summary, status, updated FROM notes
+         WHERE id IN (${page.map(() => "?").join(", ")})`,
+      )
+      .all(...page) as unknown as SummaryRow[];
+    const byId = new Map(rows.map((row) => [toNumber(row.id), row]));
+    const items = page
+      .map((id) => byId.get(id))
+      .filter((row): row is SummaryRow => row !== undefined)
+      .map(toSummary);
+    return { items, total: ordered.length, limit };
+  }
+
   private summaryPageByIds(
     ordered: readonly number[],
     query: NoteQuery,
@@ -994,7 +1043,9 @@ export class SqliteNoteStore implements NoteStore {
     offset: number,
   ): { items: NoteSummary[]; total: number; limit: number } {
     if (ordered.length === 0) return { items: [], total: 0, limit };
-    const clauses: string[] = [`id IN (${ordered.map(() => "?").join(", ")})`];
+    // A delete leaves the row and marks it, and no search returns the note
+    // again, whichever lookup ordered it (docs/memory.md).
+    const clauses: string[] = [`status <> 'deleted'`, `id IN (${ordered.map(() => "?").join(", ")})`];
     const params: Array<string | number> = [...ordered];
     if (query.status !== undefined) {
       clauses.push("status = ?");

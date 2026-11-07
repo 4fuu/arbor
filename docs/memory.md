@@ -88,3 +88,23 @@ Note revisions take part in the journal's links
 through evidence and range links up to three hops, decaying 50/25/12.5, with
 a visited set so a loop is walked once. A note gets its direct credit or its
 linked share, whichever is larger.
+
+## Search
+
+Note search is lexical and built for Chinese and mixed text, the same model the
+journal searches with ([journal.md](journal.md#search)): a word index by jieba
+segmentation with BM25, a trigram index for exact substrings, and a fallback for
+one- or two-character queries. Results are merged, exact substring hits first,
+and then by relevance, so a page is stable however it is paged.
+
+The word index segments the title, the summary and the body, and BM25 ranks the
+three fields against each other: a hit in the title counts ten times one in the
+body and a hit in the summary four times, because the title names the note and
+the summary is its one line. `@4fu/arbor-segmenter-jieba` is the default segmenter
+and an optional peer of the store, exactly as it is of the journal; when it is
+not installed, the per-character-and-bigram approximation answers instead.
+
+A one- or two-character query has no trigram of its own, so the `LIKE` scan
+answers it, in id order. Every write re-indexes the note it changed and a delete
+takes the note out of both indexes, so a search sees the current title, summary
+and body, and never a deleted note.

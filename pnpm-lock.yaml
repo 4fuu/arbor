@@ -155,6 +155,22 @@ importers:
         specifier: ^5.9.2
         version: 5.9.3
 
+  packages/lexical:
+    dependencies:
+      '@4fu/arbor-interfaces':
+        specifier: workspace:*
+        version: link:../interfaces
+    devDependencies:
+      '@4fu/arbor-segmenter-jieba':
+        specifier: workspace:*
+        version: link:../segmenter-jieba
+      '@types/node':
+        specifier: ^26.0.0
+        version: 26.6.6
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
   packages/notes-sqlite:
     dependencies:
       '@4fu/arbor-errors':
@@ -163,6 +179,9 @@ importers:
       '@4fu/arbor-interfaces':
         specifier: workspace:*
         version: link:../interfaces
+      '@4fu/arbor-lexical':
+        specifier: workspace:*
+        version: link:../lexical
       '@4fu/arbor-prompt':
         specifier: workspace:*
         version: link:../prompt
@@ -170,6 +189,9 @@ importers:
       '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
+      '@4fu/arbor-segmenter-jieba':
+        specifier: workspace:*
+        version: link:../segmenter-jieba
       '@types/node':
         specifier: ^26.0.0
         version: 26.6.6

@@ -12,7 +12,7 @@ export {
 } from "./notes.ts";
 export type { SqliteNoteStoreOptions } from "./notes.ts";
 
-export { SCHEMA_VERSION, FTS_TABLE, createSchema } from "./schema.ts";
+export { SCHEMA_VERSION, FTS_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 
 export {
   noteIdOf,
@@ -23,6 +23,8 @@ export {
   storedWindowRef,
   storedEventRef,
 } from "./refs.ts";
+
+export { fallbackSegmenter, resolveSegmenter, indexText } from "@4fu/arbor-lexical";
 
 export {
   USE_WEIGHTS,

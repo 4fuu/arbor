@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 import { isArborError } from "@4fu/arbor-errors";
 import type { Event, EventInput, EventRef, NoteId, NoteRef } from "@4fu/arbor-interfaces";
+import { fallbackSegmenter } from "@4fu/arbor-lexical";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { SqliteNoteStore } from "./notes.ts";
+import { SCHEMA_VERSION, readMeta } from "./schema.ts";
 
 /** A store and its journal, sharing one fixed clock. */
 function memoryStore(now: () => number = () => 0): {
@@ -154,6 +157,10 @@ describe("writes", () => {
     assert.equal(await store.read("n1"), null);
     assert.equal((await store.read("n1@1"))?.body, "one");
     assert.equal((await store.search({ query: "one" })).total, 0);
+    // The fallback scan and the plain list read the notes table themselves, so
+    // they leave the deleted note out on their own.
+    assert.equal((await store.search({ query: "on" })).total, 0);
+    assert.equal((await store.search({})).total, 0);
     assert.equal((await store.active()).total, 0);
     assert.equal((await journal.list({ kinds: ["note_revision"] })).total, 2);
   });
@@ -556,6 +563,11 @@ describe("search", () => {
     assert.equal((await store.search({ about: "gh:issue:42", linked: "r99" })).total, 0);
     assert.equal((await store.search({ about: "gh:issue:42", query: "one" })).total, 1);
     assert.equal((await store.search({ about: "gh:issue:42", query: "missing" })).total, 0);
+
+    // A deleted note keeps its refs resolving, but no search returns it again.
+    await store.write({ title: "a", body: "", id: "n1", delete: true, expectedRevision: 1 });
+    assert.equal((await store.search({ linked: issue.ref })).total, 0);
+    assert.equal((await store.search({ about: "gh:issue:42", query: "on" })).total, 0);
   });
 
   it("pages a text search and reports the bound", async () => {
@@ -827,6 +839,106 @@ describe("credit through links", () => {
 });
 
 describe("the store itself", () => {
+  it("opens a version-1 database, migrating the notes it has", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "arbor-notes-v1-"));
+    try {
+      const path = join(directory, "notes.db");
+      // The schema as version 1 left it: the trigram index over title, summary
+      // and body, and no word index.
+      const old = new DatabaseSync(path);
+      old.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      old.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '1')`);
+      old.exec(`CREATE TABLE notes (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         created INTEGER NOT NULL,
+         updated INTEGER NOT NULL,
+         revision INTEGER NOT NULL,
+         title TEXT NOT NULL,
+         summary TEXT NOT NULL,
+         body TEXT NOT NULL,
+         status TEXT NOT NULL,
+         window TEXT,
+         anchor TEXT,
+         event TEXT
+       )`);
+      old.exec(`CREATE TABLE note_revisions (
+         wseq INTEGER PRIMARY KEY AUTOINCREMENT,
+         note INTEGER NOT NULL,
+         revision INTEGER NOT NULL,
+         title TEXT NOT NULL,
+         summary TEXT NOT NULL,
+         body TEXT NOT NULL,
+         deleted INTEGER NOT NULL DEFAULT 0,
+         time INTEGER NOT NULL,
+         window TEXT,
+         event TEXT,
+         anchor TEXT,
+         refs TEXT,
+         UNIQUE (note, revision)
+       )`);
+      old.exec(`CREATE VIRTUAL TABLE notes_fts USING fts5(title, summary, body, tokenize = 'trigram')`);
+      old.prepare(`INSERT INTO notes (created, updated, revision, title, summary, body, status)
+                   VALUES (1, 1, 1, ?, ?, ?, 'archived')`)
+        .run("部署上线", "检查", "the runbook");
+      old.prepare(`INSERT INTO note_revisions (note, revision, title, summary, body, time)
+                   VALUES (1, 1, ?, ?, ?, 1)`)
+        .run("部署上线", "检查", "the runbook");
+      old.prepare(`INSERT INTO notes_fts (rowid, title, summary, body) VALUES (1, ?, ?, ?)`)
+        .run("部署上线", "检查", "the runbook");
+      old.close();
+
+      const journal = new SqliteJournal({ path: ":memory:", segmenter: fallbackSegmenter });
+      const store = new SqliteNoteStore({ path, journal, segmenter: fallbackSegmenter, now: () => 1 });
+
+      // The note it already held is still there, and the trigram index answers.
+      assert.equal((await store.read("n1"))?.body, "the runbook");
+      assert.equal((await store.search({ query: "runbook" })).total, 1);
+
+      // The word index was built for the notes the old database held: the two
+      // words are in two different fields, so only the word index finds them.
+      const page = await store.search({ query: "检查 部署" });
+      assert.equal(page.total, 1);
+      assert.equal(page.items[0]?.id, "n1");
+
+      // A write on top of the migrated database indexes the note again.
+      await store.write({ title: "部署文档", body: "第二批", summary: "编写规范" });
+      assert.equal((await store.search({ query: "检查 部署" })).total, 1);
+
+      const migrated = new DatabaseSync(path);
+      const tables = (
+        migrated.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]
+      ).map((row) => row.name);
+      assert.ok(tables.includes("notes_words"));
+      assert.equal(readMeta(migrated, "schema_version"), String(SCHEMA_VERSION));
+      migrated.close();
+
+      await store.close();
+      await journal.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a database a newer build wrote", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "arbor-notes-v9-"));
+    try {
+      const path = join(directory, "notes.db");
+      const future = new DatabaseSync(path);
+      future.exec(`CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      future.exec(`INSERT INTO meta (key, value) VALUES ('schema_version', '9')`);
+      future.close();
+
+      const journal = new SqliteJournal({ path: ":memory:" });
+      assert.throws(
+        () => new SqliteNoteStore({ path, journal }),
+        /notes schema 9 is newer than this build \(2\)/,
+      );
+      await journal.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the notes and their epochs across a restart of the host", async () => {
     const directory = await mkdtemp(join(tmpdir(), "arbor-notes-test-"));
     try {

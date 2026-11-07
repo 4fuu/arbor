@@ -23,15 +23,33 @@
  *   it froze them at, so a window's prefix never changes under it.
  * - `notes_fts` - trigram index for exact substrings over title, summary and
  *   body.
+ * - `notes_words` - word index for BM25 over the same three columns, segmented
+ *   (docs/journal.md#search).
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { Segmenter } from "@4fu/arbor-interfaces";
+import { indexText, resolveSegmenter } from "@4fu/arbor-lexical";
 
 /** Bumped when a change makes an existing database unusable. */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 /** The FTS5 table note search reads. */
 export const FTS_TABLE = "notes_fts";
+
+/** The word index note search reads. */
+export const WORD_TABLE = "notes_words";
+
+/** The trigram index: exact substrings, for Chinese and mixed text. */
+const TRIGRAM_INDEX = `CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE}
+   USING fts5(title, summary, body, tokenize = 'trigram')`;
+
+/**
+ * The word index: one column per searched field, each holding that field's
+ * segments, one per line. The columns are what the BM25 weights rank by.
+ */
+const WORD_INDEX = `CREATE VIRTUAL TABLE IF NOT EXISTS ${WORD_TABLE}
+   USING fts5(title, summary, body, tokenize = 'unicode61')`;
 
 const STATEMENTS: readonly string[] = [
   `PRAGMA journal_mode = WAL`,
@@ -127,13 +145,60 @@ const STATEMENTS: readonly string[] = [
      PRIMARY KEY (epoch, note)
    )`,
 
-  // Exact substrings, for Chinese and mixed text.
-  `CREATE VIRTUAL TABLE IF NOT EXISTS ${FTS_TABLE}
-     USING fts5(title, summary, body, tokenize = 'trigram')`,
+  TRIGRAM_INDEX,
+  WORD_INDEX,
 ];
 
-/** Create the schema when it is missing, and check the version when it is not. */
-export function createSchema(db: DatabaseSync): void {
+interface NoteIndexRow {
+  id: number;
+  title: string;
+  summary: string;
+  body: string;
+}
+
+/**
+ * Version 2 added the word index (docs/journal.md#search): a segmented word
+ * index with BM25 beside the trigram index, which is what lets a multi-word
+ * query find a note that holds the words apart from each other. Every note,
+ * every ref and the trigram index stay, so a version-1 database opens where it
+ * left off: the notes it already holds are segmented into the new index in the
+ * same step that records the version, and a delete leaves a note out of it.
+ */
+function migrateToVersion2(db: DatabaseSync, segmenter: Segmenter): void {
+  // One transaction: the index and the version that says it is there land
+  // together, so a database that stops half way through is still the version it
+  // was and migrates again, whole, instead of half-indexing twice.
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.exec(WORD_INDEX);
+    const insert = db.prepare(
+      `INSERT INTO ${WORD_TABLE} (rowid, title, summary, body) VALUES (?, ?, ?, ?)`,
+    );
+    const rows = db
+      .prepare("SELECT id, title, summary, body FROM notes WHERE status <> 'deleted'")
+      .all() as unknown as NoteIndexRow[];
+    for (const row of rows) {
+      insert.run(
+        Number(row.id),
+        indexText(row.title, segmenter),
+        indexText(row.summary, segmenter),
+        indexText(row.body, segmenter),
+      );
+    }
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // The transaction is already gone; the original error is what matters.
+    }
+    throw error;
+  }
+}
+
+/** Create the schema when it is missing, migrate an older one, and record the version. */
+export function createSchema(db: DatabaseSync, segmenter: Segmenter = resolveSegmenter()): void {
   // The version lives in the one table that has to exist before anything else.
   db.exec(
     `CREATE TABLE IF NOT EXISTS meta (
@@ -142,14 +207,15 @@ export function createSchema(db: DatabaseSync): void {
      )`,
   );
   const version = readMeta(db, "schema_version");
-  if (version !== null && Number(version) !== SCHEMA_VERSION) {
+  if (version !== null && Number(version) > SCHEMA_VERSION) {
     throw new Error(
-      `notes schema ${version} is not supported by this build (${SCHEMA_VERSION}); migrate or rebuild the database`,
+      `notes schema ${version} is newer than this build (${SCHEMA_VERSION}); upgrade arbor, or migrate the database`,
     );
   }
+  if (Number(version) === SCHEMA_VERSION - 1) migrateToVersion2(db, segmenter);
   for (const statement of STATEMENTS) db.exec(statement);
-  if (version === null) {
-    db.prepare("INSERT INTO meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
+  if (version === null || Number(version) !== SCHEMA_VERSION) {
+    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(SCHEMA_VERSION));
   }
 }
 
