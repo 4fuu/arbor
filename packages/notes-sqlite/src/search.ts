@@ -1,18 +1,22 @@
 /**
  * Lexical search over notes (docs/journal.md#search, docs/memory.md).
  *
- * The three channels the journal has, merged the same way:
+ * The channels the journal has, merged the same way, and one more when a
+ * deployment installed it:
  *
  * - a word index, segmented and ranked with BM25 over title, summary and body,
  *   the title and the summary weighted above the body;
  * - a trigram index for exact substrings, which is what makes a Chinese
  *   substring findable;
  * - a `LIKE` scan, for one- and two-character queries, which have no trigram of
- *   their own.
+ *   their own;
+ * - a semantic channel, note text embedded and searched by meaning, when
+ *   `@4fu/arbor-search-zvec` is installed.
  *
  * Exact substring hits come first, then word hits that are not already there,
- * each channel by its own relevance. The `LIKE` scan has no relevance of its
- * own, so it answers in id order and a page is byte-stable however it is paged.
+ * then the hits only the semantic channel found, each channel by its own
+ * relevance. The `LIKE` scan has no relevance of its own, so it answers in id
+ * order and a page is byte-stable however it is paged.
  */
 
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
@@ -104,22 +108,40 @@ function scanIds(db: DatabaseSync, query: string, status?: NoteStatus): number[]
 /**
  * The notes a text query matches, in the order search returns them: exact
  * substring hits first, then word hits that are not already there, each channel
- * by its own relevance. A one- or two-character query has no trigram and no
- * word match of its own, so the fallback scan answers it in id order.
+ * by its own relevance, then the hits only the semantic channel found. A
+ * one- or two-character query has no trigram and no word match of its own, so
+ * the fallback scan answers it in id order, and the semantic channel's hits
+ * follow it.
+ *
+ * `semantic` is the channel's own candidates as ranks, in the order it gave
+ * them: the note store asks it for the notes nearest the query and applies its
+ * own filters to what comes back, so a channel that filters less than the store
+ * does still answers the read it was asked (docs/memory.md#search).
  */
 export function matchedIds(
   db: DatabaseSync,
   query: string,
   segmenter: Segmenter,
   status?: NoteStatus,
+  semantic: readonly Ranked[] = [],
 ): number[] {
-  if (Array.from(query).length < MIN_TRIGRAM_CHARS) return scanIds(db, query, status);
+  if (Array.from(query).length < MIN_TRIGRAM_CHARS) {
+    // A one- or two-character query has no trigram and no word match of its
+    // own: the scan answers it in id order, and the semantic channel's hits
+    // follow it.
+    const scanned: Ranked[] = scanIds(db, query, status).map((rowid) => ({ rowid, rank: 0 }));
+    return mergeHits(
+      { channel: "substring", hits: scanned },
+      { channel: "semantic", hits: semantic },
+    ).map((hit) => hit.rowid);
+  }
   const substrings = ranked(db, FTS_TABLE, trigramMatch(query), status);
   const match = wordMatch(segmenter.segment(query));
   const words = match === "" ? [] : ranked(db, WORD_TABLE, match, status);
   return mergeHits(
     { channel: "substring", hits: substrings },
     { channel: "word", hits: words },
+    { channel: "semantic", hits: semantic },
   ).map((hit) => hit.rowid);
 }
 

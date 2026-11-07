@@ -15,7 +15,11 @@
  *   count and token budget, and frozen with the epoch's version, so every
  *   window opened in one epoch has the same prefix and later windows see the
  *   changes as a delta;
- * - every write recorded in the journal as a `note_revision` event.
+ * - every write recorded in the journal as a `note_revision` event;
+ * - lexical search: a word index with BM25, a trigram index for exact
+ *   substrings, and a `LIKE` scan for one- and two-character queries, merged
+ *   with exact substring hits first - and a semantic channel, note text embedded
+ *   and searched by meaning, when `@4fu/arbor-search-zvec` is installed.
  *
  * It is synchronous inside: one `DatabaseSync`, one transaction per write, so
  * the revision a write checks and the revision it writes are one atomic step.
@@ -26,6 +30,10 @@
 
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue } from "node:sqlite";
+import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ArborError } from "@4fu/arbor-errors";
 import { arborError, isArborError } from "@4fu/arbor-errors";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
@@ -53,11 +61,14 @@ import type {
   Page,
   Ref,
   Segmenter,
+  SemanticFilters,
+  SemanticIndex,
   SnapshotOptions,
   Target,
   WindowRef,
 } from "@4fu/arbor-interfaces";
 import { indexText, resolveSegmenter } from "@4fu/arbor-lexical";
+import type { Ranked } from "@4fu/arbor-lexical";
 import { bodyDiff } from "./diff.ts";
 import {
   noteIdOf,
@@ -72,6 +83,7 @@ import { FTS_TABLE, WORD_TABLE, createSchema } from "./schema.ts";
 import { USE_WEIGHTS, applyJudgeShare, pickByBudget, scoreNotes } from "./score.ts";
 import type { ScoredNote } from "./score.ts";
 import { holdingIds, matchedIds } from "./search.ts";
+import { resolveSemanticIndex } from "./semantic.ts";
 import { textOf, zhTextTable } from "@4fu/arbor-prompt";
 
 /** A summary is at most this many characters (docs/memory.md). */
@@ -95,6 +107,14 @@ export const DEFAULT_HALF_LIFE_MS = 86_400_000;
 
 /** How many events one `about` lookup reads. */
 const ABOUT_EVENT_LIMIT = 200;
+
+/**
+ * The fewest candidates the semantic channel is asked for. A page of one still
+ * fuses the channels over a handful of candidates, so a hit the word index
+ * ranked first is not lost to a semantic hit the channel would have ranked
+ * second.
+ */
+const MIN_SEMANTIC_CANDIDATES = 10;
 
 interface NoteRow {
   id: number;
@@ -163,6 +183,8 @@ interface Written {
   time: number;
   title: string;
   summary: string;
+  body: string;
+  deleted: boolean;
   window: WindowRef | null;
   anchor: Anchor | null;
 }
@@ -178,6 +200,14 @@ export interface SqliteNoteStoreOptions {
   usageHalfLifeMs?: number;
   /** Word segmentation for the word index. Defaults to jieba, or the approximation. */
   segmenter?: Segmenter;
+  /**
+   * The semantic channel: note text embedded and searched by meaning
+   * (docs/memory.md#search). Omitted, the zvec channel is used when
+   * `@4fu/arbor-search-zvec` is installed and its store opens, and there is no
+   * channel otherwise. `null` forces lexical search even when the package is
+   * installed.
+   */
+  semantic?: SemanticIndex | null;
   /**
    * One fixed string from the deployment's text table, so this implementation
    * writes none of its own (docs/prompting.md#language-and-the-text-table).
@@ -314,10 +344,15 @@ export class SqliteNoteStore implements NoteStore {
   private readonly clock: () => number;
   private readonly segmenter: Segmenter;
   private readonly halfLifeMs: number;
+  private readonly semantic: SemanticIndex | null;
+  /** The temporary directory an in-memory store's vector collection lives in. */
+  private readonly ownedVectorDirectory: string | null;
   /** The table every refusal this store raises is written from. */
   private readonly text: (key: string, args?: Record<string, string | number>) => string;
   /** One write at a time: a write spans the notes database and the journal. */
   private writeQueue: Promise<unknown> = Promise.resolve();
+  private semanticReady = false;
+  private semanticCaughtUp = false;
   private closed = false;
 
   constructor(options: SqliteNoteStoreOptions) {
@@ -331,6 +366,16 @@ export class SqliteNoteStore implements NoteStore {
     this.clock = options.now ?? (() => Date.now());
     this.halfLifeMs = options.usageHalfLifeMs ?? DEFAULT_HALF_LIFE_MS;
     this.text = options.text ?? ((key, args) => textOf(zhTextTable, key, args));
+
+    // An in-memory store has no directory of its own; give it a temporary one
+    // and take it away on close. The semantic channel's store lives under it,
+    // beside where the notes database would be.
+    const root = this.path === ":memory:" ? join(tmpdir(), `arbor-notes-${randomUUID()}`) : null;
+    this.semantic =
+      options.semantic === undefined
+        ? resolveSemanticIndex(root === null ? `${this.path}.vectors` : join(root, "vectors"))
+        : options.semantic;
+    this.ownedVectorDirectory = root;
   }
 
   // --- writes -------------------------------------------------------------
@@ -392,6 +437,16 @@ export class SqliteNoteStore implements NoteStore {
         .run(event.ref, written.id, written.revision);
       this.db.prepare("UPDATE notes SET event = ? WHERE id = ?").run(event.ref, written.id);
     });
+
+    // The semantic channel is asynchronous, so the note is indexed once its
+    // revision is committed: a write never waits on a model, and a channel that
+    // is not ready yet holds the text until it is. With no channel there is
+    // nothing to wait for, and the write takes the path it always did. A delete
+    // takes the note's vector back out, as a redaction does in the journal.
+    if (this.semantic !== null) {
+      if (written.deleted) await this.removeFromSemantic(written.id);
+      else await this.addToSemantic(written.id, written.title, written.summary, written.body);
+    }
     return toNote(this.noteRow(written.id) as NoteRow);
   }
 
@@ -585,6 +640,8 @@ export class SqliteNoteStore implements NoteStore {
       time,
       title: input.title,
       summary,
+      body,
+      deleted,
       window,
       anchor,
     };
@@ -725,7 +782,8 @@ export class SqliteNoteStore implements NoteStore {
     const text = (query.query ?? "").trim();
 
     // `about` and `linked` bound the result to the notes the journal resolved,
-    // in weight order; a text match narrows that set.
+    // in weight order; a text match narrows that set. The semantic channel does
+    // not widen a bound the journal resolved, so it is not asked at all here.
     if (query.about !== undefined || query.linked !== undefined) {
       const ordered = await this.linkedNoteIds(query.about, query.linked);
       const holding = text === "" ? null : new Set(holdingIds(this.db, text, ordered, this.segmenter));
@@ -734,9 +792,14 @@ export class SqliteNoteStore implements NoteStore {
       return { ...page, nextCall: searchCall(query, offset, limit) };
     }
 
-    // No query lists every note by id; a query is answered by the three
-    // channels, merged: exact substring hits first, then word hits.
-    const matched = text === "" ? null : matchedIds(this.db, text, this.segmenter, query.status);
+    // No query lists every note by id; a query is answered by the lexical
+    // channels and the semantic one, merged: exact substring hits first, then
+    // word hits, then the hits only the semantic channel found.
+    const semantic = text === "" ? [] : await this.semanticRanks(text, limit, query.status);
+    const matched =
+      text === ""
+        ? null
+        : matchedIds(this.db, text, this.segmenter, query.status, semantic);
     const page =
       matched === null
         ? this.summaryPageBySql(query, limit, offset)
@@ -920,6 +983,37 @@ export class SqliteNoteStore implements NoteStore {
     this.closed = true;
     await this.writeQueue;
     this.db.close();
+    // The channel's own store is closed with the notes database, and the
+    // temporary directory an in-memory store gave it goes with it.
+    if (this.semantic !== null) await this.semantic.close();
+    if (this.ownedVectorDirectory !== null) {
+      await rm(this.ownedVectorDirectory, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Index the notes the semantic channel does not hold yet, and say how many.
+   *
+   * A restart over an existing database, a channel that was not ready when the
+   * notes were written, and a write whose indexing failed all leave notes to
+   * catch up on. A channel that is not ready yet holds what it was given and
+   * indexes that itself, so this answers 0 until it is.
+   */
+  async catchUpSemantic(): Promise<number> {
+    this.ensureOpen();
+    if (this.semantic === null || !(await this.semantic.ready())) return 0;
+    const held = await this.semantic.held();
+    const rows = this.db
+      .prepare(`SELECT id, title, summary, body FROM notes WHERE status <> 'deleted' ORDER BY id`)
+      .all() as Array<{ id: number; title: string; summary: string; body: string }>;
+    let indexed = 0;
+    for (const row of rows) {
+      const id = toNumber(row.id);
+      if (held.has(noteIdOf(id))) continue;
+      await this.addToSemantic(id, row.title, row.summary, row.body);
+      indexed += 1;
+    }
+    return indexed;
   }
 
   // --- internals ---------------------------------------------------------
@@ -933,6 +1027,112 @@ export class SqliteNoteStore implements NoteStore {
         nextAction: this.text("next.note.closed"),
       });
     }
+  }
+
+  /**
+   * Hand one note's text to the semantic channel, when there is one.
+   *
+   * The note is embedded as one text: its title, its summary and its body, in
+   * the order the lexical index weights them. The vector channel holds one
+   * vector per note and cannot weight a note's parts against each other the way
+   * BM25 weights the three columns, so the title - the note's name - leads the
+   * text and the body follows it, and a query that means either reaches the
+   * note (docs/memory.md#search).
+   */
+  private async addToSemantic(
+    id: number,
+    title: string,
+    summary: string,
+    body: string,
+  ): Promise<void> {
+    if (this.semantic === null) return;
+    try {
+      await this.semantic.add(noteIdOf(id), [title, summary, body].join("\n"));
+    } catch {
+      // An optional channel that refuses leaves the note searchable lexically;
+      // a catch-up indexes it once the channel answers again.
+    }
+  }
+
+  /** Take one note's text back out of the semantic channel, as a delete does. */
+  private async removeFromSemantic(id: number): Promise<void> {
+    if (this.semantic === null) return;
+    try {
+      await this.semantic.remove(noteIdOf(id));
+    } catch {
+      // As with a write: the channel is optional, and the note is gone from
+      // every index the store owns.
+    }
+  }
+
+  /**
+   * The semantic channel's candidates, as ranks in the order it gave them.
+   *
+   * An absent channel, one that is not ready yet, and one that refuses all
+   * answer with nothing, and the search is exactly the lexical one. The note
+   * read's own filters decide which candidates count, so a channel that filters
+   * less than the store does still answers the read it was asked for.
+   */
+  private async semanticRanks(
+    query: string,
+    limit: number,
+    status?: NoteStatus,
+  ): Promise<Ranked[]> {
+    if (this.semantic === null) return [];
+    const ready = await this.semantic.ready();
+    if (ready !== this.semanticReady) {
+      // The channel just became usable, or stopped being: index what it missed
+      // while it was not.
+      this.semanticReady = ready;
+      this.semanticCaughtUp = false;
+    }
+    if (!this.semanticCaughtUp) {
+      this.semanticCaughtUp = true;
+      await this.catchUpSemantic();
+    }
+    if (!ready) return [];
+
+    // The filters a note read applies are the store's own, and none of them is
+    // a field of the channel: a note's status changes at every snapshot epoch
+    // without a revision, and `about` and `linked` are bounds the journal
+    // resolved. So the channel is asked for the notes nearest the query and
+    // nothing else, and the store applies its own filters to what comes back -
+    // exactly as the journal does with the targets it filters on itself
+    // (docs/memory.md#search).
+    const asked: SemanticFilters = {};
+    const refs = await this.semantic.search(query, Math.max(limit, MIN_SEMANTIC_CANDIDATES), asked);
+    const ids: number[] = [];
+    for (const ref of refs) {
+      const id = parseNoteId(ref);
+      if (id !== null) ids.push(id);
+    }
+    const allowed = this.allowedNoteIds(ids, status);
+    // The channel's order, as ranks the shared merge reads: the nearest hit
+    // carries the most negative rank, so it normalizes to the best score.
+    return allowed.map((id, index) => ({ rowid: id, rank: index - allowed.length }));
+  }
+
+  /**
+   * The notes among `ids` the read's own filters allow, in the order given. A
+   * deleted note is not among them, so a vector that outlived its note never
+   * reaches a page.
+   */
+  private allowedNoteIds(ids: readonly number[], status?: NoteStatus): number[] {
+    if (ids.length === 0) return [];
+    const clauses = ["status <> 'deleted'"];
+    const params: SQLInputValue[] = [...ids];
+    if (status !== undefined) {
+      clauses.push("status = ?");
+      params.push(status);
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM notes
+         WHERE id IN (${ids.map(() => "?").join(", ")}) AND ${clauses.join(" AND ")}`,
+      )
+      .all(...params) as Array<{ id: number }>;
+    const allowed = new Set(rows.map((row) => toNumber(row.id)));
+    return ids.filter((id) => allowed.has(id));
   }
 
   private noteRow(id: number): NoteRow | null {

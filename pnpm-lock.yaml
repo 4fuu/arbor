@@ -195,6 +195,9 @@ importers:
       '@4fu/arbor-journal-sqlite':
         specifier: workspace:*
         version: link:../journal-sqlite
+      '@4fu/arbor-search-zvec':
+        specifier: workspace:*
+        version: link:../search-zvec
       '@4fu/arbor-segmenter-jieba':
         specifier: workspace:*
         version: link:../segmenter-jieba

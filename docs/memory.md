@@ -108,3 +108,30 @@ A one- or two-character query has no trigram of its own, so the `LIKE` scan
 answers it, in id order. Every write re-indexes the note it changed and a delete
 takes the note out of both indexes, so a search sees the current title, summary
 and body, and never a deleted note.
+
+### The semantic channel
+
+A query whose meaning matches a note but whose words do not finds nothing
+lexically. A deployment that wants that installs `@4fu/arbor-search-zvec`, which
+the store takes as an optional peer exactly as the journal does: note text is
+embedded and searched by meaning with zvec, an embedded vector database. The
+channel is absent - and search is exactly what the paragraphs above describe -
+when the package is not installed, when zvec's prebuilt binary does not load on
+the platform, when another host holds the vector store's `LOCK`, or when no
+embedding model is available ([journal.md](journal.md#the-semantic-channel)).
+
+The channel holds one vector per note, over the note's title, summary and body
+as one text in the order the lexical index weights them: the title names the
+note and the body is its content, and one vector cannot weigh a note's parts
+against each other the way BM25 weighs the three columns. A note's vector is
+replaced when its revision is replaced and erased when the note is deleted, and
+`store.catchUpSemantic()` indexes the notes the channel does not hold: after a
+restart over an existing database, once the model arrives, and after an indexing
+attempt that failed.
+
+The channel's hits merge with the lexical ones the same way: exact substring
+hits first, then word hits, then the hits only the semantic channel found. The
+filters a read applies are the store's own and are applied to what the channel
+returns, because none of them is a field the channel can hold: a note's status
+changes at every snapshot epoch without a revision, and `about` and `linked` are
+bounds the journal resolved. A page is stable however it is paged.

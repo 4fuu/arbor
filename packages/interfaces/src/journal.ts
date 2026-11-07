@@ -100,27 +100,32 @@ export interface Embedder {
 
 /**
  * The semantic channel: text search by meaning, beside the lexical indexes
- * (docs/journal.md#search).
+ * (docs/journal.md#search, docs/memory.md#search).
  *
- * The journal takes one as an optional peer, the way it takes a `Segmenter`.
+ * A store takes one as an optional peer, the way it takes a `Segmenter`.
  * When none is registered - the package is not installed, its vector store will
  * not open on the platform, or no embedding model is available - search is
  * lexical and nothing else changes. A channel that is registered but not ready
  * yet - the model is still downloading, or the download failed and is waiting to
  * be retried - answers `ready()` with `false`, an empty `search`, and keeps
  * what `add` handed it until it is.
+ *
+ * The ref is the store's own: an event ref for the journal, a note id for the
+ * note store, which holds one vector per note and replaces it when the note is
+ * revised. What the channel keeps beside a ref - the fields, and the order the
+ * ref's number carries - is whatever that store's reads filter on.
  */
 export interface SemanticIndex {
-  /** Embed and store one event's text, replacing what is stored for it. */
-  add(ref: EventRef, text: string, fields?: SemanticFields): Promise<void>;
-  /** Forget one event's text, as a redaction does. */
-  remove(ref: EventRef): Promise<void>;
+  /** Embed and store one item's text, replacing what is stored for it. */
+  add(ref: Ref, text: string, fields?: SemanticFields): Promise<void>;
+  /** Forget one item's text, as a redaction or a delete does. */
+  remove(ref: Ref): Promise<void>;
   /** The refs nearest a query, best first, already filtered. Empty until ready. */
-  search(query: string, limit: number, filters: SemanticFilters): Promise<readonly EventRef[]>;
+  search(query: string, limit: number, filters: SemanticFilters): Promise<readonly Ref[]>;
   /** Whether the channel can answer a query now. */
   ready(): Promise<boolean>;
   /** Every ref the channel holds, so a caller can index what it is missing. */
-  held(): Promise<ReadonlySet<EventRef>>;
+  held(): Promise<ReadonlySet<Ref>>;
   /** Release the underlying store. */
   close(): Promise<void>;
 }

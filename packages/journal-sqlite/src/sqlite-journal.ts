@@ -703,9 +703,10 @@ export class SqliteJournal implements Journal {
   /**
    * The sequences among `refs` the journal's own filters allow, in the order
    * given. A redacted event and one with no text are not among them, so a
-   * vector that outlived its content never reaches a page.
+   * vector that outlived its content never reaches a page. The channel holds
+   * the ref a store gave it - an event ref here - so anything else is skipped.
    */
-  private allowedSeqs(refs: readonly EventRef[], filters: SearchFilters): number[] {
+  private allowedSeqs(refs: readonly Ref[], filters: SearchFilters): number[] {
     const seqs: number[] = [];
     for (const ref of refs) {
       const seq = parseEventRef(ref);

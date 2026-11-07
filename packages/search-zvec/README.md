@@ -1,14 +1,14 @@
 # @4fu/arbor-search-zvec
 
-The optional semantic search channel: event text embedded and searched by
+The optional semantic search channel: text embedded and searched by
 meaning, with [zvec](https://github.com/alibaba/zvec), an embedded vector
 database.
 
-`@4fu/arbor-journal-sqlite` takes this package as an optional peer. Installed,
-the journal indexes each searchable event's text and fuses what it finds by
-meaning with its lexical indexes. Absent - or when zvec's prebuilt binary does
-not load on the platform, or when no embedding model is available - search is
-exactly what it is without it, and nothing else changes.
+`@4fu/arbor-journal-sqlite` and `@4fu/arbor-notes-sqlite` take this package as
+an optional peer. Installed, each indexes the text it searches and fuses what it
+finds by meaning with its lexical indexes. Absent - or when zvec's prebuilt
+binary does not load on the platform, or when no embedding model is available -
+search is exactly what it is without it, and nothing else changes.
 
 ## Installing it
 
@@ -103,19 +103,25 @@ const index = createZvecIndex({ path: "/var/lib/arbor/journal.db.vectors", embed
 
 With `embed` given, no model is fetched and transformers.js is never loaded.
 
-## What the journal does with it
+## What a store does with it
 
-- each event's text is indexed when the event is appended;
-- `journal.catchUpSemantic()` indexes the events the channel does not hold -
+- the journal indexes each event's text when the event is appended, and the note
+  store indexes each note's title, summary and body as one text when its
+  revision is written;
+- `catchUpSemantic()` on either store indexes what the channel does not hold -
   after a restart over an existing database, after the model arrives, and after
   an indexing attempt that failed;
-- a redaction erases the event's vector with its content;
+- a redaction erases the event's vector with its content, and a note's vector is
+  erased when the note is deleted and replaced when its revision is replaced;
 - the channel's results merge with the lexical ones through the shared
   `mergeHits`: exact substring hits first, then word hits, then the hits only
   the semantic channel found. A hit no lexical index found is reported with
-  `match: "semantic"`.
+  `match: "semantic"`. Each store applies its own filters to what the channel
+  returns, so a channel that filters less than the store does still answers the
+  read it was asked.
 
-See [docs/journal.md#search](../../docs/journal.md#search).
+See [docs/journal.md#search](../../docs/journal.md#search) and
+[docs/memory.md#search](../../docs/memory.md#search).
 
 ## Tests
 

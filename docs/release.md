@@ -111,11 +111,12 @@ is public under the `@4fu` scope, which is why each carries
 - **The optional peers.** `@4fu/arbor-lexical` takes
   `@4fu/arbor-segmenter-jieba` as an optional peer: installed, the word index
   uses jieba's segmentation; absent, it falls back to a per-character
-  approximation and nothing else changes. `@4fu/arbor-journal-sqlite` takes
-  `@4fu/arbor-search-zvec` as an optional peer: installed, event text is
-  embedded and searched by meaning; absent - or when zvec's prebuilt binary does
-  not load, or no embedding model is available - search is lexical and nothing
-  else changes ([journal.md](journal.md#search)). `@4fu/arbor-search-zvec` takes
+  approximation and nothing else changes. `@4fu/arbor-journal-sqlite` and
+  `@4fu/arbor-notes-sqlite` take `@4fu/arbor-search-zvec` as an optional peer:
+  installed, text is embedded and searched by meaning; absent - or when zvec's
+  prebuilt binary does not load, or no embedding model is available - search is
+  lexical and nothing else changes ([journal.md](journal.md#search),
+  [memory.md](memory.md#search)). `@4fu/arbor-search-zvec` takes
   `@huggingface/transformers` as an optional peer for its default model; a
   deployment passes its own `Embedder` instead, which is the only way text
   reaches anything outside the host.

@@ -51,3 +51,5 @@ export {
 export type { SubstringClause } from "./search.ts";
 
 export { bodyDiff } from "./diff.ts";
+
+export { resolveSemanticIndex } from "./semantic.ts";

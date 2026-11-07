@@ -3,7 +3,7 @@
   "version": "2026.1106.1",
   "private": true,
   "type": "module",
-  "description": "The default NoteStore: one copy of every note, checked writes, revisions, anchors, the active set and lexical search on SQLite beside the journal.",
+  "description": "The default NoteStore: one copy of every note, checked writes, revisions, anchors, the active set and search on SQLite beside the journal: lexical, and semantic when the optional channel is installed.",
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -37,8 +37,17 @@
     "@4fu/arbor-lexical": "workspace:*",
     "@4fu/arbor-prompt": "workspace:*"
   },
+  "peerDependencies": {
+    "@4fu/arbor-search-zvec": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@4fu/arbor-search-zvec": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@4fu/arbor-journal-sqlite": "workspace:*",
+    "@4fu/arbor-search-zvec": "workspace:*",
     "@4fu/arbor-segmenter-jieba": "workspace:*",
     "@types/node": "^26.0.0",
     "typescript": "^5.9.2"

@@ -154,6 +154,9 @@ read applies - window, kinds, targets, the sequence range - are applied by the
 journal as well as by the channel, so a channel that filters less than the
 journal does still answers the read it was asked.
 
+The note store takes the same channel for its notes, over each note's title,
+summary and body ([memory.md](memory.md#the-semantic-channel)).
+
 ## Media
 
 Images and files that arrive or are produced are stored once by content

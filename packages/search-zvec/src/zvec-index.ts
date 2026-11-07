@@ -1,10 +1,10 @@
 /**
- * The semantic channel over zvec (docs/journal.md#search): event text embedded
- * and searched by meaning, beside the journal's lexical indexes.
+ * The semantic channel over zvec (docs/journal.md#search, docs/memory.md#search):
+ * text embedded and searched by meaning, beside a store's lexical indexes.
  *
  * zvec is an embedded vector database: a Node-API addon, published per platform
  * as optional dependencies, so installing it needs no compiler and no server.
- * A collection is a directory of its own beside the journal's database, written
+ * A collection is a directory of its own beside the store's database, written
  * through a write-ahead log, so it survives a restart exactly as the database
  * does. Three limits shape this file:
  *
@@ -18,6 +18,12 @@
  * - **A filter needs the data it filters on.** `kind` and `window` are stored as
  *   scalar fields beside each vector, so a filtered search is answered by the
  *   store rather than by discarding candidates afterwards.
+ *
+ * The ref a store hands over is its own - an event ref for the journal, a note
+ * id for the note store - and the channel keeps one vector per ref, replacing
+ * it when the store hands the same ref over again. The journal indexes an
+ * event's body; the note store indexes the title, the summary and the body of
+ * the note's current revision as one text.
  */
 
 import { statSync } from "node:fs";
@@ -25,7 +31,7 @@ import { ZVecCollectionSchema, ZVecCreateAndOpen, ZVecDataType, ZVecOpen } from 
 import type { ZVecCollection, ZVecDocInput } from "@zvec/zvec";
 import type {
   Embedder,
-  EventRef,
+  Ref,
   SemanticFields,
   SemanticFilters,
   SemanticIndex,
@@ -38,6 +44,12 @@ const COLLECTION = "events";
 
 /** The one vector field, and the scalar fields a filter reads. */
 const VECTOR_FIELD = "embedding";
+/**
+ * The store's own order, which is the ref's number and only grows: an event's
+ * `seq` for the journal, a note's id for the note store. It is what an
+ * `afterSeq`/`beforeSeq` filter reads, and it orders the collection for a
+ * reader that wants the newest first.
+ */
 const SEQ_FIELD = "seq";
 const KIND_FIELD = "kind";
 const WINDOW_FIELD = "window";
@@ -51,10 +63,10 @@ const EMBED_BATCH = 32;
 /** How long a failed model load waits before it is tried again. */
 const RETRY_AFTER_MS = 300_000;
 
-/** How many events wait in memory while the model loads. */
+/** How many items wait in memory while the model loads. */
 const MAX_PENDING = 5_000;
 
-/** One event's text, held while the model loads. */
+/** One item's text, held while the model loads. */
 interface PendingText {
   text: string;
   fields: SemanticFields | undefined;
@@ -68,7 +80,9 @@ function quote(value: string): string {
 /**
  * The filters a semantic search applies, as a zvec filter expression. Targets
  * and an external id are not fields of this collection, so the journal applies
- * those to what this returns.
+ * those to what this returns. Neither is a note's status: a note's status
+ * changes at every snapshot epoch without a revision, so the note store applies
+ * that one to what this returns as well (docs/memory.md#search).
  */
 export function filterExpression(filters: SemanticFilters): string | undefined {
   const clauses: string[] = [];
@@ -100,7 +114,7 @@ function messageOf(error: unknown): string {
 }
 
 export interface ZvecIndexOptions extends LocalEmbedderOptions {
-  /** Where the collection lives. A journal passes `<journal path>.vectors`. */
+  /** Where the collection lives. A store passes `<its own path>.vectors`. */
   path: string;
   /** The embedder. Omitted, the default local model is used. */
   embed?: Embedder;
@@ -143,7 +157,7 @@ class ZvecSemanticIndex implements SemanticIndex {
   private readonly now: () => number;
 
   private collection: ZVecCollection | null;
-  private readonly pending = new Map<EventRef, PendingText>();
+  private readonly pending = new Map<Ref, PendingText>();
   private loading: Promise<void> | null = null;
   private loaded = false;
   private failedAt: number | null = null;
@@ -159,10 +173,10 @@ class ZvecSemanticIndex implements SemanticIndex {
     this.collection = collection;
   }
 
-  async add(ref: EventRef, text: string, fields?: SemanticFields): Promise<void> {
+  async add(ref: Ref, text: string, fields?: SemanticFields): Promise<void> {
     this.kick();
     if (!this.loaded) {
-      // The model has not arrived: the event stays lexical, and the text waits
+      // The model has not arrived: the item stays lexical, and the text waits
       // here, bounded, until the channel is ready.
       if (this.pending.size < MAX_PENDING) this.pending.set(ref, { text, fields });
       return;
@@ -170,7 +184,7 @@ class ZvecSemanticIndex implements SemanticIndex {
     await this.guard("add", () => this.store([[ref, text, fields]]));
   }
 
-  async remove(ref: EventRef): Promise<void> {
+  async remove(ref: Ref): Promise<void> {
     this.pending.delete(ref);
     if (this.collection === null) return;
     await this.guard("remove", () => {
@@ -178,7 +192,7 @@ class ZvecSemanticIndex implements SemanticIndex {
     });
   }
 
-  async search(query: string, limit: number, filters: SemanticFilters): Promise<readonly EventRef[]> {
+  async search(query: string, limit: number, filters: SemanticFilters): Promise<readonly Ref[]> {
     this.kick();
     if (!this.loaded || this.collection === null) return [];
     const [vector] = (await this.embed([query])) ?? [];
@@ -193,7 +207,7 @@ class ZvecSemanticIndex implements SemanticIndex {
         ...(filter === undefined ? {} : { filter }),
       }),
     );
-    return (hits ?? []).map((hit) => hit.id as EventRef);
+    return (hits ?? []).map((hit) => hit.id as Ref);
   }
 
   async ready(): Promise<boolean> {
@@ -203,11 +217,11 @@ class ZvecSemanticIndex implements SemanticIndex {
     return this.loaded;
   }
 
-  async held(): Promise<ReadonlySet<EventRef>> {
+  async held(): Promise<ReadonlySet<Ref>> {
     if (this.collection === null) return new Set();
-    const held = new Set<EventRef>();
+    const held = new Set<Ref>();
     for (const doc of this.collection.iterDocsSync({ outputFields: [], includeVector: false })) {
-      held.add(doc.id as EventRef);
+      held.add(doc.id as Ref);
     }
     return held;
   }
@@ -308,7 +322,7 @@ class ZvecSemanticIndex implements SemanticIndex {
   private async flush(): Promise<void> {
     if (this.pending.size === 0) return;
     const entries = [...this.pending.entries()].map(
-      ([ref, held]): readonly [EventRef, string, SemanticFields | undefined] => [
+      ([ref, held]): readonly [Ref, string, SemanticFields | undefined] => [
         ref,
         held.text,
         held.fields,
@@ -327,7 +341,7 @@ class ZvecSemanticIndex implements SemanticIndex {
 
   /** Embed and store entries, in the batches the model and zvec take. */
   private async store(
-    entries: readonly (readonly [EventRef, string, SemanticFields | undefined])[],
+    entries: readonly (readonly [Ref, string, SemanticFields | undefined])[],
   ): Promise<void> {
     if (entries.length === 0) return;
     for (let start = 0; start < entries.length; start += EMBED_BATCH) {
@@ -341,6 +355,8 @@ class ZvecSemanticIndex implements SemanticIndex {
           id: ref,
           vectors: { [VECTOR_FIELD]: vector },
           fields: {
+            // The ref's number: the event's seq for the journal, the note's id
+            // for the note store. Both only grow, so both order the collection.
             [SEQ_FIELD]: Number(ref.slice(1)),
             [KIND_FIELD]: fields?.kind ?? "",
             [WINDOW_FIELD]: fields?.window ?? "",
