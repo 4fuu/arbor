@@ -56,7 +56,10 @@ A window answers with `send({ to: "http:demo", content: "…" })`. The host reco
 the effect, the queue executes it exactly once, and this plugin's executor carries
 it out through the channel, which hands back the native id the outside world would
 have given it
-([docs/coordination.md#effects](../../docs/coordination.md#effects)).
+([docs/coordination.md#effects](../../docs/coordination.md#effects)). A `send` to
+a target no executor owns is refused at the call, rule `send.unowned`: nothing is
+recorded and nothing is queued, so a window is never told an effect was queued
+when nothing will carry it out.
 
 ## What the plugin registers
 

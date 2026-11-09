@@ -72,6 +72,32 @@ in the journal ([journal.md](journal.md)).
   turn is recorded as an `assistant` event, so `windows.show` replays the
   window exactly as the model saw it ([journal.md](journal.md#events)).
 
+## What a window serves
+
+A window owns nothing - not a conversation, not a file, not a task - so nothing
+in the core names whose work a window is doing. An embedding that has units of
+its own - a session in the harness arbor runs inside, a conversation handle, a
+job - can name one on the task that opens the window, or once on the task source
+that serves it:
+
+- `TaskInput.label` is an opaque string the embedding attaches and arbor never
+  interprets. `TaskSource.label` is the same, declared once and stamped on every
+  task that source makes which names none of its own.
+- The host carries it without reading it: on the window, on that window's
+  continuations, and on the `window_start` event each of them records, so a
+  restart rebuild hands it to the continuation it opens. A `task` event records
+  the label the task carried too.
+- A prompt section that declares itself `perWindow` is handed it as
+  `content(window, label)`, so the section can say which session the window it
+  is rendering for belongs to
+  ([prompting.md](prompting.md#plugin-sections-that-change)).
+
+Nothing else reads it: the label is not rendered into the prompt by the core, is
+not a target, is not a ref, and changes nothing about routing. An embedding that
+needs to map its own windows back to its own sessions reads the label from the
+window it drives, from a continuation's request or from the journal - never from
+a map it has to keep in step itself.
+
 ## Streaming
 
 A host surface can show a window's output while the model is still writing it.

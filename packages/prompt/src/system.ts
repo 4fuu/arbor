@@ -157,14 +157,17 @@ function outsideBlock(content: readonly Block[]): Block {
  * `window` is the window this render is for: a section that serves several
  * sessions answers for that one, and a section whose content is the same
  * everywhere renders the same text for each
- * (docs/prompting.md#plugin-sections-that-change).
+ * (docs/prompting.md#plugin-sections-that-change). `label` is the opaque label
+ * the embedding attached to what that window serves, carried through
+ * (docs/windows.md#what-a-window-serves).
  */
 export async function renderPluginSection(
   section: PromptSection,
   renderer: Renderer,
   window?: WindowRef,
+  label?: string,
 ): Promise<RenderedPluginSection> {
-  const content = await section.content(window);
+  const content = await section.content(window, label);
   return {
     tag: section.tag,
     text: renderer.render(section.outside === true ? [outsideBlock(content)] : content),
@@ -183,9 +186,10 @@ export async function renderPluginSections(
   plugins: readonly PromptSection[],
   renderer: Renderer,
   window?: WindowRef,
+  label?: string,
 ): Promise<readonly RenderedPluginSection[]> {
   const rendered: RenderedPluginSection[] = [];
-  for (const plugin of plugins) rendered.push(await renderPluginSection(plugin, renderer, window));
+  for (const plugin of plugins) rendered.push(await renderPluginSection(plugin, renderer, window, label));
   return rendered;
 }
 
@@ -195,15 +199,18 @@ export async function renderPluginSections(
  * and one of them being outside is what puts the precedence rule into `<agent>`.
  *
  * `window` is the window the prefix is built for, when it is built for one: a
- * section that renders per window makes this prefix that window's own.
+ * section that renders per window makes this prefix that window's own. `label`
+ * is the opaque label the embedding attached to what that window serves, which
+ * a per-window section reads (docs/windows.md#what-a-window-serves).
  */
 export async function renderSystemPrompt(
   input: SystemPromptInput,
   renderer: Renderer,
   window?: WindowRef,
+  label?: string,
 ): Promise<RenderedSystemPrompt> {
   const table = renderer.table;
-  const sections = await renderPluginSections(input.plugins ?? [], renderer, window);
+  const sections = await renderPluginSections(input.plugins ?? [], renderer, window, label);
   const parts = sectionsOf(input, table, sections.some((section) => section.outside)).map((section) =>
     [`<${section.tag}>`, ...section.lines, `</${section.tag}>`].join("\n"),
   );

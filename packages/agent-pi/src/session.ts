@@ -145,7 +145,13 @@ export class PiWindowSession implements WindowSession {
       });
     }
     this.enqueue(delivery, "steer");
-    if (!this.agent.state.isStreaming) await this.continue_();
+    // An input is what continues a quiet window: a related input wants a turn.
+    // A context delivery is read by the next turn and must never start one, so
+    // steering a delta into a quiet window leaves it quiet - the block waits in
+    // pi's steering queue for the turn that is already coming, and the window
+    // never acts on a change to its own prompt before anything asked it to
+    // (docs/dispatch.md#insertion-timing).
+    if (delivery.role === "input" && !this.agent.state.isStreaming) await this.continue_();
     this.stream.push({ kind: "steered", delivery });
   }
 

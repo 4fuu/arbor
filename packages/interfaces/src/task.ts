@@ -32,6 +32,18 @@ export interface TaskInput {
   events?: readonly OutsideEvent[];
   /** The source that made it. */
   source?: string;
+  /**
+   * An opaque label naming what this task serves, which the embedding attaches
+   * and arbor never interprets: the id of the session, the conversation handle
+   * or the unit of work this task belongs to
+   * (docs/windows.md#what-a-window-serves).
+   *
+   * The host carries it without reading it: on the window the task opens, on
+   * that window's continuations, on the journal's record of both, and to a
+   * per-window prompt section, so an embedding can tell which of its own
+   * sessions a window belongs to without a map of its own.
+   */
+  label?: string;
   /** Higher goes first when insertion timing orders waiting inputs. */
   priority?: number;
   /**
@@ -50,6 +62,15 @@ export interface Task extends TaskInput {
 
 export interface TaskSource {
   readonly id: string;
+
+  /**
+   * An opaque label naming what this source serves, stamped on every task it
+   * makes that names none of its own - the session this source is the outside
+   * of, for a source that serves one
+   * (docs/windows.md#what-a-window-serves). A source that serves many names
+   * nothing and lets each task carry its own.
+   */
+  readonly label?: string;
 
   /** Turn outside events into tasks, batched the way this source batches. */
   toTasks(events: readonly OutsideEvent[]): readonly TaskInput[];

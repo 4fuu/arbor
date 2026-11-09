@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { OvnfsWorkspace } from "@4fu/arbor-workspace-ovnfs";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import type { Judge, JudgeAnswer, JudgeRequest } from "@4fu/arbor-interfaces";
@@ -19,8 +19,22 @@ import { ManualTimers, ScriptedBackend } from "./testing.ts";
  */
 
 /** The fake `ovnfs` the workspace runs, written where the CLI can exec it. */
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function fakeOvnfs(): Promise<{ bin: string; root: string }> {
-  const root = await mkdtemp(join(tmpdir(), "arbor-ovnfs-e2e-"));
+  const root = await tempDir("arbor-ovnfs-e2e-");
   const pkg = import.meta.resolve("@4fu/arbor-workspace-ovnfs");
   const fixture = fileURLToPath(new URL("../fixtures/fake-ovnfs.mjs", pkg));
   const bin = join(root, "ovnfs");

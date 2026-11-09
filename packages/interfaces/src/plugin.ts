@@ -43,8 +43,14 @@ export interface PromptSection {
    * it; one that serves several sessions - one workspace per session, each
    * naming the window it serves - answers for that window
    * (docs/prompting.md#plugin-sections-that-change).
+   *
+   * `label` is the opaque label the embedding attached to what that window
+   * serves, which the host carries and never interprets: the id of the session
+   * this window belongs to, so a section can say which one it is rendering for
+   * without a map of its own (docs/windows.md#what-a-window-serves). Absent
+   * when the task that opened the window named none.
    */
-  content(window?: WindowRef): readonly Block[] | Promise<readonly Block[]>;
+  content(window?: WindowRef, label?: string): readonly Block[] | Promise<readonly Block[]>;
   /**
    * The fixed strings its own blocks write, merged into the host's text table.
    * A plugin names no secret here, and writes no prompt text of its own: its

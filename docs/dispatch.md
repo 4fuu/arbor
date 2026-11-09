@@ -21,7 +21,10 @@ is the agent's ([overview.md](overview.md#principles)).
 
 A task carries its targets, a reason, a time and its content, rendered as an
 input block. A batch that names the agent directly is `explicit`, and the
-source is the one that knows.
+source is the one that knows. A task may also carry an opaque `label` naming
+what it serves, which the host carries to the window, its continuations and the
+journal and never interprets
+([windows.md](windows.md#what-a-window-serves)).
 
 The host records a task and the outside events it batches before anything
 decides about them, so a ref names both from the start: the events as `input`
@@ -162,6 +165,27 @@ reads with its next request, in order and exactly once, and it never ends the
 turn; a follow-up is held out of the turn the window is in and becomes the input
 of its next one. A window that is idle is continued by a steered input, because
 that is what a related input wants.
+
+### Context and input
+
+Every delivery carries `role`, which says what it is to the turn it enters
+(`Delivery` in `@4fu/arbor-interfaces`). The host marks every delivery it makes,
+so a backend reads the mark instead of working it out from the kind:
+
+| Role | Kinds | What a backend does |
+| --- | --- | --- |
+| context | environment delta, prompt delta, tools delta, broadcast | deliver it, and start no turn: the model reads it with its next request |
+| input | inserted task, conversation update, notice, window message, reminder | deliver it, and continue an idle window, because that is what a related input wants |
+
+A context delivery is what the window's own prompt or its surroundings now
+hold. Steering one into a quiet window must leave the window quiet: a window
+that ran a turn from a steered delta would act on a change to its own prompt
+before anything asked it to, and a harness around the host would see a turn
+start from a loop of its own. The block waits for the next turn that is already
+coming, and is read with it. An input delivery is something for the window to
+act on, so it is what continues an idle window - the same rule a reminder
+follows, which the host steers while the window runs and queues as a follow-up
+once the run has ended.
 
 - **Protection period** (default 60 s, configurable, 0 inserts at once): when
   a window starts on a target, only inputs for that target enter during the

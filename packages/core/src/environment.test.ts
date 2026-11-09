@@ -9,10 +9,10 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
@@ -125,9 +125,23 @@ interface Harness {
   advance(ms: number): void;
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function host(options: { plugins?: readonly Plugin[] } = {}): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-core-env-"));
+  const root = await tempDir("arbor-core-env-");
   const backend = new ScriptedBackend();
   const workspace = new DirectoryWorkspace({ root: join(root, "ws") });
   const supervisor = new FakeSupervisor();
@@ -291,6 +305,7 @@ describe("the environment in the host", () => {
       first.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "读一下技能" } }],
@@ -467,6 +482,7 @@ describe("the environment in the host", () => {
       record.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "查一下天气" } }],
@@ -479,7 +495,7 @@ describe("the environment in the host", () => {
   });
 
   it("installs a plugin's skills into /env, where the model can change them", async () => {
-    const base = await mkdtemp(join(tmpdir(), "arbor-plugin-item-"));
+    const base = await tempDir("arbor-plugin-item-");
     const skill = join(base, "chatbot-skill");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "# chatbot\n\n在一个来源里回复用户。\n\n1. 读这一行。\n", "utf8");

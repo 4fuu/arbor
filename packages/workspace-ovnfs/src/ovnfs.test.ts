@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { zhTextTable } from "@4fu/arbor-prompt";
 import type { Event, EventPage, Journal, WindowRef } from "@4fu/arbor-interfaces";
 import { OvnfsWorkspace } from "./ovnfs.ts";
@@ -49,8 +49,22 @@ class FakeJournal {
   }
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function fixture(): Promise<{ workspace: OvnfsWorkspace; journal: FakeJournal; root: string; source: string }> {
-  const root = await mkdtemp(join(tmpdir(), "arbor-ovnfs-"));
+  const root = await tempDir("arbor-ovnfs-");
   const source = join(root, "shared");
   const state = join(root, "state");
   const mount = join(root, "checkouts");

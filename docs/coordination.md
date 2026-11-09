@@ -58,6 +58,10 @@ and is behind on it, unfiltered and not held back by the protection period. Any
 other event is news about a target, so every *other* live window that touched it
 is a notice candidate and the judge decides which ones need it.
 
+What each delivery is to the turn it enters - the context that is read by the
+next turn and never starts one, and the input that continues a quiet window -
+is in [dispatch.md](dispatch.md#context-and-input).
+
 ## Notices
 
 When an event touches a target, every other live window that touched the same
@@ -133,3 +137,15 @@ An effect takes place when it is made and cannot be rolled back. So:
   with the reason. A window's own effect result is the answer to what it
   sent, so the rule that keeps a window from hearing about its own events
   does not apply to it.
+- **A target no executor owns is refused at the call.** An effect queue
+  carries an effect out through an `EffectExecutor` that owns it - a channel's
+  executor owns the sends to that channel's conversations. When no registered
+  executor owns the target, the `send` is refused in the core's error shape,
+  rule `send.unowned`, with the target and the next action, and nothing is
+  recorded: a `send` event in the journal is always one an executor owned when
+  it was made. An effect that waited for an executor that may never come would
+  be indistinguishable, from the window's side, from one that was dropped, and
+  nothing in the journal would say which - so the window is told at its own
+  call instead, the same way a send carrying a secret value is. The one line
+  `send` answers with names what it guarantees: the effect is recorded and
+  queued, and the effect result event says whether it was carried out.

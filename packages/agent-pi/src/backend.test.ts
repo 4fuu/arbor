@@ -143,6 +143,7 @@ describe("pi backend", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     await session.steer({
       kind: "notice",
+      role: "input",
       from: "c2",
       refs: ["r44"],
       time: 1700000000000,
@@ -221,6 +222,7 @@ describe("pi backend", () => {
     // A related input still reaches the warm prefix.
     await session.steer({
       kind: "inserted_task",
+      role: "input",
       refs: ["t2"],
       time: 1700000000000,
       content: [{ kind: "data", fields: { content: "继续处理" } }],
@@ -399,11 +401,26 @@ describe("pi backend", () => {
     // The window's declared tools are replaced while it runs, and the tool that
     // appeared is callable in the same window - its prefix is never rebuilt.
     session.refreshTools?.([todoWrite]);
+    // A tools delta is context: the window reads it with its next request and it
+    // starts no turn, so the quiet window stays quiet
+    // (docs/dispatch.md#insertion-timing).
     await session.steer({
       kind: "tools_delta",
+      role: "context",
       refs: [],
       time: 1700000000000,
       content: [{ kind: "data", fields: { content: "可直接调用的工具已变更" } }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(kinds.filter((kind) => kind === "run_ended").length, 1, "the delta started no turn");
+    // A related input is what continues the window, and the new tool is callable
+    // in that turn.
+    await session.steer({
+      kind: "inserted_task",
+      role: "input",
+      refs: ["t2"],
+      time: 1700000000000,
+      content: [{ kind: "data", fields: { content: "继续处理" } }],
     });
     await waitFor(() => kinds.filter((kind) => kind === "run_ended").length === 2);
     await session.end();

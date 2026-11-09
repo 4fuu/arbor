@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryEnvironment } from "@4fu/arbor-environment-dir";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
-import type { Effect, Judge, JudgeAnswer, JudgeRequest, StreamEvent } from "@4fu/arbor-interfaces";
+import type { Effect, EffectExecutor, Judge, JudgeAnswer, JudgeRequest, StreamEvent } from "@4fu/arbor-interfaces";
 import type { CallContext, DirectToolSpec, Settings, ToolCall, ToolGroup, ToolResult } from "@4fu/arbor-interfaces";
 import type {
   OutsideEvent,
@@ -22,6 +22,7 @@ import type {
   WorkspaceRef,
 } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
+import { readString } from "./board.ts";
 import { RefAllocator } from "./refs.ts";
 import { ManualTimers, ScriptedBackend, turn } from "./testing.ts";
 import { textOf, zhTextTable } from "@4fu/arbor-prompt";
@@ -66,6 +67,22 @@ async function streamed(seen: readonly StreamEvent[], count: number): Promise<vo
     await turn();
   }
   throw new Error(`only ${seen.length} deltas reached the watcher`);
+}
+
+/**
+ * A channel a test plugs in, so a `send` has an executor that owns its target -
+ * the way a deployment with a channel registered runs. A test that leaves it
+ * out is a host with no channel at all.
+ */
+function testChannel(ran?: string[]): EffectExecutor {
+  return {
+    id: "test-send",
+    can: (effect: Effect) => effect.kind === "send",
+    run: async (effect) => {
+      ran?.push(effect.target);
+      return { ok: true };
+    },
+  };
 }
 
 /** A tool group a test owns, so a call's result is exactly what it scripts. */
@@ -197,6 +214,20 @@ class PerSessionWorkspace extends DirectoryWorkspace {
   }
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 /** One scripted window: the host sees a backend it can drive by hand. */
 async function host(
   options: {
@@ -232,7 +263,7 @@ async function host(
 }> {
   const journal = new SqliteJournal({ path: ":memory:" });
   const timers = new ManualTimers();
-  const root = options.root ?? (await mkdtemp(join(tmpdir(), "arbor-core-")));
+  const root = options.root ?? (await tempDir("arbor-core-"));
   const backend = new ScriptedBackend();
   const probe = new ProbeGroup();
   const environment = options.environment === true ? new DirectoryEnvironment({ root }) : undefined;
@@ -346,6 +377,7 @@ describe("one window end to end", () => {
       record.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "继续处理" } }],
@@ -553,7 +585,7 @@ describe("one window end to end", () => {
     // One workspace per session, each naming the window it serves: the host
     // registers the section once and renders it per window
     // (docs/prompting.md#plugin-sections-that-change).
-    const root = await mkdtemp(join(tmpdir(), "arbor-core-"));
+    const root = await tempDir("arbor-core-");
     const workspace = new PerSessionWorkspace({ root });
     const { arbor, backend } = await host({ root, workspace });
     backend.script([{ text: "第一轮" }, { text: "第二轮" }]);
@@ -571,6 +603,77 @@ describe("one window end to end", () => {
     // Every render named the window it was for, so no render had to guess.
     assert.ok(workspace.rendered.length >= 2);
     assert.ok(workspace.rendered.every((window) => window !== undefined));
+  });
+
+  it("carries what the embedding says a window serves, to its section, its continuation and the journal", async () => {
+    // An embedding names what a window serves - the session it belongs to - and
+    // arbor carries the label without reading it: the window's own prefix, its
+    // continuation's, and the journal's record of both, so no embedding needs a
+    // map of windows to sessions of its own
+    // (docs/windows.md#what-a-window-serves).
+    const seen: (string | undefined)[] = [];
+    const section: PromptSection = {
+      tag: "embedding",
+      perWindow: true,
+      blocks: [
+        {
+          kind: "embedding_session",
+          fields: [{ name: "label", type: "string" }],
+          lines: ["embedding.session"],
+        },
+      ],
+      text: { "embedding.session": "本窗口服务于 {label}。" },
+      content: (_window?: WindowRef, label?: string) => {
+        seen.push(label);
+        return [{ kind: "embedding_session", fields: { label: label ?? "" } }];
+      },
+    };
+    const { arbor, journal, backend } = await host({ plugins: [{ name: "embedding", promptSection: section }] });
+    backend.script([{ text: "第一轮" }]);
+    const record = await arbor.open({ ...task, label: "dsh-session-7" });
+    await backend.finished();
+    // The section reads what the task said this window serves.
+    assert.ok(
+      (backend.opened[0]?.prompt.system ?? "").includes("本窗口服务于 dsh-session-7。"),
+      "the window's own prefix names what it serves",
+    );
+
+    // A continuation keeps it, and every render was told the same label.
+    backend.script([{ text: "第二轮" }]);
+    await arbor.services.endWindow(record.window, {
+      topics: ["DSH"],
+      progress: ["已回复"],
+      pending: [],
+      agreements: [],
+      refs: [],
+    });
+    await backend.finished();
+    await record.running;
+    assert.ok(
+      (backend.opened[1]?.prompt.system ?? "").includes("本窗口服务于 dsh-session-7。"),
+      "the continuation names the same session",
+    );
+    assert.ok(seen.length >= 2 && seen.every((label) => label === "dsh-session-7"));
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2);
+    assert.ok(started.items.every((event) => readString(event, "label") === "dsh-session-7"));
+
+    // A restart rebuilds the window from the journal, and the label the journal
+    // recorded reaches the continuation's own prefix.
+    backend.script([{ text: "第三轮" }]);
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers: new ManualTimers(),
+      now: () => 1700000000000,
+      plugins: [{ name: "embedding", promptSection: section }],
+    });
+    await reopened.start();
+    await backend.finished();
+    assert.ok(
+      (backend.opened[2]?.prompt.system ?? "").includes("本窗口服务于 dsh-session-7。"),
+      "the restart hands the label on",
+    );
   });
 
   it("says there is no handoff and gives the order to recover", async () => {
@@ -806,6 +909,7 @@ describe("one window end to end", () => {
       first.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "继续处理" } }],
@@ -826,6 +930,7 @@ describe("one window end to end", () => {
       first.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t3"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "再来一次" } }],
@@ -835,6 +940,58 @@ describe("one window end to end", () => {
     await backend.finished();
     await settle();
     assert.equal(seen.length, 2);
+  });
+
+  it("never starts a turn for a context delivery, and starts one for an input", async () => {
+    // A delta into a quiet window is read by the window's next turn and must
+    // never start one: a window that ran a turn from a steered delta would act
+    // on a change to its own prompt before anything asked it to
+    // (docs/dispatch.md#insertion-timing).
+    const { arbor, backend, probe } = await host();
+    backend.script([{ text: "第一轮" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    assert.equal(arbor.live()[0]?.state, "idle");
+    const session = backend.running()[0];
+    assert.ok(session !== undefined);
+
+    // A turn is scripted and waiting: the context delivery must not run it.
+    backend.script([{ tool: "probe", args: { text: "上下文" } }, { text: "不应该有这一轮" }]);
+    await arbor.deliver(record.window, {
+      kind: "tools_delta",
+      role: "context",
+      refs: [],
+      time: 1700000000000,
+      content: [{ kind: "tools_delta", fields: { time: "2026-11-07 07:42:35", items: [] } }],
+    });
+    await settle();
+    assert.deepEqual(session.deliveries.map((one) => `${one.kind}:${one.role}`), ["tools_delta:context"]);
+    assert.equal(arbor.live()[0]?.state, "idle", "the quiet window stayed quiet");
+    assert.deepEqual([...probe.calls], [], "the scripted turn never ran");
+
+    // A related input is what continues it, and the waiting turn runs then.
+    backend.script([{ tool: "probe", args: { text: "输入" } }, { text: "第二轮" }]);
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "inserted_task",
+        role: "input",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续处理" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+    assert.deepEqual(
+      session.deliveries.map((one) => `${one.kind}:${one.role}`),
+      ["tools_delta:context", "inserted_task:input"],
+    );
+    assert.deepEqual(
+      probe.calls.map((call) => call.args.text),
+      ["输入"],
+      "the input's turn ran, and the context block was read in it",
+    );
   });
 
   it("keeps the window running when a watcher of its live output throws", async () => {
@@ -866,6 +1023,7 @@ describe("one window end to end", () => {
     // period the window is still inside (docs/dispatch.md#insertion-timing).
     await arbor.deliver(record.window, {
       kind: "environment_delta",
+      role: "context",
       refs: ["e7"],
       time: 1700000000000,
       content: [{ kind: "environment_delta", fields: { revision: "e7", time: "2026-11-07 07:42:35", items: [] } }],
@@ -875,6 +1033,7 @@ describe("one window end to end", () => {
       record.window,
       {
         kind: "notice",
+        role: "input",
         from: "c9",
         refs: ["r44"],
         time: 1700000000000,
@@ -897,6 +1056,7 @@ describe("one window end to end", () => {
       record.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "继续处理" } }],
@@ -924,6 +1084,7 @@ describe("one window end to end", () => {
       record.window,
       {
         kind: "inserted_task",
+        role: "input",
         refs: ["t2"],
         time: 1700000000000,
         content: [{ kind: "data", fields: { content: "继续处理" } }],
@@ -982,6 +1143,7 @@ describe("one window end to end", () => {
 
   it("records a send as an effect and never repeats it in the continuation", async () => {
     const { arbor, journal, backend } = await host();
+    arbor.effects.addExecutor(testChannel());
     backend.script([
       { tool: "send", args: { to: "qq:group:123", content: "已修好" } },
       { text: "完成" },
@@ -1041,6 +1203,7 @@ describe("one window end to end", () => {
       now: () => 1700000000000,
       judge: new QuietJudge(),
     });
+    arbor.effects.addExecutor(testChannel());
     backend.attach(arbor.windowControl());
     backend.script([
       { tool: "note_write", args: { title: "部署", summary: "上线步骤", body: "先灰度，再全量" } },
@@ -1295,7 +1458,7 @@ describe("workspace retention", () => {
     // The workspace is the user's own project directory: nothing here may remove
     // it, so the implementation says it is not reclaimable and the host never
     // asks which ref to reclaim (docs/workspaces.md#lifecycle).
-    const root = await mkdtemp(join(tmpdir(), "arbor-project-"));
+    const root = await tempDir("arbor-project-");
     const workspace = new ForeignWorkspace({ root });
     const { arbor, backend, timers } = await host({ root, retentionMs, workspace });
     backend.script([
@@ -1416,6 +1579,8 @@ describe("task sources", () => {
    */
   class ChatSource implements TaskSource {
     readonly id = "qq";
+    /** What this source serves, which the host stamps on the tasks it makes. */
+    label?: string;
     /** Every group of events `toTasks` was handed, in order. */
     readonly batched: OutsideEvent[][] = [];
     /** What its own push source handed the host, once `start` subscribed to it. */
@@ -1505,6 +1670,23 @@ describe("task sources", () => {
     // batched it: the journal stays the only record.
     const inputs = await journal.list({ kinds: ["input"] });
     assert.equal(inputs.items.length, 4);
+  });
+
+  it("stamps the label a source serves onto the tasks it makes", async () => {
+    // A source that is the outside of one session names it once, and the host
+    // carries it onto every task that source makes which names none of its own
+    // (docs/windows.md#what-a-window-serves).
+    const chat = new ChatSource();
+    chat.label = "qq-session-1";
+    const { arbor, journal, backend } = await host({ plugins: [{ name: "chat", adapters: { taskSources: [chat] } }] });
+    backend.script([{ text: "回复群里的问题" }]);
+
+    await arbor.ingest([event("qq", "qq:group:1", "在吗")]);
+    await opened(backend, 1);
+
+    const start = (await journal.list({ kinds: ["window_start"], limit: 1 })).items[0];
+    assert.ok(start !== undefined);
+    assert.equal(readString(start, "label"), "qq-session-1");
   });
 
   it("keeps its own grouping by target with no task source registered", async () => {
@@ -1751,14 +1933,32 @@ describe("the window's own words", () => {
 });
 
 describe("a window's own effect result", () => {
+  it("is refused at the call when no executor owns the target, and nothing is recorded", async () => {
+    // A host with no channel plugged in cannot carry a send out, and an effect
+    // that waits for an executor that may never come is indistinguishable from
+    // one that was dropped. The window hears it at its own call, with the rule
+    // and the next action (docs/coordination.md#effects).
+    const { arbor, journal, backend } = await host();
+    backend.script([{ tool: "send", args: { to: "qq:group:123", content: "已修好" } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    const body = results.items[0]?.body ?? "";
+    assert.ok(body.includes("send.unowned"), "the refusal names the rule");
+    assert.ok(body.includes("qq:group:123"), "it names the target nothing owns");
+    assert.ok(body.includes("channels.list"), "and the next action that reaches the goal");
+    assert.ok(!body.includes("已记录"), "the window is never told the effect was queued");
+    // Nothing was recorded, so nothing can be carried out later and no result
+    // event is owed to anybody.
+    assert.equal((await journal.list({ kinds: ["send"] })).items.length, 0);
+    assert.equal((await journal.list({ kinds: ["effect_result"] })).items.length, 0);
+  });
+
   it("comes back to the window that made it, in the text table's words", async () => {
     let now = 1700000000000;
     const { arbor, journal, backend } = await host({ now: () => now });
-    arbor.effects.addExecutor({
-      id: "test-send",
-      can: (effect: Effect) => effect.kind === "send",
-      run: async () => ({ ok: true }),
-    });
+    arbor.effects.addExecutor(testChannel());
     backend.script([{ tool: "send", args: { to: "qq:group:123", content: "已修好" } }, { text: "完成" }]);
     const record = await arbor.open(task);
     // Past the protection period, so what the send brought back may go in: the
@@ -1886,6 +2086,7 @@ describe("what a refused call answers", () => {
 describe("the host's own refusals", () => {
   const delivery = {
     kind: "window_message" as const,
+    role: "input" as const,
     refs: [] as readonly `r${number}`[],
     time: 1_700_000_000_000,
     content: [{ kind: "data" as const, fields: { content: "在吗" } }],

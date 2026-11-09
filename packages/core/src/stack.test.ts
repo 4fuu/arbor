@@ -9,10 +9,10 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import {
   createModels,
   fauxAssistantMessage,
@@ -69,9 +69,23 @@ class StackJudge implements Judge {
   }
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function stack(): Promise<{ arbor: Arbor; journal: SqliteJournal; script: (steps: readonly unknown[]) => void }> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-stack-"));
+  const root = await tempDir("arbor-stack-");
   const faux = fauxProvider({ models: [FAUX_MODEL] });
   const models = createModels();
   models.setProvider(faux.provider);

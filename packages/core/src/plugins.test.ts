@@ -11,10 +11,10 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
@@ -22,6 +22,7 @@ import type {
   BlockKindSpec,
   DispatchContext,
   Effect,
+  EffectExecutor,
   ExternalTool,
   Judge,
   JudgeAnswer,
@@ -61,6 +62,22 @@ const REVIEW_TEXT: TextTable = {
   "note.review": "复核：{review}",
   "outside_message.trust": "来源可信度：{trust}",
 };
+
+/**
+ * A channel a test plugs in, so a `send` has an executor that owns its target -
+ * the way a deployment with a channel registered runs. A test that leaves it
+ * out is a host with no channel at all.
+ */
+function testChannel(ran?: string[]): EffectExecutor {
+  return {
+    id: "test-send",
+    can: (effect: Effect) => effect.kind === "send",
+    run: async (effect) => {
+      ran?.push(effect.target);
+      return { ok: true };
+    },
+  };
+}
 
 /** One note the plugin hands the host, with the field it added. */
 function reviewedNote(review: string): Block {
@@ -152,6 +169,20 @@ interface Harness {
   timers: ManualTimers;
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function host(
   options: {
     plugins?: readonly Plugin[];
@@ -165,7 +196,7 @@ async function host(
   } = {},
 ): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-plugin-"));
+  const root = await tempDir("arbor-plugin-");
   const backend = new ScriptedBackend();
   // The tools the harness around the host registered, handed in the way a host
   // embedded in one hands them in (docs/tools.md#external-tools).
@@ -245,6 +276,7 @@ describe("plugins", () => {
         window,
         {
           kind: "window_message",
+          role: "input",
           from: first.window,
           refs: [note.ref],
           time: 1700000000000,
@@ -274,6 +306,7 @@ describe("plugins", () => {
       second.window,
       {
         kind: "window_message",
+        role: "input",
         from: "c1",
         refs: ["n012@3"],
         time: 1700000000000,
@@ -423,6 +456,7 @@ describe("plugins", () => {
       },
     };
     const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    arbor.effects.addExecutor(testChannel());
     backend.script([
       { textDelta: "我看一下" },
       { toolCallDelta: { name: "send", callId: "call_1_send", args: { to: "qq:group:1", content: "已修" } } },
@@ -447,7 +481,12 @@ describe("plugins", () => {
     // thing the deltas leave behind in the record (docs/journal.md).
     const recorded = await journal.list({ limit: 200 });
     assert.deepEqual(
-      recorded.items.map((event) => event.kind),
+      // What the deltas leave in the record, and nothing else. The send's own
+      // result event and the delivery that carried it back to this window are
+      // the queue's, not the stream's (docs/coordination.md#effects).
+      recorded.items
+        .map((event) => event.kind)
+        .filter((kind) => kind !== "effect_result" && kind !== "delivery"),
       ["window_start", "tool_call", "send", "tool_result", "assistant"],
     );
     assert.equal(recorded.items.at(-1)?.body, "完成");
@@ -590,6 +629,7 @@ describe("the hooks the core runs", () => {
       },
     };
     const { arbor, journal, backend } = await host({ plugins: [plugin] });
+    arbor.effects.addExecutor(testChannel());
     backend.script([{ tool: "send", args: { to: "qq:group:1", content: "已修好" } }, { text: "完成" }]);
     const record = await arbor.open(task);
     await backend.finished();
@@ -720,6 +760,7 @@ describe("direct tools a plugin or a backend declares", () => {
       },
     };
     const { arbor, journal, backend } = await host({ plugins: [{ name: "lint", tools: [shadow] }] });
+    arbor.effects.addExecutor(testChannel());
     backend.script([{ tool: "send", args: { to: "qq:group:1", content: "已修好" } }, { text: "完成" }]);
     await arbor.open(task);
     await backend.finished();

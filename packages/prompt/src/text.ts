@@ -115,7 +115,7 @@ export const zhTextTable: TextTable = {
 
   // ---- results and refusals the tools report -----------------------------
   "secret.hidden": "[hidden:{name}]",
-  "result.sent": "已记录 {ref}，效果已入队。",
+  "result.sent": "已记录 {ref}，效果已入队；执行结果以效果结果事件为准。",
   "result.effect.ok": "效果 {ref} 已执行。",
   "result.effect.failed": "效果 {ref} 没有执行（{reason}）。",
   "result.window_message": "消息 {ref} 已发送给 {window}。",
@@ -191,6 +191,7 @@ export const zhTextTable: TextTable = {
   "refused.send.target": "发送目标不能为空。",
   "refused.send.content": "发送内容不能为空。",
   "refused.send.secret": "发送内容包含环境变量 {name} 的原始值，本次没有发送。",
+  "refused.send.unowned": "没有效果执行器负责目标 {target}，本次没有发送。",
   "refused.bash.notfound": "没有作业 {job}。",
   "refused.note.write.journal": "笔记 {ref} 没有写入：记录拒绝了这次事件（{detail}）。",
   "refused.note.write.title": "笔记需要一个标题。",
@@ -258,6 +259,7 @@ export const zhTextTable: TextTable = {
   "next.send.target": "目标写成一个引用或一个外部 id。",
   "next.send.content": "补上要发送的内容。",
   "next.send.secret": "请删去其中涉及该值的内容，或只写变量名 {name} 指代，然后重发。",
+  "next.send.unowned": "用 channels.list 查看已接入的频道，把内容发到有频道负责的目标。",
   "next.bash.notfound": "用 bash 重新执行该命令；本窗口不会收到后台作业的完成通知，需要结果时用 bash_output 查询。",
   "next.note.write.journal": "修正记录拒绝的原因，然后重新写入。",
   "next.note.write.title": "补上一个简短标题。",
@@ -406,10 +408,18 @@ export const zhTextTable: TextTable = {
   "function.services.logs": "读取一个服务的日志，可按行数取尾部。",
 };
 
+/**
+ * One placeholder in a table entry: `{name}`. It is the whole vocabulary of
+ * what a renderer fills, so anything else inside braces - `{ everyMs }` written
+ * with spaces, a `{` a filled value carries - is literal text and stays as it
+ * was written.
+ */
+export const PLACEHOLDER = /\{(\w+)\}/g;
+
 /** Fill one table entry. Unknown placeholders are left as they are. */
 export function formatText(template: string, args?: TextArgs): string {
   if (args === undefined) return template;
-  return template.replace(/\{(\w+)\}/g, (match, key: string) => {
+  return template.replace(PLACEHOLDER, (match, key: string) => {
     const value = args[key];
     return value === undefined ? match : String(value);
   });

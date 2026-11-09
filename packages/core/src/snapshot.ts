@@ -145,8 +145,12 @@ export class SnapshotBuilder {
    * frozen for its own period either way, so a per-window section costs one
    * render and not one more read of the notes
    * (docs/memory.md#snapshot-epochs).
+   *
+   * `label` is the opaque label the embedding attached to what that window
+   * serves, handed to a per-window section and never interpreted here
+   * (docs/windows.md#what-a-window-serves).
    */
-  async epoch(window?: WindowRef): Promise<PromptEpoch> {
+  async epoch(window?: WindowRef, label?: string): Promise<PromptEpoch> {
     const now = this.options.now?.() ?? Date.now();
     const minInterval = this.options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
     const plugins = this.options.plugins === undefined ? [] : this.options.plugins();
@@ -181,6 +185,7 @@ export class SnapshotBuilder {
       },
       this.renderer,
       window,
+      label,
     );
     const epoch: PromptEpoch = {
       system,

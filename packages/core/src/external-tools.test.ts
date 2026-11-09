@@ -11,10 +11,10 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type { ExternalTool, Plugin, ToolResult } from "@4fu/arbor-interfaces";
@@ -90,11 +90,25 @@ interface Harness {
   backend: ScriptedBackend;
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function host(
   options: { backend?: ScriptedBackend; plugins?: readonly Plugin[] } = {},
 ): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-external-"));
+  const root = await tempDir("arbor-external-");
   const backend = options.backend ?? new ScriptedBackend();
   const arbor = new Arbor({
     journal,

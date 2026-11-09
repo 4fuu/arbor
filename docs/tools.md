@@ -10,7 +10,7 @@ service layer ([architecture.md](architecture.md#layers)).
 
 | Tool | What it does |
 | --- | --- |
-| `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue; the channel decides whether it arrives |
+| `send(to, content, reply_to?, cites)` | an effect to a target, through the effect queue; the channel decides whether it arrives; a target no executor owns is refused at the call |
 | `note_write(title, summary?, body, refs?)`, `note_replace(id, revision, …, refs?)`, `note_delete(id, revision)` | write memory ([memory.md](memory.md)) |
 | `end(handoff?)` | end the run; with a handoff, continue in a new window ([windows.md](windows.md#ending-and-continuing)) |
 | `reload(install?, remove?)` | change the environment and broadcast the delta ([environment.md](environment.md#changing-the-environment)) |

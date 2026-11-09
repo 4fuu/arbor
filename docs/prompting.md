@@ -19,6 +19,11 @@ a request is built, by fixed rules:
   renders in the tag the plugin named;
 - content inside a block is escaped, so outside text cannot close a tag or
   pose as host text;
+- a fixed line is complete when every placeholder its own template names has
+  a value, and is dropped when one has none - never by scanning what was
+  filled: a `{` a filled value carries, JSON in a message or a snippet in a
+  note, is data the line keeps, not a placeholder it drops for. A placeholder
+  is `{name}` and nothing else, so `{ everyMs }` written with spaces is text;
 - data blocks are marked as data ([below](#data-and-instructions));
 - the output is deterministic, so the same blocks always give the same bytes.
 
@@ -129,6 +134,11 @@ with the epoch, so each window reads the section for itself while the rest of
 the prefix stays shared. A section that says the same thing to every window
 declares nothing and is frozen with the epoch as before
 ([windows.md](windows.md#prompt-layout)).
+
+A per-window section is also handed what the embedding says that window serves -
+the opaque label the task that opened it carried, `content(window, label)` - so a
+section can name the session the window belongs to without a map of its own
+([windows.md](windows.md#what-a-window-serves)).
 
 ## Fixed notes
 
@@ -302,4 +312,5 @@ One term per concept, in prompts, descriptions, results, errors and logs:
 | 工作区 (workspace) | a window's own directory | 仓库、沙箱 |
 | 常驻目录 (persistent directory) | a named directory kept past the window, made with `workspace.keep` | 持久目录、长期目录、存档 |
 | 来源 (conversation) | where an outside message comes from and where its reply goes, such as a chat on a channel | 会话、对话、窗口、频道 |
+| 效果 (effect) | one act on the outside world a window made, such as a `send`; its result event says whether it was carried out | 消息、动作 |
 | 引用 (ref) | a ref such as `r902` or `n012@3` | 链接、ID |

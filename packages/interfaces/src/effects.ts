@@ -41,7 +41,13 @@ export interface EffectResult {
 export interface EffectExecutor {
   readonly id: string;
 
-  /** Whether this executor owns the effect. One that does not refuses it. */
+  /**
+   * Whether this executor owns the effect. One that does not refuses it.
+   *
+   * It answers from the effect's kind and target alone - never from its event
+   * ref, its time or its content - so the queue can ask it about an effect that
+   * has not been recorded yet.
+   */
   can(effect: Effect): boolean;
 
   /** Carry the effect out. Called once per effect, by the queue. */

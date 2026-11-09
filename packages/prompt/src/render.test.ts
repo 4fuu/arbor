@@ -72,6 +72,18 @@ describe("renderer", () => {
     assert.ok(!text.includes("引用"));
   });
 
+  it("keeps a fixed line whose filled value carries a brace of its own", () => {
+    // A prompt line, a note's summary or a reminder's open work can hold a `{`:
+    // JSON in a message, a snippet in a note. That is data the line carries, not
+    // a placeholder the renderer must fill, so it must not cost the line it sits
+    // in (docs/prompting.md#blocks-and-the-renderer).
+    const renderer = new Renderer();
+    const delta = promptSectionDeltaBlock({ tag: "dsh", from: "", to: '写入 {"path": "src/cart.ts"}' }, TIME);
+    assert.ok(delta !== undefined);
+    const text = renderer.render([delta]);
+    assert.ok(text.includes('+ 写入 {"path": "src/cart.ts"}'), "the changed line reaches the window as it stands");
+  });
+
   it("renders a refusal with the rule and the next action", () => {
     const renderer = new Renderer();
     const text = renderer.render([

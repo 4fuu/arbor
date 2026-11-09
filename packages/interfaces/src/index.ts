@@ -84,6 +84,7 @@ export type {
   WindowLimits,
   ContinuationInfo,
   Delivery,
+  DeliveryRole,
   WindowSession,
   StreamEvent,
   WindowEvent,

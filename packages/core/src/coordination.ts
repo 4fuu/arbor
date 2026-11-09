@@ -123,6 +123,7 @@ export class Coordinator {
           record.window,
           {
             kind: "conversation_update",
+            role: "input",
             refs: [event.ref],
             time: event.time,
             content: [
@@ -156,6 +157,7 @@ export class Coordinator {
         window,
         {
           kind: "notice",
+          role: "input",
           ...(event.window === null ? {} : { from: event.window }),
           refs: [event.ref],
           time: event.time,
@@ -203,6 +205,7 @@ export class Coordinator {
         window,
         {
           kind: "broadcast",
+          role: "context",
           from,
           refs: [event.ref, ref],
           time: event.time,
@@ -241,6 +244,7 @@ export class Coordinator {
       to,
       {
         kind: "window_message",
+        role: "input",
         from,
         refs: [ref, event.ref],
         time: event.time,
@@ -304,6 +308,7 @@ export class Coordinator {
         record.window,
         {
           kind: "environment_delta",
+          role: "context",
           refs: [delta.revision],
           time: this.host.now(),
           content: [block],

@@ -12,7 +12,7 @@
 
 import type { Block, BlockFieldSpec, BlockKindSpec, BlockValue, TextTable } from "@4fu/arbor-interfaces";
 import { BUILTIN_BLOCK_KINDS } from "./blocks.ts";
-import { formatText, zhTextTable, type TextArgs } from "./text.ts";
+import { formatText, zhTextTable, PLACEHOLDER, type TextArgs } from "./text.ts";
 
 /** Joins refs, which are identifiers. */
 const REF_SEPARATOR = ", ";
@@ -179,13 +179,18 @@ export class Renderer {
     const resolved = formatText(key, args);
     const template = this.table[resolved];
     if (template === undefined) return undefined;
-    for (const [, name] of `${key} ${template}`.matchAll(/\{(\w+)\}/g)) {
+    for (const [, name] of `${key} ${template}`.matchAll(PLACEHOLDER)) {
       if (name === undefined) continue;
       if (args[name] === undefined || args[name] === "") return undefined;
       carried.add(name);
     }
+    // The line is complete when every placeholder its own template names has a
+    // value - never by scanning what was filled: a value that carries a `{` of
+    // its own, JSON in a message or a snippet in a note, is data the line must
+    // keep, not a placeholder it must drop for
+    // (docs/prompting.md#blocks-and-the-renderer).
     const filled = formatText(template, args);
-    if (filled.includes("{") || filled.trim() === "") return undefined;
+    if (filled.trim() === "") return undefined;
     return filled;
   }
 

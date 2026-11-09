@@ -10,11 +10,11 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import type { Ref, ServiceSpec, ServiceStatus } from "@4fu/arbor-interfaces";
 import { ProcessSupervisor } from "./process-supervisor.ts";
 
@@ -59,8 +59,22 @@ interface Harness {
   spec(service: "healthy" | "crashing" | "reporting", port: number): ServiceSpec;
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function harness(options: { secretOf?: (name: string) => string | undefined } = {}): Promise<Harness> {
-  const root = await mkdtemp(join(tmpdir(), "arbor-svc-"));
+  const root = await tempDir("arbor-svc-");
   const changes: ServiceStatus[] = [];
   const supervisor = new ProcessSupervisor({
     root,

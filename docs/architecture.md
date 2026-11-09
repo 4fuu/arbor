@@ -30,14 +30,14 @@ interface and registering it; nothing else changes.
 
 | Interface | Responsibility | Default |
 | --- | --- | --- |
-| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), report token usage and rate limits; list the models it can run and log in to their providers; declare the tools the harness around it registered, and answer again whenever the host asks for them ([tools.md](tools.md#external-tools)) ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
+| `AgentBackend` | run one window: send the prompt and tools to a model, stream tool calls and what the model is writing ([windows.md](windows.md#streaming)), accept inputs inserted once a turn's tool calls finish (steering), each marked context or input ([dispatch.md](dispatch.md#context-and-input)), report token usage and rate limits; list the models it can run and log in to their providers; declare the tools the harness around it registered, and answer again whenever the host asks for them ([tools.md](tools.md#external-tools)) ([below](#models)) | [pi](https://github.com/earendil-works/pi) (pi-agent-core in process, with its code mode and model runtime) |
 | `Journal` | append events, read, search, walk refs and links, keep watermarks | SQLite |
 | `NoteStore` | notes: revisions, summaries, anchors, the active set | SQLite beside the journal |
 | `Workspace` | a directory per window: create it on first use, mount it, reclaim it - or say it is not the host's to reclaim ([workspaces.md](workspaces.md#lifecycle)) | a plain directory ([@4fu/arbor-workspace-dir](../packages/workspace-dir)) |
 | `Judge` | answer the host's decisions: filter, route, model tier, notice, broadcast, active set ([dispatch.md](dispatch.md#judge-decisions)) | Jev |
 | `Channel` | an outside source and sink: look up a message by its native id, list what is connected, report online state | none; plugins provide them ([@4fu/arbor-plugin-http](../packages/plugin-http)) |
 | `TaskSource` | turn outside events into tasks, batching them ([dispatch.md](dispatch.md#tasks)) | the host API |
-| `EffectExecutor` | carry out effects from the effect queue | none; plugins provide them |
+| `EffectExecutor` | carry out effects from the effect queue; a target no registered executor owns is refused before the effect is recorded ([coordination.md](coordination.md#effects)) | none; plugins provide them |
 | `ToolGroup` | a set of direct tools and code mode modules | the built-in groups ([tools.md](tools.md)) |
 | `Environment` | skills, MCP servers and services: revisions, validation, the shared `/env` mount, deltas ([environment.md](environment.md)) | a directory ([@4fu/arbor-environment-dir](../packages/environment-dir)) |
 | `Supervisor` | run services: start, health checks, restart with backoff, logs, quotas ([environment.md](environment.md#services)) | a host process supervisor ([@4fu/arbor-supervisor-process](../packages/supervisor-process)) |

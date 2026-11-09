@@ -8,10 +8,10 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
@@ -74,9 +74,23 @@ const supervisor: Supervisor = {
   },
 };
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function harness(): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-env-tools-"));
+  const root = await tempDir("arbor-env-tools-");
   const workspace = new DirectoryWorkspace({ root });
   const reloads: Harness["reloads"] = [];
   const answer: ReloadOutcome = {
@@ -385,7 +399,7 @@ describe("the environment tools", () => {
   it("reads the environment without a workspace, and refuses a write to it", async () => {
     const { catalog, at, workspace } = await harness();
     await mkdir(join(workspace.pathOf("ws1" as never), ".."), { recursive: true }).catch(() => {});
-    const root = await mkdtemp(join(tmpdir(), "arbor-env-read-"));
+    const root = await tempDir("arbor-env-read-");
     await mkdir(join(root, "skills", "deploy"), { recursive: true });
     await writeFile(join(root, "skills", "deploy", "SKILL.md"), "# deploy\n\n上线流程\n\n1. 读这个文件。\n", "utf8");
     const reading = new ToolCatalog({

@@ -200,6 +200,13 @@ export interface WindowRecord {
   interrupted?: boolean;
   /** The target it is working on now, for the protection period. */
   currentTarget?: Target;
+  /**
+   * What the embedding says this window serves, opaque to arbor and carried
+   * from the task that opened it, through its continuations and the journal's
+   * record of both, to a per-window prompt section
+   * (docs/windows.md#what-a-window-serves).
+   */
+  label?: string;
   /** The workspace mount, once the window touched files. */
   mount?: WorkspaceMount;
   /** The event each tool call was recorded at. */
@@ -610,6 +617,7 @@ export class Arbor {
       // delta at its next tool-call boundary, never a rebuilt prefix.
       await this.deliver(record.window, {
         kind: "tools_delta",
+        role: "context",
         refs: [],
         time,
         content: [block],
@@ -815,7 +823,7 @@ export class Arbor {
   }
 
   /** What changed since a window's epoch, for its first input. */
-  private async changesSince(epoch: PromptEpoch, window: WindowRef): Promise<Block[]> {
+  private async changesSince(epoch: PromptEpoch, window: WindowRef, label?: string): Promise<Block[]> {
     const blocks: Block[] = [];
     const environment = this.options.environment;
     if (environment !== undefined) {
@@ -827,7 +835,7 @@ export class Arbor {
     }
     // A plugin's prompt section that moved since the epoch reaches a window
     // opened in it as a delta, exactly as an environment change does.
-    blocks.push(...(await this.promptSectionDeltas(epoch.sections, window)));
+    blocks.push(...(await this.promptSectionDeltas(epoch.sections, window, label)));
     return blocks;
   }
 
@@ -840,9 +848,13 @@ export class Arbor {
    * The render is for the window the delta goes to, so a section that renders
    * per window is compared against what it says for that window.
    */
-  private async promptSectionDeltas(views: readonly RenderedPluginSection[], window: WindowRef): Promise<Block[]> {
+  private async promptSectionDeltas(
+    views: readonly RenderedPluginSection[],
+    window: WindowRef,
+    label?: string,
+  ): Promise<Block[]> {
     if (this.sections.length === 0) return [];
-    const current = await renderPluginSections(this.sections, this.renderer, window);
+    const current = await renderPluginSections(this.sections, this.renderer, window, label);
     const blocks: Block[] = [];
     for (const view of views) {
       const section = current.find((one) => one.tag === view.tag);
@@ -872,7 +884,7 @@ export class Arbor {
       const revision = await sectionRevision(section);
       if (revision === view.revision) continue;
       const from = view.text;
-      const rendered = await renderPluginSection(section, this.renderer, record.window);
+      const rendered = await renderPluginSection(section, this.renderer, record.window, record.label);
       view.text = rendered.text;
       view.revision = rendered.revision;
       const delta = promptSectionDeltaBlock(
@@ -884,6 +896,7 @@ export class Arbor {
     if (changed.length === 0) return;
     await this.deliver(record.window, {
       kind: "prompt_delta",
+      role: "context",
       refs: [],
       time: this.clock(),
       content: changed,
@@ -931,7 +944,14 @@ export class Arbor {
     );
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window)) continue;
-      await this.continueWindow(event.window, { midTaskReset: true });
+      // What the embedding said this window serves rides on its own start
+      // event, so a restart hands it to the continuation it opens
+      // (docs/windows.md#what-a-window-serves).
+      const label = readString(event, "label");
+      await this.continueWindow(event.window, {
+        midTaskReset: true,
+        ...(label === "" ? {} : { label }),
+      });
     }
     // A chain whose last window ended before this restart keeps its directory
     // for the retention period that end started, not one this restart starts:
@@ -1028,13 +1048,18 @@ export class Arbor {
     await this.journal.append({
       kind: "window_start",
       window,
-      body: hostBody({ task: taskRef, doing: reason, kind: wanted.kind }),
+      body: hostBody({
+        task: taskRef,
+        doing: reason,
+        kind: wanted.kind,
+        ...(wanted.label === undefined ? {} : { label: wanted.label }),
+      }),
       targets: [...wanted.targets],
       refs: [taskRef],
     });
-    const record = this.record(window, taskRef, reason, [...wanted.targets], tier);
-    const epoch = await this.snapshots.epoch(window);
-    const changes = await this.changesSince(epoch, window);
+    const record = this.record(window, taskRef, reason, [...wanted.targets], tier, wanted.label);
+    const epoch = await this.snapshots.epoch(window, wanted.label);
+    const changes = await this.changesSince(epoch, window, wanted.label);
     const firstInput = this.renderer.render(
       firstInputBlocks({
         task: {
@@ -1091,8 +1116,16 @@ export class Arbor {
     for (const [source, group] of claimed) {
       for (const task of source.toTasks(group)) {
         // The source knows its own reason and its own batching; the host only
-        // names the source that made the task when the task does not.
-        results.push(await this.dispatch({ ...task, source: task.source ?? source.id }));
+        // names the source that made the task when the task does not, and
+        // carries the label the source serves when the task names none
+        // (docs/windows.md#what-a-window-serves).
+        results.push(
+          await this.dispatch({
+            ...task,
+            source: task.source ?? source.id,
+            label: task.label ?? source.label,
+          }),
+        );
       }
     }
     for (const task of this.groupedTasks(unclaimed)) results.push(await this.dispatch(task));
@@ -1851,6 +1884,7 @@ export class Arbor {
     const openWork = await this.refreshOpenWork(record.window);
     const delivery: Delivery = {
       kind: "reminder",
+      role: "input",
       refs: [],
       time,
       content: [
@@ -1939,6 +1973,7 @@ export class Arbor {
       interrupted: reason === "failed",
       targets,
       ...(record.tier === undefined ? {} : { tier: record.tier }),
+      ...(record.label === undefined ? {} : { label: record.label }),
     });
   }
 
@@ -1955,6 +1990,8 @@ export class Arbor {
       interrupted?: boolean;
       targets?: readonly string[];
       tier?: string;
+      /** What the embedding says this chain serves; a continuation keeps it. */
+      label?: string;
     },
   ): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
@@ -1971,8 +2008,8 @@ export class Arbor {
       ...(options.handoff === undefined ? {} : { handoff: options.handoff }),
       ...(options.midTaskReset === true ? { midTaskReset: true } : {}),
     });
-    const epoch = await this.snapshots.epoch(window);
-    const changes = await this.changesSince(epoch, window);
+    const epoch = await this.snapshots.epoch(window, options.label);
+    const changes = await this.changesSince(epoch, window, options.label);
     const effects = await this.eventsOfKind(previous, "send");
     const openTasks = await this.taskOf(previous);
     // The work the predecessor chain left open, so a continuation picks it up by
@@ -2020,11 +2057,16 @@ export class Arbor {
     await this.journal.append({
       kind: "window_start",
       window,
-      body: hostBody({ task: taskRef, doing: reason, continuation: previous }),
+      body: hostBody({
+        task: taskRef,
+        doing: reason,
+        continuation: previous,
+        ...(options.label === undefined ? {} : { label: options.label }),
+      }),
       targets: [...(options.targets ?? [])],
       refs: [taskRef, previous],
     });
-    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier);
+    const record = this.record(window, taskRef, reason, [...(options.targets ?? [])], options.tier, options.label);
     // The continuation of a failed window is itself the interrupted one, so the
     // chain stops there rather than following a model service that stays down.
     if (options.interrupted === true) record.interrupted = true;
@@ -2441,6 +2483,19 @@ export class Arbor {
       ...(request.replyTo === undefined ? {} : { replyTo: request.replyTo }),
       ...(request.cites === undefined ? {} : { cites: request.cites }),
     };
+    // An effect no executor owns is one this host cannot carry out, and waiting
+    // for an executor that may never come looks exactly like a drop from the
+    // window's side. The window is told at its own call, with the rule and the
+    // next action, and nothing is recorded: a `send` in the journal is always
+    // one an executor owned when it was made (docs/coordination.md#effects).
+    if (!this.effects.owns(input)) {
+      throw arborError({
+        code: "refused",
+        rule: "send.unowned",
+        message: textOf(this.table, "refused.send.unowned", { target }),
+        nextAction: textOf(this.table, "next.send.unowned"),
+      });
+    }
     // A send writes on its target, so the window has touched that conversation
     // and hears what comes back on it - above all its own effect's result
     // (docs/coordination.md#staying-current). The touch stands before the
@@ -2790,6 +2845,7 @@ export class Arbor {
     doing: string,
     targets: readonly string[],
     tier?: string,
+    label?: string,
   ): WindowRecord {
     const entry: BoardEntry = {
       window,
@@ -2811,6 +2867,9 @@ export class Arbor {
       ending: false,
       paused: false,
       ...(tier === undefined ? {} : { tier }),
+      // What the embedding says this window serves, carried without being read
+      // (docs/windows.md#what-a-window-serves).
+      ...(label === undefined ? {} : { label }),
       ...(targets[0] === undefined ? {} : { currentTarget: targets[0] }),
       callEvents: new Map(),
       inbox: [],

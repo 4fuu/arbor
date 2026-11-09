@@ -101,6 +101,22 @@ export interface ContinuationInfo {
 }
 
 /**
+ * What a delivery is to the turn it enters
+ * (docs/dispatch.md#insertion-timing).
+ *
+ * - **context** - what the window's own prompt or its surroundings now hold: a
+ *   prompt delta, a tools delta, an environment delta, a broadcast. The model
+ *   reads it with its next request and it never starts a turn: steering one
+ *   into a quiet window leaves the window quiet, and the block waits for the
+ *   next turn that is already coming.
+ * - **input** - something for the window to act on: an inserted task, a
+ *   conversation update, a notice, a window message, a reminder. A related
+ *   input is what continues an idle window, so the host steers it in and the
+ *   backend starts a turn when the window is idle.
+ */
+export type DeliveryRole = "context" | "input";
+
+/**
  * What the host inserts into a running window at a tool-call boundary.
  *
  * ## What each kind expects from a backend
@@ -119,6 +135,13 @@ export interface ContinuationInfo {
  * - **A reminder is the kind the host times itself.** While the window runs it
  *   is steered in at the next boundary; once the run has ended it is queued as
  *   a follow-up, so it is the input of the window's next turn.
+ *
+ * What a delivery is to the turn it enters rides on it as `role`, so a backend
+ * never has to work it out from the kind: a **context** delivery is read by the
+ * next turn and must never start one, and an **input** delivery is what
+ * continues a quiet window. Steering a delta into a quiet window that then runs
+ * a turn of its own is the bug this field exists to prevent: the window would
+ * act on a change to its own prompt before anything asked it to.
  *
  * A backend that is not pi maps the two calls onto whatever its own loop
  * offers - DeepSeek Harness's `agent.inject` for a step boundary and its
@@ -149,6 +172,13 @@ export interface Delivery {
     | "tools_delta"
     /** A host usage reminder, appended to an input (docs/windows.md#usage-reminders). */
     | "reminder";
+  /**
+   * What this delivery is to the turn it enters: context the window reads with
+   * its next request and that never starts a turn, or input the window acts on
+   * and that continues it when it is idle. The host marks every delivery it
+   * makes; a backend relies on the mark rather than on the kind.
+   */
+  role: DeliveryRole;
   /** The window it comes from, for a notice, a broadcast or a window message. */
   from?: WindowRef;
   refs: readonly Ref[];
@@ -178,10 +208,14 @@ export interface WindowSession {
    *   deliver each one exactly once;
    * - keep the turn going: the model is not stopped, not asked to confirm, and
    *   not told the input is special - it is one more input;
-   * - start a turn when the window is idle, because that is what a related
-   *   input wants (docs/dispatch.md#insertion-timing); the host only steers
-   *   into a window it has not ended and has not paused, so a delivery never
-   *   arrives for one of those;
+   * - start a turn when the window is idle and the delivery is **input**,
+   *   because that is what a related input wants
+   *   (docs/dispatch.md#insertion-timing); the host only steers into a window
+   *   it has not ended and has not paused, so a delivery never arrives for one
+   *   of those;
+   * - leave a quiet window quiet for a **context** delivery: it is read by the
+   *   next turn and must never start one, so the block waits for a turn that is
+   *   already coming;
    * - resolve once the delivery is queued, not once the model has read it: the
    *   host never waits for the model, and a slow model is not a slow steer.
    *
@@ -204,9 +238,10 @@ export interface WindowSession {
    *   ends, because an ended window is never reopened
    *   (docs/windows.md#lifecycle).
    *
-   * The host uses this only for a delivery that belongs after the run: the
-   * reminder of a window whose run has already ended, and whatever a
-   * `Scheduler` places there (docs/dispatch.md#insertion-timing).
+   * The host uses this only for an **input** delivery that belongs after the
+   * run: the reminder of a window whose run has already ended, and whatever a
+   * `Scheduler` places there (docs/dispatch.md#insertion-timing). A context
+   * delivery never goes here: it is steered, and read by the next turn.
    */
   followUp(delivery: Delivery): Promise<void>;
 

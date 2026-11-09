@@ -703,6 +703,7 @@ export class Dispatcher {
   deliveryOf(task: Task): Delivery {
     return {
       kind: "inserted_task",
+      role: "input",
       refs: [task.ref, ...task.refs],
       time: this.host.now(),
       content: [taskBlock({ ...task, time: task.time })],
@@ -755,6 +756,7 @@ export class Dispatcher {
         kind: task.kind,
         reason: task.reason,
         ...(task.source === undefined ? {} : { source: task.source }),
+        ...(task.label === undefined ? {} : { label: task.label }),
         explicit: task.explicit === true,
       }),
       targets: [...task.targets],

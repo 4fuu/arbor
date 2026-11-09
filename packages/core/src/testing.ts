@@ -131,7 +131,7 @@ export class ScriptedSession implements WindowSession {
    * the next tool-call boundary, `followUp` for one that becomes the input of
    * the next turn (docs/dispatch.md#insertion-timing).
    */
-  readonly deliveries: { kind: Delivery["kind"]; how: "steer" | "followUp" }[] = [];
+  readonly deliveries: { kind: Delivery["kind"]; role: Delivery["role"]; how: "steer" | "followUp" }[] = [];
   /** What the host refreshed this window's declared tools with, in order. */
   readonly refreshed: (readonly DirectToolSpec[])[] = [];
 
@@ -156,13 +156,16 @@ export class ScriptedSession implements WindowSession {
   }
 
   async steer(delivery: Delivery): Promise<void> {
-    this.deliveries.push({ kind: delivery.kind, how: "steer" });
+    this.deliveries.push({ kind: delivery.kind, role: delivery.role, how: "steer" });
     this.push({ kind: "steered", delivery });
-    if (this.current === "idle") void this.backend.play(this);
+    // A context delivery is read by the next turn and never starts one, so a
+    // quiet window stays quiet and the block waits for a turn that is already
+    // coming (docs/dispatch.md#insertion-timing).
+    if (delivery.role === "input" && this.current === "idle") void this.backend.play(this);
   }
 
   async followUp(delivery: Delivery): Promise<void> {
-    this.deliveries.push({ kind: delivery.kind, how: "followUp" });
+    this.deliveries.push({ kind: delivery.kind, role: delivery.role, how: "followUp" });
     this.push({ kind: "steered", delivery });
   }
 

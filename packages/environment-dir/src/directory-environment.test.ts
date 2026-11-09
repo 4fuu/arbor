@@ -9,15 +9,29 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { DirectoryEnvironment } from "./directory-environment.ts";
+
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
 
 /** One host directory, and the workspace a window drafts in. */
 async function roots(): Promise<{ root: string; work: string }> {
-  const base = await mkdtemp(join(tmpdir(), "arbor-env-"));
+  const base = await tempDir("arbor-env-");
   return { root: join(base, "env-root"), work: join(base, "ws1") };
 }
 

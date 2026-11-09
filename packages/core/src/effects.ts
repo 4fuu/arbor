@@ -6,6 +6,12 @@
  * An effect takes place when it is made and cannot be rolled back, so each one
  * is recorded as an event before it runs. A continuation and a restart never
  * repeat it: the event is the record that it happened.
+ *
+ * An effect no registered executor owns stays recorded and waits for a plugin
+ * that plugs one in. The host asks `owns` before it records anything, so a
+ * window's own `send` is refused at its call instead - with the rule and the
+ * next action - and a `send` in the journal is always one an executor owned when
+ * it was made.
  */
 
 import type {
@@ -89,19 +95,23 @@ export class EffectQueue {
         ...(input.cites ?? []),
       ],
     });
-    this.queue.push({
-      event: event.ref,
-      kind: input.kind,
-      target: input.target,
-      ...(input.to === undefined ? {} : { to: input.to }),
-      content: input.content,
-      ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo as Effect["replyTo"] }),
-      ...(input.cites === undefined ? {} : { cites: input.cites }),
-      madeBy: input.window,
-      time: event.time,
-    });
+    this.queue.push(effectOf(input, event.ref, event.time));
     void this.drain();
     return { event: event.ref, behind: await this.behind(input.window, input.target) };
+  }
+
+  /**
+   * Whether any registered executor owns an effect of this shape.
+   *
+   * The host asks before it records one, so a window hears at its own call
+   * that nothing will carry its effect out - with the rule and the next action
+   * - instead of recording a send that goes nowhere in silence
+   * (docs/coordination.md#effects).
+   */
+  owns(input: EffectInput): boolean {
+    // The event ref and the time are placeholders: an executor answers from the
+    // effect's kind and target, so the question can be asked before one exists.
+    return this.executors.some((executor) => executor.can(effectOf(input, "r0" as EventRef, 0)));
   }
 
   /** How many events on the target the window has not seen yet. */
@@ -243,4 +253,19 @@ export class EffectQueue {
 function blockText(block: Block): string {
   const content = block.fields.content;
   return typeof content === "string" ? content : "";
+}
+
+/** The queued effect one input becomes, once the journal has named it. */
+function effectOf(input: EffectInput, event: EventRef, time: number): Effect {
+  return {
+    event,
+    kind: input.kind,
+    target: input.target,
+    ...(input.to === undefined ? {} : { to: input.to }),
+    content: input.content,
+    ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo as Effect["replyTo"] }),
+    ...(input.cites === undefined ? {} : { cites: input.cites }),
+    madeBy: input.window,
+    time,
+  };
 }

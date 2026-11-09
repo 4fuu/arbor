@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import { SqliteJournal } from "@4fu/arbor-journal-sqlite";
 import { DirectoryWorkspace } from "@4fu/arbor-workspace-dir";
 import type {
@@ -46,11 +46,25 @@ interface Harness {
   refused: readonly { name: string; source: string; rule: string }[];
 }
 
+/**
+ * A temporary directory this file's tests own, removed when they are all done,
+ * so a run leaves nothing behind in the system's temporary directory.
+ */
+const tempRoots: string[] = [];
+
+after(() => Promise.all(tempRoots.map((root) => rm(root, { recursive: true, force: true }))));
+
+async function tempDir(prefix: string): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  tempRoots.push(root);
+  return root;
+}
+
 async function harness(
   options: { notes?: boolean; channels?: boolean; workspace?: boolean; external?: readonly ExternalTool[] } = {},
 ): Promise<Harness> {
   const journal = new SqliteJournal({ path: ":memory:" });
-  const root = await mkdtemp(join(tmpdir(), "arbor-tools-"));
+  const root = await tempDir("arbor-tools-");
   const workspace = new DirectoryWorkspace({ root });
   const ended: Harness["ended"] = [];
   const sent: Harness["sent"] = [];
@@ -693,7 +707,7 @@ describe("tool catalog", () => {
     // Nothing refuses a path outside the window's own directory: the owner asked
     // for no restriction, and the prompt text alone says a directory belongs to
     // another window.
-    const outsideRoot = await mkdtemp(join(tmpdir(), "arbor-tools-outside-"));
+    const outsideRoot = await tempDir("arbor-tools-outside-");
     try {
       const target = join(outsideRoot, "escape.txt");
       const escaped = await run(catalog, "write", { path: target, text: "outside the workspace" });
@@ -977,7 +991,7 @@ describe("tool catalog", () => {
 
   it("stages the environment into a mount that owns its execution environment", async () => {
     const { catalog } = await harness();
-    const directory = await mkdtemp(join(tmpdir(), "arbor-env-"));
+    const directory = await tempDir("arbor-env-");
     await mkdir(join(directory, "skills", "deploy"), { recursive: true });
     await writeFile(join(directory, "skills", "deploy", "SKILL.md"), "# deploy\n", "utf8");
     await writeFile(join(directory, "settings.json"), '{"identity":"arbor"}\n', "utf8");

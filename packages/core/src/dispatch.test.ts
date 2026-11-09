@@ -565,7 +565,13 @@ describe("insertion timing", () => {
 
     // The final reminder arrives, so what waits is dispatched again.
     backend.script([{ usage: { used: 160000, limit: 200000, reserve: 20000 } }]);
-    await arbor.deliver("c1", { kind: "conversation_update", refs: ["r1"], time: 1_700_000_000_000, content: [] });
+    await arbor.deliver("c1", {
+      kind: "conversation_update",
+      role: "input",
+      refs: ["r1"],
+      time: 1_700_000_000_000,
+      content: [],
+    });
     await opened(backend, 2);
 
     assert.deepEqual(await started(journal), ["c1", "c2"]);
@@ -618,6 +624,7 @@ describe("insertion timing", () => {
     await arbor.pause(first.window);
     const delivery = (refs: readonly Ref[], text: string): Delivery => ({
       kind: "notice",
+      role: "input",
       refs,
       time: 1_700_000_000_000,
       content: [{ kind: "data", fields: { content: text } }],
