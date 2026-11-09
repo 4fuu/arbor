@@ -90,11 +90,16 @@ async function opened(backend: ScriptedBackend, count: number): Promise<void> {
   throw new Error(`only ${backend.opened.length} windows opened`);
 }
 
-/** Wait for the host to have armed the retention deadline. */
+/**
+ * Wait for the host to have armed the retention deadline. Retiring a chain
+ * reads the workspace from disk, so the wait is bounded by time, not by a count
+ * of event-loop turns a loaded machine can run through before the I/O returns.
+ */
 async function armed(timers: ManualTimers): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
     if (timers.size > 0) return;
-    await turn();
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error("no retention deadline was armed");
 }
