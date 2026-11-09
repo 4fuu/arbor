@@ -119,6 +119,8 @@ export class Board {
    * Rebuild the lines the journal holds: what a window set and what it
    * declared. The usage and the state are the host's own, so a restart starts
    * them at zero and the model learns the real numbers from the next result.
+   * A line the journal alone gives has no run in progress, so it starts idle;
+   * a live window's record moves it to running when its run reports work.
    */
   rebuild(events: readonly Event[]): void {
     for (const event of events) {
@@ -132,7 +134,7 @@ export class Board {
             doing,
             targets: [...event.targets],
             expects: [],
-            state: "running",
+            state: "idle",
             usage: { used: 0, limit: 0, reserve: 0 },
             startedAt: event.time,
           });

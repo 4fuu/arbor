@@ -11,11 +11,20 @@ in the journal ([journal.md](journal.md)).
    take ([dispatch.md](dispatch.md)), or the host opens one to continue a
    window that ended. The direct tools declared from outside the core are read
    again here, so the window opens with the set as it stands
-   ([tools.md](tools.md#external-tools-that-change)).
+   ([tools.md](tools.md#external-tools-that-change)). The window opens
+   **idle**: opening it starts no run by itself, and a backend that opens a
+   window before it can start a turn - an embedding's window continued before
+   its session is resumed - leaves it idle until one starts.
 2. **Run.** The model works and looks up what it needs. Related inputs enter
    at tool-call boundaries under the insertion rules, and so does a change to
-   the tools the window may call.
-3. **Idle.** When the model ends its run, the window stays open for a while
+   the tools the window may call. The window is **running** from the first
+   event the backend reports of that run - a tool call or result, a stream
+   delta, what the model writes - until the run ends. A usage report says what
+   the run cost and is not by itself a sign the run is still going: it arrives
+   when a message ends, which can be the last thing before the run's end. A
+   window with no run in progress never says running.
+3. **Idle.** When the model ends its run, the window returns to idle and stays
+   open for a while
    (`window.idle_s`, default 300 s, matched to the provider's cache lifetime),
    so a related input can still be inserted into a warm prefix.
 4. **Paused.** An operator holds insertion without ending the window; what
@@ -147,10 +156,11 @@ thresholds in one step hears every tier, in order.
 
 ## Ending and continuing
 
-- `end(handoff?)` ends the run. With unfinished work it takes a handoff -
-  current topics, progress, pending items, agreements, each with refs - and
-  the host opens a continuation window whose first input carries the handoff
-  and the previous window's ref. Details belong in notes and the journal.
+- `end(handoff?)` ends the run. With unfinished work it takes a handoff whose
+  fields are exactly `topics`, `progress`, `pending` and `agreements`, each an
+  array of strings, and optional `refs`, an array of refs. The host opens a
+  continuation window whose first input carries the handoff and the previous
+  window's ref. Details belong in notes and the journal.
   Unfinished work is what another window wrote on a target this one touched
   after it opened, and what the workspace reports as still open in this window
   ([workspaces.md](workspaces.md#open-work)) - the ovnfs workspace's unapplied
@@ -158,6 +168,11 @@ thresholds in one step hears every tier, in order.
   opened for, and the window's own `window_start`, are not open work, so a
   window that has done nothing ends cleanly. A refusal names what is open, so
   the handoff says what it has to carry.
+- **A handoff is never dropped.** A handoff in any other shape - a field
+  named something else, a string where an array belongs, a required field
+  left out - is refused in the core's error shape, rule
+  `end.handoff.invalid`, with the next action naming the four fields. The
+  window stays open, so the model can call `end` again with the right shape.
 - A continuation forks the previous window's workspace
   ([workspaces.md](workspaces.md)) and keeps its watermarks and its
   expectations ([coordination.md](coordination.md#expectations)). Its first
@@ -206,7 +221,11 @@ the next host's `start()` continues what was running.
 
 A host restart is a new host over the same journal. Its `start()` continues
 every window that was still running and every window a `close` stopped, the way
-the hard limit does; effects already made are not made again. A continued window
+the hard limit does; effects already made are not made again. A window another
+window's `window_start` already names as the one it continues is not
+unfinished: only the chain's live end is continued, so recovery opens at most
+one continuation per unfinished window, however many restarts the chain has
+been through. A continued window
 works in the directory its predecessor worked in, which the window chain in the
 journal names ([workspaces.md](workspaces.md#what-the-framework-guarantees)); a
 window that never touched files has none, and its continuation starts a fresh

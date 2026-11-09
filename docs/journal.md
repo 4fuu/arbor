@@ -11,7 +11,7 @@ append-only: nothing is edited, nothing is deleted, nothing merges.
 | `id` | the event's ref, `r902`; its number is the event's place in the one global order |
 | `window` | the window that wrote it, `c41`; empty for an outside event not yet dispatched |
 | `time` | when it was written |
-| `kind` | input, tool call, tool result, send, note revision, window start or end, tool registration, ... |
+| `kind` | input, tool call, tool result, send, note revision, window start, run end or window end, usage, tool registration, ... |
 | `targets` | what it touches (below) |
 | `refs` | the refs it names: what it answers, cites, continues or quotes |
 | `external` | the native id of an outside message, with a short channel prefix |
@@ -32,6 +32,14 @@ service state change, and a `tool_registration` for every direct tool a plugin
 or a backend declared that was not registered, which carries the source, the
 tool and the rule that left it out - recorded on every refresh of that set, not
 only the first one ([tools.md](tools.md#external-tools-that-change)).
+
+The host also records the run inside a window. A `usage` event carries every
+usage report the backend made for the run - `used`, `limit` and `reserve` - and
+a `run_ended` event carries the run's `reason` and the usage it ended at. So a
+reader that rebuilds a window from the journal alone tells a run still going
+from one that ended, and what it cost, without watching the backend's bus. A
+`window_end` stays what it was: the end of the window itself, with its reason
+and whether it carried a handoff.
 
 ## Targets
 

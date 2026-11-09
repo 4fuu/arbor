@@ -477,8 +477,9 @@ describe("plugins", () => {
     );
     // The stream is ephemeral: the deltas are not events. The run records the
     // lifecycle's own events, the call is recorded once - when it is complete,
-    // never once per delta - and the text the turn finished with is the one
-    // thing the deltas leave behind in the record (docs/journal.md).
+    // never once per delta - the run's end with what it cost, and the text the
+    // turn finished with is the one thing the deltas leave behind in the
+    // record (docs/journal.md).
     const recorded = await journal.list({ limit: 200 });
     assert.deepEqual(
       // What the deltas leave in the record, and nothing else. The send's own
@@ -487,9 +488,9 @@ describe("plugins", () => {
       recorded.items
         .map((event) => event.kind)
         .filter((kind) => kind !== "effect_result" && kind !== "delivery"),
-      ["window_start", "tool_call", "send", "tool_result", "assistant"],
+      ["window_start", "tool_call", "send", "tool_result", "assistant", "run_ended"],
     );
-    assert.equal(recorded.items.at(-1)?.body, "完成");
+    assert.equal(recorded.items.findLast((event) => event.kind === "assistant")?.body, "完成");
     assert.ok((recorded.items[1]?.body ?? "").includes("已修好"));
     // The window ran to its end all the same.
     assert.equal(arbor.live()[0]?.state, "idle");

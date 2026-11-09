@@ -325,6 +325,29 @@ describe("one window end to end", () => {
     assert.equal(JSON.parse(ended.items[0]?.body ?? "{}").reason, "model_ended");
   });
 
+  it("journals a run's usage and its end, so a reader needs only the journal", async () => {
+    const { arbor, journal, backend } = await host();
+    const usage = { used: 1234, limit: 200000, reserve: 4000 };
+    backend.script([{ usage }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await settle();
+
+    // What the backend reported on its bus is also in the one record: its
+    // usage, and the end of the run with what it cost (docs/journal.md#events).
+    const reported = await journal.list({ window: record.window, kinds: ["usage"] });
+    assert.equal(reported.items.length, 1);
+    assert.deepEqual(JSON.parse(reported.items[0]?.body ?? "{}"), usage);
+    const completed = await journal.list({ window: record.window, kinds: ["run_ended"] });
+    assert.equal(completed.items.length, 1);
+    assert.deepEqual(JSON.parse(completed.items[0]?.body ?? "{}"), {
+      reason: "model_ended",
+      used: usage.used,
+      limit: usage.limit,
+      reserve: usage.reserve,
+    });
+  });
+
   it("writes through the window's own directory, and records no snapshot id on any event", async () => {
     const { arbor, journal, backend, root } = await host();
     backend.script([
@@ -744,6 +767,37 @@ describe("one window end to end", () => {
     assert.deepEqual(await readdir(root), ["ws1"]);
   });
 
+  it("opens one continuation per unfinished window across two restarts", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+
+    // The first restart continues c1 as c2, the way a `close` stop is recovered.
+    const second = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(second.windowControl());
+    backend.script([{ text: "第二轮" }]);
+    await second.start();
+    await backend.finished();
+    assert.deepEqual(second.live().map((one) => one.window), ["c2"]);
+    await second.close();
+
+    // The second restart sees c1's `host_restart` end, which is not final, but
+    // c2's start already names c1 as the window it continues. Only the chain's
+    // live end, c2, is continued: two windows for one piece of work would mean
+    // two turns on it (docs/windows.md#restart).
+    const third = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(third.windowControl());
+    backend.script([{ text: "第三轮" }]);
+    await third.start();
+    await backend.finished();
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.deepEqual(started.items.map((event) => event.window), ["c1", "c2", "c3"]);
+    assert.deepEqual(third.live().map((one) => one.window), ["c3"]);
+    await third.close();
+  });
+
   it("runs a module call from a script through the same service call", async () => {
     const { arbor, journal, backend } = await host();
     await journal.append({ kind: "input", window: "c1", body: "部署上线流程已确认", targets: ["qq:group:1"] });
@@ -940,6 +994,48 @@ describe("one window end to end", () => {
     await backend.finished();
     await settle();
     assert.equal(seen.length, 2);
+  });
+
+  it("opens a continuation idle when its backend starts no turn, and follows its run", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    const first = await arbor.open(task);
+    await backend.finished();
+    assert.equal(arbor.live()[0]?.state, "idle");
+
+    // The continuation opens, and its backend starts no turn yet: the window
+    // has no run in progress, so it must not say running
+    // (docs/windows.md#lifecycle).
+    backend.script([{ idle: true }]);
+    await arbor.services.endWindow(first.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: ["重跑"],
+      agreements: ["先修测试"],
+      refs: [],
+    });
+    const until = async (predicate: () => boolean): Promise<void> => {
+      for (let attempt = 0; attempt < 200; attempt += 1) {
+        if (predicate()) return;
+        await turn();
+      }
+      assert.fail("the window never reached the expected state");
+    };
+    await until(() => arbor.live().some((one) => one.window === "c2"));
+    assert.equal(arbor.live().find((one) => one.window === "c2")?.state, "idle");
+    assert.equal(arbor.boardLines().find((line) => line.window === "c2")?.state, "idle");
+
+    // The run starts: its first event makes the window running, and the run's
+    // end returns it to idle (docs/windows.md#lifecycle).
+    const session = backend.running().find((one) => one.window === "c2");
+    assert.ok(session !== undefined);
+    session.push({ kind: "text_delta", delta: "开始" });
+    await until(() => arbor.live().find((one) => one.window === "c2")?.state === "running");
+    session.runEnded();
+    await until(() => arbor.live().find((one) => one.window === "c2")?.state === "idle");
+    const ended = await journal.list({ window: "c2", kinds: ["run_ended"] });
+    assert.equal(ended.items.length, 1);
+    await arbor.close();
   });
 
   it("never starts a turn for a context delivery, and starts one for an input", async () => {
@@ -1176,7 +1272,74 @@ describe("one window end to end", () => {
     const result = await arbor.services.endWindow(record.window);
     assert.equal(result.ok, false);
     assert.equal(result.error?.rule, "end.handoff.required");
-    assert.ok(result.error?.message.includes("当前话题"));
+    assert.ok(result.error?.message.includes("topics"));
+  });
+
+  it("refuses a malformed handoff, keeps the window open, and takes the retry", async () => {
+    const { arbor, journal, backend } = await host();
+    // The mistake the model made: the four arrays written under other names.
+    backend.script([
+      {
+        tool: "end",
+        args: { handoff: { topic: "CI", todos: ["重跑"], conventions: ["先修测试"] } },
+      },
+      { text: "交接被拒绝，窗口还在" },
+    ]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    await settle();
+
+    // The refusal names the rule and the exact fields, and the window did not
+    // end: nothing was dropped (docs/windows.md#ending-and-continuing).
+    const results = await journal.list({ window: record.window, kinds: ["tool_result"] });
+    assert.equal(results.items.length, 1);
+    const refusal = results.items[0]?.body ?? "";
+    assert.ok(refusal.includes("end.handoff.invalid"));
+    for (const field of ["topics", "progress", "pending", "agreements"]) assert.ok(refusal.includes(field));
+    assert.equal((await journal.list({ window: record.window, kinds: ["window_end"] })).items.length, 0);
+    assert.equal(arbor.live().find((one) => one.window === record.window)?.state, "idle");
+
+    // The model reads the same names in the tool's declaration.
+    const end = arbor.catalog.tools().find((tool) => tool.name === "end");
+    assert.ok(end !== undefined);
+    for (const field of ["topics", "progress", "pending", "agreements"]) {
+      assert.ok(end.description.includes(field));
+      assert.ok((end.parameters.handoff?.description ?? "").includes(field));
+    }
+
+    // The same window can retry, and its continuation carries the handoff.
+    backend.script([
+      {
+        tool: "end",
+        args: {
+          handoff: {
+            topics: ["CI"],
+            progress: ["已定位"],
+            pending: ["重跑"],
+            agreements: ["先修测试"],
+            refs: [],
+          },
+        },
+      },
+      { text: "继续" },
+    ]);
+    await arbor.deliver(
+      record.window,
+      {
+        kind: "inserted_task",
+        role: "input",
+        refs: ["t2"],
+        time: 1700000000000,
+        content: [{ kind: "data", fields: { content: "继续" } }],
+      },
+      { targets: ["gh:pr:57"] },
+    );
+    await backend.finished();
+    await record.running;
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.deepEqual(started.items.map((event) => event.window), ["c1", "c2"]);
+    assert.ok(started.items[1]?.refs.includes("c1"));
+    assert.ok(backend.opened[1]?.firstInput?.includes("当前话题：CI"));
   });
 
   it("ends a fresh window cleanly, because its own opening is not open work", async () => {

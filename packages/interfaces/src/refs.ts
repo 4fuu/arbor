@@ -72,6 +72,10 @@ export type EventKind =
   | "note_revision"
   | "window_start"
   | "window_end"
+  /** The end of one model run, with what it cost (docs/journal.md#events). */
+  | "run_ended"
+  /** One usage report a run made: used, limit and reserve (docs/journal.md#events). */
+  | "usage"
   | "delivery"
   | "environment_revision"
   | "service_state"

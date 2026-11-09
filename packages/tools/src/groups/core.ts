@@ -88,11 +88,33 @@ export class CoreToolGroup implements ToolGroup {
    * `end` with unfinished work needs a handoff: current topics, progress,
    * pending items and agreements. The host knows what is open and names it; the
    * tool does not guess.
+   *
+   * A handoff the model wrote in another shape is refused rather than read as
+   * none: dropping it would end the window with the work it carries lost
+   * (docs/windows.md#ending-and-continuing). The window stays open, so the
+   * model can call `end` again with the four fields this tool's description
+   * names.
    */
   private async end(request: ToolCall, window: WindowRef): Promise<ToolResult> {
     const table = this.services.table;
     const handoff = handoffOf(request.args.handoff);
-    const result = await this.services.endWindow(window, handoff);
+    if (request.args.handoff !== undefined && handoff === undefined) {
+      // The core's error shape as a tool result: the rule, one line and the
+      // next action, which here names the exact field names
+      // (packages/errors, docs/prompting.md#rules-surface-where-they-bite).
+      return refused("end.handoff.invalid", table, "end.handoff.invalid");
+    }
+    // A well-formed handoff with every part empty carries nothing, so it is no
+    // handoff: the window ends as it would with the argument left out, and the
+    // host still refuses with open work that has nothing to carry it.
+    const empty =
+      handoff !== undefined &&
+      handoff.topics.length === 0 &&
+      handoff.progress.length === 0 &&
+      handoff.pending.length === 0 &&
+      handoff.agreements.length === 0 &&
+      handoff.refs.length === 0;
+    const result = await this.services.endWindow(window, empty ? undefined : handoff);
     if (!result.ok) return { ...result, callId: request.callId };
     return { ...result, callId: request.callId, content: textOf(table, "result.ended", { window }) };
   }
@@ -145,26 +167,41 @@ export class CoreToolGroup implements ToolGroup {
   }
 }
 
-/** The four parts of a handoff, each with its refs. */
+/**
+ * The four parts of a handoff, each with its refs.
+ *
+ * The shape is exact because a handoff is the one thing a window carries into
+ * the next one: the fields are `topics`, `progress`, `pending`, `agreements`
+ * and the optional `refs`, each a string array. A value in any other shape -
+ * a misspelled field, a string where an array belongs, or a required field
+ * left out - answers `undefined`, and `end` refuses it instead of dropping it
+ * (docs/windows.md#ending-and-continuing). A well-formed handoff whose parts
+ * are all empty is returned as it stands; `end` reads it as no handoff,
+ * because it carries nothing.
+ */
 export function handoffOf(value: unknown): Handoff | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
-  const parts = (key: string): string[] =>
-    Array.isArray(raw[key]) ? raw[key].filter((item): item is string => typeof item === "string") : [];
-  const refs = Array.isArray(raw.refs) ? raw.refs.filter((item): item is Ref => typeof item === "string") : [];
-  const handoff: Handoff = {
-    topics: parts("topics"),
-    progress: parts("progress"),
-    pending: parts("pending"),
-    agreements: parts("agreements"),
-    refs,
+  const parts = (key: string): string[] | undefined => {
+    const part = raw[key];
+    if (!Array.isArray(part) || !part.every((item) => typeof item === "string")) return undefined;
+    return [...part];
   };
-  const empty =
-    handoff.topics.length === 0 &&
-    handoff.progress.length === 0 &&
-    handoff.pending.length === 0 &&
-    handoff.agreements.length === 0;
-  return empty ? undefined : handoff;
+  const topics = parts("topics");
+  const progress = parts("progress");
+  const pending = parts("pending");
+  const agreements = parts("agreements");
+  const refs = raw.refs === undefined ? ([] as Ref[]) : (parts("refs") as Ref[] | undefined);
+  if (
+    topics === undefined ||
+    progress === undefined ||
+    pending === undefined ||
+    agreements === undefined ||
+    refs === undefined
+  ) {
+    return undefined;
+  }
+  return { topics, progress, pending, agreements, refs };
 }
 
 function stringArg(args: Record<string, unknown>, name: string): string {

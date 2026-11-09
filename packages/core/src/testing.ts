@@ -41,6 +41,12 @@ export type Step =
   | { textDelta: string }
   | { toolCallDelta: { name: string; callId: string; args: Record<string, unknown> } }
   /**
+   * The run starts no turn: the window stays open with no run in progress, the
+   * way a backend that opens a window before its session is resumed does. The
+   * test drives the run's later events through the session itself.
+   */
+  | { idle: true }
+  /**
    * The run ends the way a failure ends one: the window's own outcome carries
    * the reason, and the host settles it like any other end.
    */
@@ -338,6 +344,7 @@ export class ScriptedBackend implements AgentBackend {
     this.steps = [];
     for (const step of steps) {
       if (session.state === "ended") return;
+      if ("idle" in step) return;
       if ("tool" in step) {
         const call: ToolCall = {
           name: step.tool,

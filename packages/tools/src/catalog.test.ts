@@ -450,7 +450,21 @@ describe("tool catalog", () => {
     const result = await run(catalog, "end", {});
     assert.equal(result.ok, false);
     assert.equal(result.error?.rule, "end.handoff.required");
-    assert.ok(result.error?.message.includes("当前话题"));
+    assert.ok(result.error?.message.includes("topics"));
+    assert.equal(ended.length, 0);
+  });
+
+  it("refuses a handoff whose fields are not the four it requires", async () => {
+    const { catalog, ended } = await harness();
+    const result = await run(catalog, "end", {
+      handoff: { topic: "部署", todos: ["等待 CI"], conventions: ["先灰度"] },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.rule, "end.handoff.invalid");
+    for (const field of ["topics", "progress", "pending", "agreements"]) {
+      assert.ok(result.error?.message.includes(field));
+    }
+    assert.ok((result.error?.nextAction ?? "").includes("topics"));
     assert.equal(ended.length, 0);
   });
 
@@ -475,6 +489,11 @@ describe("tool catalog", () => {
     assert.deepEqual(handoff?.topics, ["a"]);
     assert.equal(handoffOf({}), undefined);
     assert.equal(handoffOf("nope"), undefined);
+    // A required part left out, or a part of the wrong type, is not a handoff.
+    assert.equal(handoffOf({ topics: ["a"] }), undefined);
+    assert.equal(handoffOf({ topic: "a", todos: [], conventions: [] }), undefined);
+    assert.equal(handoffOf({ topics: ["a"], progress: "p", pending: [], agreements: [] }), undefined);
+    assert.equal(handoffOf({ topics: ["a"], progress: [], pending: [], agreements: [], refs: "r1" }), undefined);
   });
 
   it("answers tool_search with the modules and one function's instructions", async () => {

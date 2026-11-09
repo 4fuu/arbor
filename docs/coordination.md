@@ -15,7 +15,7 @@ The host keeps one line per live window, from the journal:
 | doing | its first task's title, until the model sets a line with `board.set` |
 | targets | the targets it has touched |
 | expects | what it expects to be routed to it, set by the model with `board.expect` ([below](#expectations)) |
-| state | running or idle, and its usage |
+| state | running while a run is in progress, idle when it has none, and its usage |
 
 A new window's first input carries the board lines related to its task.
 `board.list` shows the rest.

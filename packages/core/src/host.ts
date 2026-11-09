@@ -942,8 +942,20 @@ export class Arbor {
         .filter((event) => event.window !== null && readString(event, "reason") !== "host_restart")
         .map((event) => event.window as WindowRef),
     );
+    // A window another window already continues is not unfinished: the
+    // continuation is the chain's live end, and continuing the window it
+    // continues as well would open two windows for one piece of work. A
+    // `close` stopped window's end is `host_restart`, which is not final, so
+    // this is what keeps a second restart from continuing it again
+    // (docs/windows.md#restart).
+    const continued = new Set<WindowRef>();
     for (const event of started.items) {
-      if (event.window === null || finished.has(event.window)) continue;
+      if (event.window === null) continue;
+      const previous = continuedWindow(event.body);
+      if (previous !== undefined) continued.add(previous);
+    }
+    for (const event of started.items) {
+      if (event.window === null || finished.has(event.window) || continued.has(event.window)) continue;
       // What the embedding said this window serves rides on its own start
       // event, so a restart hands it to the continuation it opens
       // (docs/windows.md#what-a-window-serves).
@@ -958,12 +970,6 @@ export class Arbor {
     // the journal says when the chain's last window ended, so a restart in the
     // middle of the period still reclaims on time
     // (docs/workspaces.md#lifecycle).
-    const continued = new Set<WindowRef>();
-    for (const event of started.items) {
-      if (event.window === null) continue;
-      const previous = continuedWindow(event.body);
-      if (previous !== undefined) continued.add(previous);
-    }
     for (const event of ended.items) {
       // A window another window continues is not its chain's last, and one a
       // `close` stopped comes back as the continuation this start opened.
@@ -1747,6 +1753,22 @@ export class Arbor {
     try {
       for await (const event of session.events()) {
         this.arm(record);
+        // A run is in progress while its session reports what it is doing. A
+        // window opens idle and returns to idle when the run ends, so a window
+        // with no run - a continuation whose backend has not started a turn,
+        // for instance - never claims to be running
+        // (docs/windows.md#lifecycle). What the host itself steered in, the
+        // run's own end and a usage report are not news that a run is going:
+        // usage is reported when a message ends, which can be the last thing
+        // before the run's end.
+        if (
+          event.kind !== "steered" &&
+          event.kind !== "run_ended" &&
+          event.kind !== "ended" &&
+          event.kind !== "usage"
+        ) {
+          this.markRunning(record);
+        }
         switch (event.kind) {
           case "text_delta":
           case "tool_call_delta":
@@ -1756,7 +1778,20 @@ export class Arbor {
             break;
           case "usage":
             record.usage = event.usage;
-            this.board.update(record.window, { usage: event.usage, state: "running" });
+            this.board.update(record.window, { usage: event.usage });
+            // The usage report is the record of what the run cost so far, so a
+            // reader that rebuilds a window from the journal alone knows it
+            // without watching the backend's bus (docs/journal.md#events).
+            await this.journal.append({
+              kind: "usage",
+              window: record.window,
+              body: hostBody({
+                used: event.usage.used,
+                limit: event.usage.limit,
+                reserve: event.usage.reserve,
+              }),
+              targets: [],
+            });
             // A plugin's prompt section that changed is learned the way an
             // environment change is: the revision is asked for here, once per
             // step, and the delta goes in at the next tool-call boundary. The
@@ -1777,8 +1812,24 @@ export class Arbor {
             await this.recordText(record.window, event.event);
             break;
           case "run_ended":
-            record.state = record.ending ? "running" : "idle";
-            this.board.update(record.window, { state: record.state });
+            // The run ended and no run is in progress now, whether or not the
+            // model asked to end the window: the state says so before the host
+            // acts on the end, and a subsequent turn starts from idle.
+            this.markIdle(record);
+            // The end is the record of the run, with what it cost, so a reader
+            // that rebuilds state from the journal tells a finished run from
+            // one still going (docs/journal.md#events).
+            await this.journal.append({
+              kind: "run_ended",
+              window: record.window,
+              body: hostBody({
+                reason: event.outcome.reason,
+                used: event.outcome.usage.used,
+                limit: event.outcome.usage.limit,
+                reserve: event.outcome.usage.reserve,
+              }),
+              targets: [],
+            });
             if (record.ending && record.session !== undefined) {
               await record.session.end(record.handoff, "model_ended");
             }
@@ -2231,6 +2282,29 @@ export class Arbor {
   // ---- the idle window ----------------------------------------------------
 
   /**
+   * The window's run is in progress: its session reported something a turn does
+   * - a delta, a tool call or result, what the model wrote. A window opens idle
+   * and a continuation opens idle too, because opening a window starts no model
+   * turn by itself; the run's own events make it running
+   * (docs/windows.md#lifecycle). A usage report is not one of them: it can be
+   * the last thing a run reports before it ends.
+   */
+  private markRunning(record: WindowRecord): void {
+    if (record.state === "running" || record.state === "ended") return;
+    record.state = "running";
+    // A paused window's line says paused, not running: insertion is what pause
+    // holds, and resume puts the line back to the run's own state.
+    if (!record.paused) this.board.update(record.window, { state: "running" });
+  }
+
+  /** The run ended; the window stays open for a related input. */
+  private markIdle(record: WindowRecord): void {
+    if (record.state === "ended") return;
+    record.state = "idle";
+    if (!record.paused) this.board.update(record.window, { state: "idle" });
+  }
+
+  /**
    * Keep an ended run open for a related input (docs/windows.md#lifecycle). The
    * timer is re-armed on every event, so a window that is working stays open and
    * one that has gone quiet ends.
@@ -2632,6 +2706,9 @@ export class Arbor {
   /** Record one tool call before it runs, at its own event. */
   recordToolCall = async (window: WindowRef, call: ToolCall): Promise<EventRef | undefined> => {
     const record = this.windows.get(window);
+    // A tool call is a turn at work: the window is running from here on, even
+    // if the backend runs the call after a wait (docs/windows.md#lifecycle).
+    if (record !== undefined) this.markRunning(record);
     const event = await this.journal.append({
       kind: "tool_call",
       window,
@@ -2648,6 +2725,10 @@ export class Arbor {
    */
   runToolCall = async (window: WindowRef, call: ToolCall, at?: EventRef): Promise<ToolResult> => {
     const record = this.windows.get(window);
+    // A tool call is a turn at work, so the window is running from here on:
+    // this is also what makes `end` wait for the run instead of ending a window
+    // whose first event has not arrived yet (docs/windows.md#lifecycle).
+    if (record !== undefined) this.markRunning(record);
     const mount = record?.mount;
     const context: CallContext = callContext(window, {
       ...(record === undefined ? {} : { task: record.task }),
@@ -2852,7 +2933,10 @@ export class Arbor {
       doing,
       targets: [...targets],
       expects: [],
-      state: "running",
+      // A window opens with no run in progress: the run makes it running from
+      // its first event, and its end returns it to idle
+      // (docs/windows.md#lifecycle).
+      state: "idle",
       usage: { used: 0, limit: this.contextTokens(), reserve: this.reserveTokens() },
       task,
       startedAt: this.clock(),
@@ -2860,7 +2944,7 @@ export class Arbor {
     const record: WindowRecord = {
       window,
       task,
-      state: "running",
+      state: "idle",
       startedAt: entry.startedAt,
       usage: entry.usage,
       remindersSent: 0,

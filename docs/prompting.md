@@ -193,9 +193,12 @@ is data where it is delivered ([below](#data-and-instructions)).
   the same error again and again, and then it replaces the error's wording
   instead of adding to it.
 - The one exception stated up front: `end` with unfinished work needs a
-  handoff, and its description names the four parts - current topics,
-  progress, pending items, agreements - because the handoff is the cost of the
-  decision to end.
+  handoff, and its description and its `handoff` parameter name the exact
+  fields - `topics`, `progress`, `pending` and `agreements`, each a string
+  array, and optional `refs` - because the handoff is the cost of the
+  decision to end. A handoff in any other shape is refused with
+  `end.handoff.invalid`, which names the same fields, and the window stays
+  open.
 - A limit that shapes a result without refusing - a page size, a row cap - is
   reported by the result every time. A rule the host enforces without a
   refusal, like the context budget, is taught by the layer that reports it,

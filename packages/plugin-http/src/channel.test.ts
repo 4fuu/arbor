@@ -334,10 +334,11 @@ describe("the http channel plugin", () => {
       const last = results.items.at(-1);
       assert.equal(last?.external, sent?.external);
       // The result is one fixed line from the text table, so the window that
-      // sent it reads the same words whatever the channel answered.
-      assert.equal(last?.body, "效果 r8 已执行。");
-      // The send is recorded as an effect on the conversation, not on a window.
+      // sent it reads the same words whatever the channel answered. It names
+      // the send's own ref, which the journal assigned.
       const sends = await harness.journal.list({ kinds: ["send"] });
+      assert.equal(last?.body, `效果 ${sends.items.at(-1)?.ref} 已执行。`);
+      // The send is recorded as an effect on the conversation, not on a window.
       assert.deepEqual(sends.items.at(-1)?.targets, ["http:demo"]);
 
       // The page reads both directions of the conversation.
