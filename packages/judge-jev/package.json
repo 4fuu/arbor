@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-judge-jev",
-  "version": "2026.1109.0",
+  "version": "2026.1109.1",
   "private": true,
   "type": "module",
   "description": "The default Judge: Jev, TypeSafe AI's System One classifier, answering filter, route, model tier, notice, broadcast and active set.",
