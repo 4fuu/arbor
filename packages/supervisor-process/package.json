@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-supervisor-process",
-  "version": "2026.1107.1",
+  "version": "2026.1109.0",
   "private": true,
   "type": "module",
   "description": "The default Supervisor: one host process per service, restarted with backoff after a crash, with logs and state changes reported to the host.",

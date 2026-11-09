@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-prompt",
-  "version": "2026.1107.1",
+  "version": "2026.1109.0",
   "private": true,
   "type": "module",
   "description": "Typed prompt blocks, the one deterministic renderer, the replaceable Chinese text table and the system prompt sections.",
