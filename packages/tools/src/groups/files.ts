@@ -2,9 +2,14 @@
  * The window's workspace: `bash`, `bash_output`, `bash_stop`, `read`, `write`
  * and `edit` (docs/tools.md#direct-tools, docs/workspaces.md).
  *
+ * The shell tool is named for the shell the host gives it: `bash` on POSIX,
+ * `pwsh` on Windows, with `pwsh_output` and `pwsh_stop` beside it. Everything
+ * else about it is one behaviour, so the wait window, the background job and
+ * the result cut do not fork by platform.
+ *
  * A plain command is a direct call, a chain is a script. One behaviour per
- * tool: a command that outlives `bash`'s wait window is followed with
- * `bash_output` and stopped with `bash_stop`.
+ * tool: a command that outlives the shell tool's wait window is followed with
+ * its output tool and stopped with its stop tool.
  *
  * Everything reaches the workspace through the `Workspace` interface, never the
  * host filesystem directly: a capability the implementation owns - `exec`,
@@ -13,11 +18,13 @@
  * environment has a `path` that is not a host path and an `exec` that is the
  * only way to run a command there; a plain-directory workspace owns no
  * execution environment, so the caller runs the command itself. Either way a
- * command that outlives `bash`'s wait window is followed with `bash_output` and
- * stopped with `bash_stop`, through the host's own process path.
+ * command that outlives the shell tool's wait window is followed with its
+ * output tool and stopped with its stop tool, through the host's own process
+ * path.
  */
 
 import { spawn } from "node:child_process";
+import { lstatSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import type {
@@ -41,6 +48,106 @@ const BASH_WAIT_MS = 20000;
 
 /** How much one background job keeps in memory. */
 const JOB_BUFFER = 200000;
+
+/**
+ * PowerShell's argv preamble for one command.
+ *
+ * Windows PowerShell 5.1 writes its redirected output in the console code page,
+ * which is not UTF-8; pwsh 7 already defaults to UTF-8. Setting both encodings
+ * on the first line makes what Node reads back the same on either executable,
+ * and the separators keep PowerShell's error line numbers accurate. This is the
+ * same preamble `@deepseek-ai/dsh-pwsh-local` writes for DSH's own `pwsh` tool.
+ */
+const POWERSHELL_PREAMBLE =
+  "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+  + "$OutputEncoding = [System.Text.UTF8Encoding]::new($false); ";
+
+/**
+ * The shell a window's command runs in: `/bin/sh -c` on POSIX, PowerShell on
+ * Windows.
+ *
+ * The tool has to be named for the shell the model actually gets. A Windows
+ * window sees `pwsh` / `pwsh_output` / `pwsh_stop`, the same names DSH's own
+ * preset gives its Windows shell tool, and a POSIX window keeps `bash` /
+ * `bash_output` / `bash_stop`. Everything else about the tool - the wait window,
+ * the background job, the output cut, the environment and the secret scrub - is
+ * one behaviour and stays in this file.
+ */
+export interface Shell {
+  /** The direct tool that runs one command. */
+  readonly run: string;
+  /** The direct tool that reads a background job's new output. */
+  readonly output: string;
+  /** The direct tool that stops a background job. */
+  readonly stop: string;
+  /** The executable to spawn. */
+  readonly executable: string;
+  /** The argv after the executable, for one command. */
+  args(command: string): readonly string[];
+}
+
+/**
+ * The PowerShell executable a Windows command runs through.
+ *
+ * The order is the one DSH's own `pwsh` tool resolves: the PowerShell 7 install
+ * first, then a `pwsh.exe` on PATH (a Microsoft Store install), then Windows
+ * PowerShell 5.1. `pwsh` is the last answer so a PATH entry Node can resolve but
+ * `lstat` cannot still gets a chance. `lstat` sees a Store execution alias where
+ * `stat` hits the target's ACL, which is why it is the probe DSH uses too.
+ */
+function powershellExecutable(env: NodeJS.ProcessEnv): string {
+  const programFiles = env["ProgramFiles"] ?? "C:\\Program Files";
+  const systemRoot = env["SystemRoot"] ?? "C:\\Windows";
+  const candidates = [join(programFiles, "PowerShell", "7", "pwsh.exe")];
+  for (const entry of (env["PATH"] ?? "").split(";")) {
+    const trimmed = entry.trim().replace(/^"|"$/g, "");
+    if (trimmed !== "") candidates.push(join(trimmed, "pwsh.exe"));
+  }
+  candidates.push(join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
+  for (const candidate of candidates) {
+    try {
+      const stat = lstatSync(candidate);
+      if (stat.isFile() || stat.isSymbolicLink()) return candidate;
+    } catch {
+      // Not this candidate; try the next one.
+    }
+  }
+  return "pwsh";
+}
+
+/**
+ * The shell for one host platform.
+ *
+ * `platform` and `env` are parameters so the Windows resolution is a pure
+ * function of its inputs and can be tested on a POSIX host.
+ */
+export function shellFor(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): Shell {
+  if (platform !== "win32") {
+    return {
+      run: "bash",
+      output: "bash_output",
+      stop: "bash_stop",
+      executable: "/bin/sh",
+      args: (command) => ["-c", command],
+    };
+  }
+  return {
+    run: "pwsh",
+    output: "pwsh_output",
+    stop: "pwsh_stop",
+    executable: powershellExecutable(env),
+    args: (command) => [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `${POWERSHELL_PREAMBLE}${command}`,
+    ],
+  };
+}
 
 /**
  * The environment one command runs with: the host's environment, the window's
@@ -67,22 +174,24 @@ export class FileToolGroup implements ToolGroup {
   readonly id = "files";
 
   private readonly services: import("../host.ts").ToolServices;
+  private readonly shell: Shell;
   private readonly jobs = new Map<string, Job>();
   private nextJob = 1;
 
-  constructor(services: import("../host.ts").ToolServices) {
+  constructor(services: import("../host.ts").ToolServices, shell: Shell = shellFor()) {
     this.services = services;
+    this.shell = shell;
   }
 
   tools(): readonly DirectToolSpec[] {
     const table = this.services.table;
     return [
-      toolSpec(table, "bash", {
+      toolSpec(table, this.shell.run, {
         command: { type: "string", required: true },
         timeout: { type: "number" },
       }),
-      toolSpec(table, "bash_output", { job: { type: "string", required: true } }),
-      toolSpec(table, "bash_stop", { job: { type: "string", required: true } }),
+      toolSpec(table, this.shell.output, { job: { type: "string", required: true } }),
+      toolSpec(table, this.shell.stop, { job: { type: "string", required: true } }),
       toolSpec(table, "read", {
         path: { type: "string", required: true },
         offset: { type: "number" },
@@ -106,11 +215,11 @@ export class FileToolGroup implements ToolGroup {
 
   async call(request: ToolCall, context: CallContext): Promise<ToolResult> {
     switch (request.name) {
-      case "bash":
+      case this.shell.run:
         return this.bash(request, context.window, context);
-      case "bash_output":
+      case this.shell.output:
         return this.bashOutput(request);
-      case "bash_stop":
+      case this.shell.stop:
         return this.bashStop(request);
       case "read":
         return this.read(request, context.window);
@@ -172,7 +281,7 @@ export class FileToolGroup implements ToolGroup {
     // result line says the window is not woken when it ends.
     const content = job.done
       ? job.output
-      : `${job.output}\n${textOf(table, "result.bash.started", { job: job.id, ms: wait })}`;
+      : `${job.output}\n${textOf(table, "result.bash.started", { job: job.id, ms: wait, output: this.shell.output, stop: this.shell.stop })}`;
     return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
   }
 
@@ -189,7 +298,7 @@ export class FileToolGroup implements ToolGroup {
     if (job === undefined) return this.jobMissing(request, id);
     const content = job.done
       ? `${job.output}\n${textOf(table, "result.bash.stopped", { job: id })}`
-      : `${job.output}\n${textOf(table, "result.bash.running", { job: id })}`;
+      : `${job.output}\n${textOf(table, "result.bash.running", { job: id, output: this.shell.output })}`;
     return { callId: request.callId, ok: job.done ? job.code === 0 : true, content };
   }
 
@@ -294,7 +403,7 @@ export class FileToolGroup implements ToolGroup {
     // implementation asks for - the ovnfs workspace's `ARBOR_WINDOW` and git
     // hook path. The extra variables reach no MCP server and no service
     // (docs/environment.md#what-a-subprocess-gets).
-    const child = spawn("/bin/sh", ["-c", command], { cwd, env: bashEnvironment(cwd, extraEnv) });
+    const child = spawn(this.shell.executable, this.shell.args(command), { cwd, env: bashEnvironment(cwd, extraEnv) });
     let end = (): void => {};
     const job: Job = {
       id,
@@ -335,7 +444,11 @@ export class FileToolGroup implements ToolGroup {
   }
 
   private jobMissing(request: ToolCall, id: string): ToolResult {
-    return this.refusal(request, "bash.job.not_found", "bash.notfound", { job: id });
+    return this.refusal(request, `${this.shell.run}.job.not_found`, "bash.notfound", {
+      job: id,
+      run: this.shell.run,
+      output: this.shell.output,
+    });
   }
 
   private missing(request: ToolCall, key: string, path: string): ToolResult {

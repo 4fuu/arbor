@@ -28,7 +28,7 @@ MCP 服务器是一种能力：安装之后，它的函数在 `code_exec` 里像
 ## 自测
 
 1. 在本窗口工作区里写好服务器和配置。
-2. 先运行它：`bash node server.js`，查看它有没有在等待输入、有没有报错。
+2. 先运行它：Unix 上用 `bash node server.js`，Windows 上用 `pwsh -Command "node server.js"`；查看它有没有在等待输入、有没有报错。
 3. 用 `tool_search("<name>")` 查询它的函数，用 `tool_describe("<name>.<fn>")` 查看签名。
 4. 在 `code_exec` 里调用一次，确认返回的是文本。
 

@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,6 +38,29 @@ jobs:
         run: pnpm build
       - name: Pack every package
         run: node scripts/publish.mjs
+
+  windows-shell:
+    name: Windows shell tool
+    runs-on: windows-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pnpm
+        uses: pnpm/action-setup@9bbca1e9dc2902adb87e8780fe5c98796985a62d # v6.1.1
+        with:
+          version: 12
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      # The rest of the tools suite uses POSIX commands, so this job runs only
+      # the shell test: the same quick command, background job and stop path the
+      # catalog uses, through PowerShell on this host.
+      - name: Run the shell tool
+        run: pnpm --filter @4fu/arbor-tools exec node --test src/shell.test.ts
 
   ovnfs:
     name: ovnfs real tests (FUSE)

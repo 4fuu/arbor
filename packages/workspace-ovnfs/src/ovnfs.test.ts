@@ -228,13 +228,13 @@ describe("ovnfs workspace", () => {
     const { workspace, source } = await fixture();
     const section = workspace.promptSection();
     assert.equal(section.tag, "workspace");
-    assert.equal(section.text?.["workspace.method.shared"], "共享文件夹 {source}：所有窗口都从这里读取，bash 默认也在这里运行；它可以放多个项目和多个 git 仓库。");
+    assert.equal(section.text?.["workspace.method.shared"], "共享文件夹 {source}：所有窗口都从这里读取，命令工具默认也在这里运行；它可以放多个项目和多个 git 仓库。");
     const content = await section.content();
     assert.equal(content[0]?.kind, "workspace_method");
     assert.equal(content[0]?.fields.source, source);
   });
 
-  it("gives bash the window ref and the git hook path, pointing at this package's hooks", async () => {
+  it("gives the shell tool the window ref and the git hook path, pointing at this package's hooks", async () => {
     const { workspace } = await fixture();
     const env = workspace.bashEnv("c42");
     assert.equal(env.ARBOR_WINDOW, "c42");

@@ -35,6 +35,7 @@ export {
 export { CoreToolGroup, handoffOf } from "./groups/core.ts";
 export { ExternalToolGroup } from "./groups/external.ts";
 export { bashEnvironment } from "./groups/files.ts";
+export { shellFor, type Shell } from "./groups/files.ts";
 export { EnvToolGroup } from "./groups/env.ts";
 export { NoteToolGroup } from "./groups/notes.ts";
 export { FileToolGroup } from "./groups/files.ts";

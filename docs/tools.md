@@ -15,7 +15,7 @@ service layer ([architecture.md](architecture.md#layers)).
 | `end(handoff?)` | end the run; a plain end when this window's work is settled, a handoff when there is something to hand over, with the fields `topics`, `progress`, `pending`, `agreements` and optional `refs`; a handoff below `window.handoffFloor` with nothing unfinished, or in any other shape, is refused with the rule and the window stays open ([windows.md](windows.md#ending-and-continuing)) |
 | `reload(install?, remove?)` | change the environment and broadcast the delta ([environment.md](environment.md#changing-the-environment)) |
 | `search(query, scope?)` | the journal, notes and the board in one query |
-| `bash`, `bash_output`, `bash_stop`, `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
+| `bash`, `bash_output`, `bash_stop` on POSIX; `pwsh`, `pwsh_output`, `pwsh_stop` on Windows; `read`, `write`, `edit` | the window's workspace ([workspaces.md](workspaces.md)) |
 | `code_exec`, `tool_search` | the entry points to the modules |
 
 Plugins add no module of their own; their abilities are MCP servers
@@ -135,8 +135,10 @@ it.
   tool a plugin or a backend declared is not one of arbor's, so a script may call
   it ([above](#external-tools)).
 - **A plain command is a direct call, a chain is a script.**
-- **One behaviour per tool.** A command that outlives `bash`'s wait window is
-  followed with `bash_output` and stopped with `bash_stop`.
+- **One behaviour per tool, named for the shell it runs.** A command that
+  outlives the shell tool's wait window is followed with its output tool and
+  stopped with its stop tool (`bash_output`/`bash_stop` on POSIX,
+  `pwsh_output`/`pwsh_stop` on Windows).
 - **Same path.** Calls from a script go through the same hooks as direct
   calls, so anchors, watermarks, quotas, validation and logging behave the
   same.

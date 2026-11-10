@@ -17,7 +17,7 @@ import type { TextTable } from "@4fu/arbor-interfaces";
 /** The prompt section's method: one short line per point, `{source}` filled in. */
 export const ovnfsText: TextTable = {
   // ---- the prompt section the implementation contributes -----------------
-  "workspace.method.shared": "共享文件夹 {source}：所有窗口都从这里读取，bash 默认也在这里运行；它可以放多个项目和多个 git 仓库。",
+  "workspace.method.shared": "共享文件夹 {source}：所有窗口都从这里读取，命令工具默认也在这里运行；它可以放多个项目和多个 git 仓库。",
   "workspace.method.readonly": "共享文件夹按约定只读：不要直接修改它，改动请创建检出；直接写入会写到其他窗口的文件。",
   "workspace.method.open": "要修改某个项目就为它创建一个检出（ovnfs checkout）：workspace.checkout(\"<本窗口引用>-<简称>\", \"<项目子目录>\")，如 c41-app；检出名只用小写字母、数字、.、_ 和 -。",
   "workspace.method.work": "在检出里读写和运行命令；一次要修改两个项目就创建两个检出，它们各自独立、互不可见。",

@@ -27,7 +27,8 @@ Protection is one layer, chosen on purpose: the secret scrub replaces every
 secret value in whatever reaches the model or the journal
 ([architecture.md](architecture.md#secret-values)).
 
-`bash` is the one command path: its environment is built in one place, so a
+The shell tool (`bash` on POSIX, `pwsh` on Windows) is the one command path:
+its environment is built in one place, so a
 `Workspace` implementation that needs more for the commands in its windows -
 the ovnfs workspace's `ARBOR_WINDOW` and its git hook path, for instance -
 declares them through `bashEnv` and they are added there
@@ -46,7 +47,7 @@ The environment is one shared directory, read-only for every window at `/env`:
 ```
 
 The implementation owns the directory on the host; a window reads it at `/env`,
-and `read` and `bash` resolve that prefix onto it. A deployment whose workspace
+and `read` and the shell tool resolve that prefix onto it. A deployment whose workspace
 can mount it for real does, and a window without a workspace still reads `/env`
 through `read`; changing it needs a workspace.
 

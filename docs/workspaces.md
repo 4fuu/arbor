@@ -45,8 +45,8 @@ name>`), and that name is how the host binds a checkout to a window: the
 open-work report ([below](#open-work)) and reclaim both find a window's
 checkouts by the `<ref>-` prefix. The module functions `workspace.checkout`,
 `list`, `diff`, `apply`, `rm` and `path` are a convenience over the same
-operations; the plain CLI works just as well, and a command run in `bash`
-reaches the same daemon.
+operations; the plain CLI works just as well, and a command run in the shell
+tool (`bash` on POSIX, `pwsh` on Windows) reaches the same daemon.
 
 A checkout is frozen at open. To see what another window has applied since, read
 the shared folder or open a new checkout. In a git repository, open the checkout
@@ -62,7 +62,7 @@ merged back; `cache` (`node_modules` and build outputs) and `local` (`.env` and
 other secrets) show the live folder, read-only, and are never merged; `hidden`
 paths are absent.
 
-A command run in `bash` inside a checkout is given two variables of this
+A command run in the shell tool inside a checkout is given two variables of this
 workspace's own: `ARBOR_WINDOW`, the window that runs it, and a git
 configuration that points `core.hooksPath` at the hooks that stamp an
 `Arbor-Window` trailer onto a commit. A `Workspace` implementation declares
@@ -81,7 +81,7 @@ change. It is not a security boundary, and the docs say so.
 
 The shared environment reaches a command the same way. The environment is one
 shared directory on the host and a window's workspace is a directory on that
-same host, so `read` and `bash` resolve the prefix `/env` onto the directory
+same host, so `read` and the shell tool resolve the prefix `/env` onto the directory
 itself. Nothing is staged and nothing is copied: what a command reads at `/env`
 is the environment's own file, which is why it is read-only and a change goes
 through the environment's draft and `reload`
@@ -122,8 +122,9 @@ a new window gets a directory of its own, created on first use, and a
 continuation keeps working in its predecessor's directory in place, under the
 same ref - no copy, no link, no fork. Only one window in a chain is live at a
 time, so in place is safe, and the chain is in the journal, so a restart
-recovers which directory a continuation uses. `bash` runs on the host in it, and
-a background job runs there too, through the host's own process API. A disk
+recovers which directory a continuation uses. The shell tool (`bash` on POSIX,
+`pwsh` on Windows) runs on the host in it, and a background job runs there too,
+through the host's own process API. A disk
 quota is the size the implementation reports against a workspace's directory.
 
 ```text
@@ -157,7 +158,7 @@ a window's own directory reaches them: reclaim removes `<root>/ws<n>` and
 nothing else, a restart finds them where they were, and a host restart loses
 nothing. `workspace.keeps()` lists them all by name and path, a continuation's
 first input names the ones its own chain created, and `journal.search` finds the
-writes. Removing one is the model's own `rm`, in `bash`; nothing reclaims a
+writes. Removing one is the model's own `rm`, in the shell tool; nothing reclaims a
 persistent directory.
 
 A persistent directory is shared, exactly as the shared folder is in the ovnfs

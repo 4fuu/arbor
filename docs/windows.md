@@ -5,6 +5,17 @@ disposable. Any number run at once, none of them owns a conversation, a file
 or a task, and a window that ends loses nothing, because everything it did is
 in the journal ([journal.md](journal.md)).
 
+## Host platforms
+
+A window runs on the host that opened it, and its command tool is named for the
+shell that host gives it. On POSIX the tool is `bash`, `bash_output` and
+`bash_stop`, and a command runs as `/bin/sh -c`. On Windows the tool is `pwsh`,
+`pwsh_output` and `pwsh_stop`, and a command runs in a fresh PowerShell process
+(`pwsh` when it is installed, Windows PowerShell 5.1 otherwise) with UTF-8
+output. The wait window, the background job, the result cut, the environment and
+the secret scrub are the same on both hosts; only the executable, the argv and
+the tool names differ.
+
 ## Lifecycle
 
 1. **Open.** The dispatcher opens a window for a task no live window should
