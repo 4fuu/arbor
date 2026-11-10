@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-core",
-  "version": "2026.1110.0",
+  "version": "2026.1110.1",
   "private": true,
   "type": "module",
   "description": "The service layer for one window: lifecycle, prompt epochs, reminders, continuations, the board, the effect queue and restart recovery.",
