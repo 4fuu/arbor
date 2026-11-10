@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-environment-dir",
-  "version": "2026.1110.1",
+  "version": "2026.1110.2",
   "private": true,
   "type": "module",
   "description": "The default Environment: skills, MCP servers, services and settings in one shared /env directory, with a revision per item, validation and deltas.",

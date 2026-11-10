@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-plugin-http",
-  "version": "2026.1110.1",
+  "version": "2026.1110.2",
   "private": true,
   "type": "module",
   "description": "The HTTP test channel plugin: a webhook in, sends out, and a page that drives the whole host.",
