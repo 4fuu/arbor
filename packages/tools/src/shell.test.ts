@@ -10,7 +10,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -53,7 +53,11 @@ describe("the shell a host gives a window", () => {
     assert.equal(windows.run, "pwsh");
     assert.equal(windows.output, "pwsh_output");
     assert.equal(windows.stop, "pwsh_stop");
-    assert.ok(windows.executable.toLowerCase().endsWith("pwsh") || windows.executable.toLowerCase().endsWith("powershell.exe"));
+    const executable = windows.executable.toLowerCase();
+    assert.ok(
+      executable.endsWith("pwsh") || executable.endsWith("pwsh.exe") || executable.endsWith("powershell.exe"),
+      windows.executable,
+    );
     const argv = windows.args("Write-Output hello");
     assert.deepEqual(argv.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
     assert.ok(argv[4]?.startsWith("[Console]::OutputEncoding"));
@@ -78,13 +82,18 @@ describe("the shell tool on this host", () => {
     const root = await tempDir();
     const shell = shellFor();
     const group = new FileToolGroup(servicesFor(root), shell);
+    // A file the command creates proves the working directory without
+    // comparing path strings: Windows reports a short (8.3) temp path from
+    // Get-Location while mkdtemp returns the long one.
+    const marker = "cwd-marker.txt";
     const command = process.platform === "win32"
-      ? "Write-Output hello; (Get-Location).Path"
-      : "echo hello; pwd";
+      ? `Set-Content -Path '${marker}' -Value hello; Get-Content '${marker}'`
+      : `printf hello > '${marker}'; cat '${marker}'`;
     const result = await call(group, shell.run, { command });
     assert.equal(result.ok, true, result.content);
     assert.ok(result.content.includes("hello"));
-    assert.ok(result.content.includes(root), "the command runs in the window's directory");
+    const created = await stat(join(root, marker)).catch(() => undefined);
+    assert.ok(created?.isFile() === true, "the command runs in the window's directory");
   });
 
   it("follows a long command with the output tool and stops it", async () => {
