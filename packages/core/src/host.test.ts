@@ -1312,11 +1312,14 @@ describe("one window end to end", () => {
       refs: [],
     });
     const until = async (predicate: () => boolean): Promise<void> => {
-      for (let attempt = 0; attempt < 200; attempt += 1) {
-        if (predicate()) return;
+      // A deadline, not a number of yields: opening the continuation records
+      // its start and asks the workspace, and a loaded runner can take longer
+      // than any fixed number of event-loop turns.
+      const deadline = Date.now() + 5000;
+      while (!predicate()) {
+        if (Date.now() >= deadline) assert.fail("the window never reached the expected state");
         await turn();
       }
-      assert.fail("the window never reached the expected state");
     };
     await until(() => arbor.live().some((one) => one.window === "c2"));
     assert.equal(arbor.live().find((one) => one.window === "c2")?.state, "idle");
