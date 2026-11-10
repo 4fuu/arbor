@@ -44,6 +44,14 @@ export interface Settings {
     reserveTokens?: number;
     /** How long a window protects the target it started on. 60 s. */
     protectionSeconds?: number;
+    /**
+     * The share of the context window below which an `end` carrying a handoff
+     * is premature: a fraction, 0.6 by default. Such an end is refused with
+     * `end.handoff.early` while the window has no unfinished work; with
+     * unfinished work the handoff is always accepted, and an `end` without one
+     * is never limited by this floor (docs/windows.md#ending-and-continuing).
+     */
+    handoffFloor?: number;
   };
 
   snapshot?: {

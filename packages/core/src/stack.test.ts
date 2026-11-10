@@ -97,6 +97,9 @@ async function stack(): Promise<{ arbor: Arbor; journal: SqliteJournal; script: 
     now: () => 1700000000000,
     workspace: new DirectoryWorkspace({ root }),
     judge: new StackJudge(),
+    // This test is the seam, not the handoff floor: it ends one window by hand
+    // to prove the handoff crosses every layer.
+    settings: { window: { handoffFloor: 0 } },
   });
   return { arbor, journal, script: (steps) => faux.setResponses(steps as never) };
 }

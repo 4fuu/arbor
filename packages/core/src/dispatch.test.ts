@@ -367,7 +367,7 @@ describe("the judge", () => {
     await arbor.open(batch("gh:pr:57", "看下 CI"));
     await backend.finished();
     const reminders = await arbor.journal.list({ kinds: ["reminder"] });
-    assert.match(reminders.items[0]?.body ?? "", /最后一条/);
+    assert.match(reminders.items[0]?.body ?? "", /上下文即将用尽/);
 
     const routed = await arbor.dispatch(batch("gh:pr:57", "CI 又红了"));
 
@@ -381,6 +381,9 @@ describe("model tiers", () => {
   const tiers: Settings = {
     modelTiers: { light: "model-light", strong: "model-strong" },
     defaultTier: "light",
+    // These tests end a window by hand to keep its tier; the handoff floor is
+    // its own test's subject.
+    window: { handoffFloor: 0 },
   };
 
   it("gives a new window the tier the judge picked", async () => {

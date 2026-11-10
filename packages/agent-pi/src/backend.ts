@@ -241,7 +241,7 @@ export class PiAgentBackend implements AgentBackend {
         error: {
           rule: "backend.call_path.missing",
           message: `backend: 没有提供 ${name} 的调用路径`,
-          nextAction: "在 host 中注册工具组。",
+          nextAction: "这个工具在本次部署中没有调用路径；改用 tool_search 查询其他可用的工具。",
         },
       };
     }

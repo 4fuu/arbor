@@ -18,23 +18,23 @@ import type { Block, BlockKindSpec, PromptSection, TextTable } from "@4fu/arbor-
 /** The plain-directory workspace's own fixed strings. */
 export const directoryText: TextTable = {
   // ---- the prompt section the implementation contributes -----------------
-  "workspace.method.directory": "你的工作区是本主机上的一个目录，随窗口创建；续窗口在原处继续用它，克隆的仓库、装好的依赖和未完成的工作都留着。",
-  "workspace.method.persistent": "要留下跨窗口的内容，就用 workspace.keep(\"<名称>\") 建一个常驻目录：它在本主机的 {root}/keep/<名称>，不随窗口结束、回收和主机重启删除，后来的窗口用同一个名称找到它。",
-  "workspace.method.persistent.plain": "常驻目录也可以用 bash 直接建：mkdir -p {root}/keep/<名称>；模块函数只是给出路径，并把它记进记录。",
-  "workspace.method.persistent.shared": "常驻目录按约定共享：按名称写入它该放的内容，不要覆盖别人的东西。",
-  "workspace.method.persistent.find": "用 workspace.keeps() 列出所有常驻目录，用 read、write、edit 和 bash 按路径直接用它；续窗口的首次输入会列出本窗口链建过的常驻目录。",
-  "workspace.method.readonly": "按约定，别的窗口的目录只读，不要修改；要协作就靠仓库自己的流程（push、review、CI），框架不替你合并文件。",
-  "workspace.method.means": "read、write、edit 和 bash 都在这个目录里工作，bash 也在这里跑后台作业。",
+  "workspace.method.directory": "工作区是本主机上的一个目录，随窗口创建；续窗口在原处继续使用它，克隆的仓库、装好的依赖和未完成的工作都保留。",
+  "workspace.method.persistent": "要留下跨窗口的内容，就用 workspace.keep(\"<名称>\") 创建一个常驻目录：它在本主机的 {root}/keep/<名称>，不随窗口结束、回收和主机重启删除；后续窗口用同一个名称找到它。",
+  "workspace.method.persistent.plain": "常驻目录也可以用 bash 直接创建：mkdir -p {root}/keep/<名称>；模块函数只返回路径，并把这次创建写入记录。",
+  "workspace.method.persistent.shared": "常驻目录按约定共享：按名称写入它该放的内容，不要覆盖其他窗口的内容。",
+  "workspace.method.persistent.find": "用 workspace.keeps() 列出所有常驻目录；用 read、write、edit 和 bash 按路径直接使用它。续窗口的首次输入会列出本窗口链创建过的常驻目录。",
+  "workspace.method.readonly": "按约定，其他窗口的目录只读，不要修改；要协作就靠仓库自己的流程（push、review、CI），框架不替你合并文件。",
+  "workspace.method.means": "read、write、edit 和 bash 都在这个目录里工作，bash 也在这里运行后台作业。",
 
   // ---- the module functions this implementation adds --------------------
-  "function.workspace.keep": "建一个常驻目录并返回它的路径：名称已存在时返回原来那个；里面的内容不随窗口结束、回收和主机重启删除。",
+  "function.workspace.keep": "创建一个常驻目录并返回它的路径：名称已存在时返回原来的目录；里面的内容不随窗口结束、回收和主机重启删除。",
   "function.workspace.keeps": "列出所有常驻目录：名称和路径，按名称排序。",
   "function.workspace.path": "按窗口引用查询它的工作区目录：该目录属于其他窗口，只读，不要修改。",
 
   // ---- results ----------------------------------------------------------
-  "result.workspace.keep": "常驻目录 {name}：{path}。它不随窗口结束、回收和主机重启删除，后来的窗口用同一个名称找到它。",
+  "result.workspace.keep": "常驻目录 {name}：{path}。它不随窗口结束、回收和主机重启删除，后续窗口用同一个名称找到它。",
   "result.workspace.keeps": "常驻目录：{lines}",
-  "result.workspace.keeps.empty": "还没有常驻目录；用 workspace.keep 建一个。",
+  "result.workspace.keeps.empty": "还没有常驻目录；用 workspace.keep 创建一个。",
   "result.workspace.keeps.line": "{name} {path}",
   "result.workspace.path": "{path}（窗口 {window} 的工作区，属于其他窗口：只读，不要修改）",
 
@@ -47,7 +47,7 @@ export const directoryText: TextTable = {
   "next.workspace.path": "该窗口没有操作过文件；用 windows.list 查看当前的窗口。",
 
   // ---- the continuation's first input -----------------------------------
-  "continuation.keeps": "上个窗口链建过的常驻目录：{keeps}。它们不随窗口结束、回收和主机重启删除，按路径直接读写。",
+  "continuation.keeps": "上个窗口链创建过的常驻目录：{keeps}。它们不随窗口结束、回收和主机重启删除，按路径直接读写。",
 };
 
 /** The method's points, one text-table key per line, in order. */

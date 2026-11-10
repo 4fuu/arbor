@@ -153,7 +153,7 @@ describe("the ovnfs workspace through the host", () => {
     const reminder = reminders.items.map((event) => event.body ?? "").find((body) => body.includes("未完成的工作"));
     assert.ok(reminder !== undefined, "the reminder named the open work");
     assert.match(reminder, /c1-app（未合回）/);
-    assert.match(reminder, /还没有进展笔记的话/, "the tier's own instruction is still there");
+    assert.match(reminder, /本窗口还没有进展笔记时/, "the tier's own instruction is still there");
 
     // The board shows the same open work on the window's own line.
     assert.deepEqual(arbor.boardLines()[0]?.openWork, ["c1-app（未合回）"]);

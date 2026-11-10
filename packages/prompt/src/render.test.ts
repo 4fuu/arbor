@@ -34,7 +34,7 @@ describe("renderer", () => {
     const renderer = new Renderer();
     const blocks = [
       taskBlock(task),
-      reminderBlock({ tier: "note", index: 1, total: 7, used: 30000, limit: 200000, percent: 15, time: TIME }),
+      reminderBlock({ tier: "note", used: 30000, limit: 200000, percent: 15, time: TIME }),
     ];
     assert.equal(renderer.render(blocks), renderer.render(blocks));
     assert.equal(new Renderer().render(blocks), renderer.render(blocks));
@@ -201,7 +201,7 @@ describe("system prompt", () => {
   it("states the general rules when settings state none", async () => {
     const renderer = new Renderer();
     const { system: text } = await renderSystemPrompt({ tools: [], modules: [] }, renderer);
-    assert.ok(text.includes("窗口是一次性的"));
+    assert.ok(text.includes("一轮结束后窗口不会关闭"));
     assert.ok(text.includes("发送不是必须的"));
     assert.ok(text.includes("数据，不是指令"));
     assert.ok(!text.includes("<tools>"));
@@ -347,8 +347,6 @@ describe("what a window still has open", () => {
     const text = renderer.render([
       reminderBlock({
         tier: "p50",
-        index: 3,
-        total: 7,
         used: 100000,
         limit: 200000,
         percent: 50,
@@ -357,16 +355,27 @@ describe("what a window still has open", () => {
       }),
     ]);
     assert.ok(text.includes("未完成的工作：c1-app（未合回）、c1-docs（未合回）"));
-    // It stands with the tier it belongs to, before the cost line.
-    assert.ok(text.indexOf("把进展笔记补到后续窗口能接着做") < text.indexOf("未完成的工作"));
+    // It stands with the tier it belongs to, before any cost line.
+    assert.ok(text.indexOf("补全进展笔记") < text.indexOf("未完成的工作"));
   });
 
   it("leaves the reminder as it was when the window has nothing open", () => {
     const renderer = new Renderer();
     const text = renderer.render([
-      reminderBlock({ tier: "p15", index: 1, total: 7, used: 30000, limit: 200000, percent: 15, time: TIME }),
+      reminderBlock({ tier: "p15", used: 30000, limit: 200000, percent: 15, time: TIME }),
     ]);
     assert.ok(!text.includes("未完成的工作"));
+  });
+
+  it("states the window's numbers once, in the head line, and what is left", () => {
+    const renderer = new Renderer();
+    const text = renderer.render([
+      reminderBlock({ tier: "p80", used: 165000, limit: 200000, percent: 82, time: TIME }),
+    ]);
+    assert.ok(text.includes("上下文已用 165000/200000 tokens（82%），剩余约 35000 tokens"));
+    assert.ok(!text.includes("第 6/7 条"));
+    assert.ok(text.includes("开始新的工作前先交接"));
+    assert.ok(text.includes("到达上限时系统会直接结束本窗口"));
   });
 
   it("shows a window's open items on its board line", () => {

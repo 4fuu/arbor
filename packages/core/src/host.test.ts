@@ -415,7 +415,7 @@ describe("one window end to end", () => {
   });
 
   it("continues in the predecessor's directory, in place, so the work carries over", async () => {
-    const { arbor, journal, backend, root } = await host();
+    const { arbor, journal, backend, root } = await host({ settings: { window: { handoffFloor: 0 } } });
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "完成" },
@@ -493,7 +493,7 @@ describe("one window end to end", () => {
     const opened = backend.opened[0];
     assert.ok(opened !== undefined);
     assert.ok(opened.prompt.system.includes("<agent>"));
-    assert.ok(opened.prompt.system.includes("窗口是一次性的"));
+    assert.ok(opened.prompt.system.includes("一轮结束后窗口不会关闭"));
     assert.ok(opened.firstInput !== undefined && opened.firstInput.includes("CI 红了"));
     assert.ok(opened.firstInput.includes("任务 t1"));
     assert.ok(!opened.prompt.system.includes("coding agent"));
@@ -516,7 +516,7 @@ describe("one window end to end", () => {
   });
 
   it("ends the window with a handoff and opens a continuation that carries it", async () => {
-    const { arbor, journal, backend } = await host();
+    const { arbor, journal, backend } = await host({ settings: { window: { handoffFloor: 0 } } });
     backend.script([{ text: "继续" }]);
     const record = await arbor.open(task);
     // The model ends with a handoff, so the host opens the continuation.
@@ -651,7 +651,7 @@ describe("one window end to end", () => {
         return [{ kind: "embedding_session", fields: { label: label ?? "" } }];
       },
     };
-    const { arbor, journal, backend } = await host({ plugins: [{ name: "embedding", promptSection: section }] });
+    const { arbor, journal, backend } = await host({ settings: { window: { handoffFloor: 0 } }, plugins: [{ name: "embedding", promptSection: section }] });
     backend.script([{ text: "第一轮" }]);
     const record = await arbor.open({ ...task, label: "dsh-session-7" });
     await backend.finished();
@@ -712,8 +712,8 @@ describe("one window end to end", () => {
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.firstInput?.includes("上一个窗口 c1 没有留下交接内容"));
-    assert.ok(opened?.firstInput?.includes("按此顺序恢复：笔记、现场板、它的最后事件"));
-    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
+    assert.ok(opened?.firstInput?.includes("按此顺序恢复：笔记、现场板、窗口 c1 的最后事件"));
+    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被主机结束"));
   });
 
   it("stops the windows on close without opening a continuation, and the next start continues the work", async () => {
@@ -760,7 +760,7 @@ describe("one window end to end", () => {
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.continuation?.midTaskReset === true);
-    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
+    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被主机结束"));
     const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
     assert.ok(read.items[0]?.body?.includes("work in progress"));
     assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
@@ -880,7 +880,7 @@ describe("one window end to end", () => {
     assert.equal(body.reason, "hard_limit");
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.midTaskReset === true);
-    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
+    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被主机结束"));
     assert.ok(opened?.firstInput?.includes("已发送的内容不会再次发送"));
   });
 
@@ -895,12 +895,11 @@ describe("one window end to end", () => {
     const reminders = await journal.list({ kinds: ["reminder"] });
     assert.equal(reminders.items.length, 1);
     const body = reminders.items[0]?.body ?? "";
-    assert.ok(body.includes("已用 130000/200000 tokens（65%）"));
-    assert.ok(body.includes("第 4/7 条提醒"));
+    assert.ok(body.includes("上下文已用 130000/200000 tokens（65%），剩余约 70000 tokens"));
     assert.ok(body.includes("这是系统提醒，不是用户请求"));
     assert.ok(body.includes("写明边界"));
-    // 80 % has not been crossed, so the cost of ignoring it is not said yet.
-    assert.ok(!body.includes("如果不照做"));
+    // 80 % has not been crossed, so what happens at the hard limit is not said yet.
+    assert.ok(!body.includes("到达上限时"));
   });
 
   it("sends every tier in order when the window crosses several thresholds", async () => {
@@ -917,16 +916,15 @@ describe("one window end to end", () => {
     const reminders = await journal.list({ kinds: ["reminder"] });
     const bodies = reminders.items.map((item) => item.body ?? "");
     assert.equal(bodies.length, 4);
-    assert.ok(bodies[0]?.includes("第 1/7 条提醒"));
-    assert.ok(bodies[0]?.includes("还没有进展笔记的话"));
-    assert.ok(bodies[1]?.includes("第 2/7 条提醒"));
+    assert.ok(bodies[0]?.includes("本窗口还没有进展笔记时"));
+    assert.ok(bodies[0]?.includes("上下文已用 30000/200000 tokens（15%）"));
     assert.ok(bodies[1]?.includes("更新进展笔记"));
-    assert.ok(bodies[2]?.includes("第 4/7 条提醒"));
+    assert.ok(bodies[1]?.includes("上下文已用 70000/200000 tokens（35%）"));
     assert.ok(bodies[2]?.includes("写明边界"));
-    // From 80 % on, the reminder also says what ignoring it costs.
-    assert.ok(bodies[3]?.includes("第 6/7 条提醒"));
-    assert.ok(bodies[3]?.includes("再开新工作前先轮换"));
-    assert.ok(bodies[3]?.includes("如果不照做"));
+    assert.ok(bodies[2]?.includes("上下文已用 130000/200000 tokens（65%）"));
+    // From 80 % on, the reminder also says what happens at the hard limit.
+    assert.ok(bodies[3]?.includes("开始新的工作前先交接"));
+    assert.ok(bodies[3]?.includes("到达上限时系统会直接结束本窗口"));
   });
 
   it("hands one window's live output to whoever watches that window, and to no other", async () => {
@@ -997,7 +995,7 @@ describe("one window end to end", () => {
   });
 
   it("opens a continuation idle when its backend starts no turn, and follows its run", async () => {
-    const { arbor, journal, backend } = await host();
+    const { arbor, journal, backend } = await host({ settings: { window: { handoffFloor: 0 } } });
     backend.script([{ text: "第一轮" }]);
     const first = await arbor.open(task);
     await backend.finished();
@@ -1229,7 +1227,7 @@ describe("one window end to end", () => {
     assert.equal(started.items[1]?.window, "c2");
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.midTaskReset === true);
-    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被重置"));
+    assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被主机结束"));
     assert.equal(record.state, "idle");
     const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
     assert.ok(read.items[0]?.body?.includes("work in progress"));
@@ -1238,7 +1236,7 @@ describe("one window end to end", () => {
   });
 
   it("records a send as an effect and never repeats it in the continuation", async () => {
-    const { arbor, journal, backend } = await host();
+    const { arbor, journal, backend } = await host({ settings: { window: { handoffFloor: 0 } } });
     arbor.effects.addExecutor(testChannel());
     backend.script([
       { tool: "send", args: { to: "qq:group:123", content: "已修好" } },
@@ -1276,7 +1274,7 @@ describe("one window end to end", () => {
   });
 
   it("refuses a malformed handoff, keeps the window open, and takes the retry", async () => {
-    const { arbor, journal, backend } = await host();
+    const { arbor, journal, backend } = await host({ settings: { window: { handoffFloor: 0 } } });
     // The mistake the model made: the four arrays written under other names.
     backend.script([
       {
@@ -1350,6 +1348,116 @@ describe("one window end to end", () => {
     // there is no unfinished work to hand over.
     const result = await arbor.services.endWindow(record.window);
     assert.equal(result.ok, true);
+  });
+
+  it("refuses a handoff below the floor when nothing is unfinished, and keeps the window open", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ usage: { used: 1000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    const result = await arbor.services.endWindow(record.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: [],
+      agreements: [],
+      refs: [],
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error?.rule, "end.handoff.early");
+    assert.equal(result.error?.message, "已用 0%，尚未到交接时机（60%）；窗口没有结束。");
+    assert.equal(result.error?.nextAction, "无需调用 end：直接结束本轮，窗口会保持空闲，等待下一条输入。");
+    // The window stays open and idle, and no continuation was opened.
+    assert.equal((await journal.list({ window: record.window, kinds: ["window_end"] })).items.length, 0);
+    assert.equal(arbor.live().find((one) => one.window === record.window)?.state, "idle");
+    assert.equal((await journal.list({ kinds: ["window_start"] })).items.length, 1);
+    // The floor and the current usage are in the refusal, not in the tool's text.
+    const end = arbor.catalog.tools().find((tool) => tool.name === "end");
+    assert.ok(end?.description.includes("两种用法"));
+    assert.ok(!end?.description.includes("60%"));
+    assert.ok(!end?.description.includes("已用"));
+  });
+
+  it("accepts a handoff below the floor when the window has unfinished work", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ usage: { used: 1000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    // Another window wrote on the target after this one opened.
+    await journal.append({ kind: "input", window: "c9", body: "新的 CI 结果", targets: ["gh:pr:57"] });
+    const result = await arbor.services.endWindow(record.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: ["重跑"],
+      agreements: [],
+      refs: [],
+    });
+    assert.equal(result.ok, true);
+    await backend.finished();
+    await record.running;
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2);
+    assert.equal(started.items[1]?.window, "c2");
+  });
+
+  it("accepts a handoff at or above the floor", async () => {
+    const { arbor, backend } = await host();
+    // Exactly 60 % of the window, the default floor.
+    backend.script([{ usage: { used: 120000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    const result = await arbor.services.endWindow(record.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: [],
+      agreements: [],
+      refs: [],
+    });
+    assert.equal(result.ok, true);
+    await backend.finished();
+    await record.running;
+  });
+
+  it("never limits a plain end by the floor", async () => {
+    const { arbor, backend } = await host();
+    backend.script([{ usage: { used: 1000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const record = await arbor.open(task);
+    await backend.finished();
+    const result = await arbor.services.endWindow(record.window);
+    assert.equal(result.ok, true);
+    await backend.finished();
+    await record.running;
+  });
+
+  it("takes the floor from the host's settings", async () => {
+    const high = await host({ settings: { window: { handoffFloor: 0.9 } } });
+    high.backend.script([{ usage: { used: 165000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const highRecord = await high.arbor.open(task);
+    await high.backend.finished();
+    const refused = await high.arbor.services.endWindow(highRecord.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: [],
+      agreements: [],
+      refs: [],
+    });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error?.rule, "end.handoff.early");
+    assert.ok(refused.error?.message.includes("（90%）"));
+
+    const low = await host({ settings: { window: { handoffFloor: 0.1 } } });
+    low.backend.script([{ usage: { used: 30000, limit: 200000, reserve: 4000 } }, { text: "完成" }]);
+    const lowRecord = await low.arbor.open(task);
+    await low.backend.finished();
+    const accepted = await low.arbor.services.endWindow(lowRecord.window, {
+      topics: ["CI"],
+      progress: ["已定位"],
+      pending: [],
+      agreements: [],
+      refs: [],
+    });
+    assert.equal(accepted.ok, true);
+    await low.backend.finished();
+    await lowRecord.running;
   });
 
   it("counts a note a send cited, so the note earns a place in the active set", async () => {

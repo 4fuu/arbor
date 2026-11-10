@@ -4,8 +4,9 @@
  *
  * Anything that speaks, ends a window or writes memory is a direct call. The
  * one guard rule stated up front is `end` with unfinished work, because the
- * handoff is the cost of the decision to end; every other rule lives in the
- * refusal the model meets.
+ * handoff is the cost of the decision to end; the floor below which a handoff
+ * is premature lives in its refusal, not in the description
+ * (docs/windows.md#ending-and-continuing).
  */
 
 import type {

@@ -93,7 +93,6 @@ import { isAbsolute, join } from "node:path";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "@4fu/arbor-interfaces";
 import {
   REMINDER_TIERS,
-  REMINDER_SERIES,
   Renderer,
   atHardLimit,
   dataBlock,
@@ -149,6 +148,13 @@ const DEFAULT_CONTEXT_TOKENS = 200000;
 
 /** How long a window protects the target it started on. 60 s. */
 const DEFAULT_PROTECTION_SECONDS = 60;
+
+/**
+ * The share of a window below which an `end` carrying a handoff is premature
+ * while nothing is unfinished. A fraction, so a deployment can move the floor
+ * without changing the code (docs/windows.md#ending-and-continuing).
+ */
+const DEFAULT_HANDOFF_FLOOR = 0.6;
 
 /**
  * How many of the newest task events a lookup by task ref searches. A task ref
@@ -1941,8 +1947,6 @@ export class Arbor {
       content: [
         reminderBlock({
           tier: tier.tier,
-          index: REMINDER_TIERS.indexOf(tier) + 1,
-          total: REMINDER_SERIES,
           used: record.usage.used,
           limit: record.usage.limit,
           percent: usedPercent(record.usage),
@@ -2442,16 +2446,29 @@ export class Arbor {
   private async endWindow(window: WindowRef, handoff?: Handoff): Promise<ToolResult> {
     const record = this.windows.get(window);
     if (record === undefined) return this.refusal("window.not_found", "windows.notfound", { window });
+    // What is still open is named, so the handoff the model writes - and the
+    // continuation that reads it - knows what is unfinished
+    // (docs/workspaces.md#open-work).
+    const openWork = await this.refreshOpenWork(window);
+    const gaps = await this.journal.targetsBehind(window);
     if (handoff === undefined) {
-      // What is still open is named, so the handoff the model writes - and the
-      // continuation that reads it - knows what is unfinished
-      // (docs/workspaces.md#open-work).
-      const openWork = await this.refreshOpenWork(window);
       if (openWork.length > 0) {
         return this.refusal("end.handoff.required", "end.no_handoff.open", { openWork: openWork.join("、") });
       }
-      const gaps = await this.journal.targetsBehind(window);
       if (gaps.length > 0) return this.refusal("end.handoff.required", "end.no_handoff");
+    } else if (openWork.length === 0 && gaps.length === 0) {
+      // A handoff below the floor is premature: the window is still in its
+      // useful range and nothing is open, so ending it would throw away a warm
+      // prefix for no reason. With unfinished work the handoff is the only way
+      // to end, so the floor never blocks it (docs/windows.md#ending-and-continuing).
+      const usage = record.usage;
+      const floor = this.handoffFloor();
+      if (usage.limit > 0 && usage.used / usage.limit < floor) {
+        return this.refusal("end.handoff.early", "end.handoff.early", {
+          percent: usedPercent(usage),
+          floor: Math.round(floor * 100),
+        });
+      }
     }
     record.ending = true;
     record.handoff = handoff;
@@ -2836,6 +2853,11 @@ export class Arbor {
 
   private idleSeconds(): number {
     return this.current()?.window?.idleSeconds ?? DEFAULT_IDLE_SECONDS;
+  }
+
+  /** The share of the window below which a handoff is premature. */
+  private handoffFloor(): number {
+    return this.current()?.window?.handoffFloor ?? DEFAULT_HANDOFF_FLOOR;
   }
 
   /**

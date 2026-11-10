@@ -24,9 +24,10 @@ in the journal ([journal.md](journal.md)).
    when a message ends, which can be the last thing before the run's end. A
    window with no run in progress never says running.
 3. **Idle.** When the model ends its run, the window returns to idle and stays
-   open for a while
-   (`window.idle_s`, default 300 s, matched to the provider's cache lifetime),
-   so a related input can still be inserted into a warm prefix.
+   open for a while (`window.idleSeconds`, default 300 s, matched to the
+   provider's cache lifetime), so a related input can still be inserted into a
+   warm prefix. A finished round does not end the window: the next related
+   input continues here, with its context intact.
 4. **Paused.** An operator holds insertion without ending the window; what
    waits for it goes in when it resumes
    ([dispatch.md](dispatch.md#insertion-timing)).
@@ -146,21 +147,25 @@ Host reminders are appended to an input, never to the prefix. The series has
 seven tiers, each with its own instruction: at 15 % write down what a later
 window would need when there is no progress note yet; at 30 % change it when
 something changed; at 50 % write up to what a continuation needs; at 60 % say
-what the boundary is; at 70 % open no new large task; at 80 % rotate before new
-work; a final one at `window - 2 x reserve` rotates now. Each carries the real
-numbers, its place in the series, the window's open work named as the workspace
-reports it ([workspaces.md](workspaces.md#open-work)) and, from 80 % on, the
-cost of ignoring it. Only the highest crossed tier is sent; the lower ones it
-jumped over are recorded as sent with it, so a window that crosses several
-thresholds in one step hears every tier, in order.
+what the boundary is; at 70 % open no new large task; at 80 % hand over before
+new work; a final one at `window - 2 x reserve` hands over now. Each carries
+the real numbers - used, limit, the share used and what is left - the window's
+open work named as the workspace reports it
+([workspaces.md](workspaces.md#open-work)) and, from 80 % on, what happens at
+the hard limit. There is no series count: the head line is every tier's first
+line. Only the highest crossed tier is sent; the lower ones it jumped over are
+recorded as sent with it, so a window that crosses several thresholds in one
+step hears every tier, in order.
 
 ## Ending and continuing
 
-- `end(handoff?)` ends the run. With unfinished work it takes a handoff whose
-  fields are exactly `topics`, `progress`, `pending` and `agreements`, each an
-  array of strings, and optional `refs`, an array of refs. The host opens a
-  continuation window whose first input carries the handoff and the previous
-  window's ref. Details belong in notes and the journal.
+- `end(handoff?)` ends the run. Without unfinished work it is the plain end:
+  the window ends, and the next input for its targets opens a new one. With
+  unfinished work it takes a handoff whose fields are exactly `topics`,
+  `progress`, `pending` and `agreements`, each an array of strings, and
+  optional `refs`, an array of refs. The host opens a continuation window whose
+  first input carries the handoff and the previous window's ref. Details belong
+  in notes and the journal.
   Unfinished work is what another window wrote on a target this one touched
   after it opened, and what the workspace reports as still open in this window
   ([workspaces.md](workspaces.md#open-work)) - the ovnfs workspace's unapplied
@@ -168,6 +173,14 @@ thresholds in one step hears every tier, in order.
   opened for, and the window's own `window_start`, are not open work, so a
   window that has done nothing ends cleanly. A refusal names what is open, so
   the handoff says what it has to carry.
+- **A handoff has a floor.** With nothing unfinished and the window below
+  `window.handoffFloor` (a fraction of the context window, 0.6 by default), an
+  `end` carrying a handoff is refused, rule `end.handoff.early`. The refusal
+  gives the share used and the floor, and says the next action is not to call
+  `end` at all: the round can simply finish, and the window stays idle for the
+  next input. With unfinished work a handoff is always accepted, because the
+  work itself requires it, and an `end` without a handoff is never limited by
+  the floor.
 - **A handoff is never dropped.** A handoff in any other shape - a field
   named something else, a string where an array belongs, a required field
   left out - is refused in the core's error shape, rule
@@ -183,8 +196,8 @@ thresholds in one step hears every tier, in order.
 
 At `window - min(16k, window / 4)` the host ends the window by itself. The
 run is usually half-way through a task, so the continuation's first input is
-one host line saying the window was reset mid-task and that the steps already
-taken can be looked up with `windows.show`, then the open tasks and the
+one host line saying the window ended mid-task by the host and that the steps
+already taken can be looked up with `windows.show`, then the open tasks and the
 effects already made. Tool calls are not replayed; nothing already sent is
 sent again.
 

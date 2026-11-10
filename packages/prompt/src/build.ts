@@ -125,8 +125,6 @@ export function noteSummaryBlock(note: NoteSummary): Block {
 /** A host usage reminder (docs/windows.md#usage-reminders). */
 export function reminderBlock(reminder: {
   tier: string;
-  index: number;
-  total: number;
   used: number;
   limit: number;
   percent: number;
@@ -138,11 +136,10 @@ export function reminderBlock(reminder: {
     kind: "reminder",
     fields: {
       tier: reminder.tier,
-      index: reminder.index,
-      total: reminder.total,
       used: reminder.used,
       limit: reminder.limit,
       percent: reminder.percent,
+      remaining: Math.max(0, reminder.limit - reminder.used),
       time: formatTime(reminder.time),
       ...(reminder.openWork === undefined || reminder.openWork.length === 0
         ? {}

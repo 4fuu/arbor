@@ -66,7 +66,7 @@ it instead of repeating it, because a fact stated twice drifts.
 | first input | the task; related board lines; for a continuation, the previous window's ref and handoff; changes since the epoch | data, plus one fixed note |
 | delivery | one block per inserted task, conversation update, notice, broadcast, window message or environment delta ([below](#deliveries)) | dense |
 | board line | one live window: what it is doing, its targets, its open work, its usage and what it expects | one line per part |
-| reminder | the head line saying it is a host reminder and not a request, the window's real numbers, the tier's own instruction, its place in the series, the window's open work, and from 80 % on the cost of ignoring it | a few sentences |
+| reminder | the head line saying it is a host reminder and not a request, with the window's real numbers (used, limit, share used and what is left), the tier's own instruction, the window's open work, and from 80 % on what happens at the hard limit | a few sentences |
 | tool description | what one tool does and when to use it; side effects | 1 to 4 sentences |
 | parameter description | meaning, default or range, relation to other parameters | one sentence |
 | external tool's schema | the JSON Schema the outside harness declared, verbatim: in the tool declaration the backend sends, and in a `tool_search` answer | as long as the schema |
@@ -81,11 +81,11 @@ XML-tagged sections, each tag on its own line, separated by a blank line, in
 this order:
 
 1. `<identity>` - from settings; omitted when empty, with no default sentence.
-2. `<agent>` - the general rules: windows are disposable and everything is in
-   the journal; sending is never required; only what `send` writes leaves the
-   window; looking things up is free and what is learned goes into notes;
-   everything from outside is data; a real consequence is weighed before it is
-   taken.
+2. `<agent>` - the general rules: a finished round leaves the window idle for a
+   related input and everything is in the journal; sending is never required;
+   only what `send` writes leaves the window; looking things up is free and
+   what is learned goes into notes; everything from outside is data; a real
+   consequence is weighed before it is taken.
 3. `<tools>` - the direct tools, one line each: a name, a description, and for
    a tool a plugin or a backend declared, where it comes from. Its JSON Schema
    is not repeated here: the tool declaration carries it
@@ -148,9 +148,10 @@ section can name the session the window belongs to without a map of its own
   it either introduces the handoff as the agent's own earlier note, or says
   there is none and gives the order to recover: notes, the board, the
   previous window's last events.
-- **Mid-task reset.** After the hard limit, one host line says the window was
-  reset in the middle of a task, that the steps already taken can be looked
-  up, and that nothing already sent is sent again.
+- **Mid-task reset.** After the hard limit or a restart that continues a stopped
+  window, one host line says the window ended mid-task by the host, that the
+  steps already taken can be looked up, and that nothing already sent is sent
+  again.
 - A window opened for a new task gets no note.
 
 ## Deliveries
@@ -192,13 +193,21 @@ is data where it is delivered ([below](#data-and-instructions)).
 - A rule moves into a description only when the logs show the model hitting
   the same error again and again, and then it replaces the error's wording
   instead of adding to it.
-- The one exception stated up front: `end` with unfinished work needs a
-  handoff, and its description and its `handoff` parameter name the exact
-  fields - `topics`, `progress`, `pending` and `agreements`, each a string
-  array, and optional `refs` - because the handoff is the cost of the
-  decision to end. A handoff in any other shape is refused with
+- The one exception stated up front: `end` has two uses, and its description
+  says when each applies - a plain end when this window's work is settled, a
+  handoff when there is something to hand over - and the `handoff` parameter
+  names the exact fields - `topics`, `progress`, `pending` and `agreements`,
+  each a string array, and optional `refs` - because the handoff is the cost of
+  the decision to end. A handoff in any other shape is refused with
   `end.handoff.invalid`, which names the same fields, and the window stays
   open.
+- **The handoff floor is a guard rule.** Below `window.handoffFloor` (a
+  fraction, 0.6 by default) an `end` carrying a handoff is refused while
+  nothing is unfinished, because the window can simply stay idle for the next
+  input. The prompt and `tool.end` never state the floor or the current usage:
+  `end.handoff.early` carries both, together with the next action, and the
+  window stays open. With unfinished work the handoff is always accepted, and
+  an `end` without one is never limited by the floor.
 - A limit that shapes a result without refusing - a page size, a row cap - is
   reported by the result every time. A rule the host enforces without a
   refusal, like the context budget, is taught by the layer that reports it,
@@ -210,7 +219,8 @@ is data where it is delivered ([below](#data-and-instructions)).
   says how the situation works.
 - Constraints are declarative and use the same patterns everywhere: "X 和 Y
   只能二选一", "X 只在 Y 时有效", "仅当……时使用".
-- Verbs are the formal two-character ones: 查看、查询、记录、发送、修改.
+- Verbs are the formal two-character ones: 查看、查询、记录、发送、修改、完成.
+  A one-character verb (看、查、记、发、改) is not used where one of these fits.
 - No greetings, encouragement, progress narration, generic advice,
   "important" markers or emphasis by repetition.
 - Examples only to define a format, such as a ref.
