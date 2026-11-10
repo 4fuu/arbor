@@ -272,17 +272,21 @@ function lookup(table: TextTable, key: string, args: Record<string, string | num
   });
 }
 
-/** A tool's spec, with its description taken from the table. */
+/**
+ * A tool's spec, with its description taken from the table. `args` fills the
+ * description's own placeholders, such as the shell edition its tool names.
+ */
 export function toolSpec(
   table: TextTable,
   name: string,
   parameters: Record<string, Omit<ParameterSpec, "description">>,
+  args: Record<string, string | number> = {},
 ): DirectToolSpec {
   const described: DirectToolSpec["parameters"] = {};
   for (const [key, parameter] of Object.entries(parameters)) {
     described[key] = { ...parameter, description: lookup(table, `param.${key}`, {}) };
   }
-  return { name, description: lookup(table, `tool.${name}`, {}), parameters: described };
+  return { name, description: lookup(table, `tool.${name}`, args), parameters: described };
 }
 
 /** A module's spec, with its description taken from the table. */

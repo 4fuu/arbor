@@ -138,7 +138,9 @@ it.
 - **One behaviour per tool, named for the shell it runs.** A command that
   outlives the shell tool's wait window is followed with its output tool and
   stopped with its stop tool (`bash_output`/`bash_stop` on POSIX,
-  `pwsh_output`/`pwsh_stop` on Windows).
+  `pwsh_output`/`pwsh_stop` on Windows). A stop ends the job and its
+  descendants - the POSIX process group, or the Windows process tree by
+  `taskkill` ([windows.md](windows.md#background-jobs-and-stop)).
 - **Same path.** Calls from a script go through the same hooks as direct
   calls, so anchors, watermarks, quotas, validation and logging behave the
   same.

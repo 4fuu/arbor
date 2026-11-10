@@ -13,8 +13,35 @@ shell that host gives it. On POSIX the tool is `bash`, `bash_output` and
 `pwsh_output` and `pwsh_stop`, and a command runs in a fresh PowerShell process
 (`pwsh` when it is installed, Windows PowerShell 5.1 otherwise) with UTF-8
 output. The wait window, the background job, the result cut, the environment and
-the secret scrub are the same on both hosts; only the executable, the argv and
-the tool names differ.
+the secret scrub are the same on both hosts; what differs is the executable and
+its argv, the tool names, the shell edition the tool's description states, and
+how a stop ends the job.
+
+The edition is on the description because the two are not one language: `&&` and
+`||` exist only in PowerShell 7, so a window told "PowerShell" without the
+edition writes syntax that Windows PowerShell 5.1 refuses. `shellFor` resolves
+the executable first and the description names what it resolved - `PowerShell 7`
+for `pwsh`/`pwsh.exe`, `Windows PowerShell 5.1` for `powershell.exe`. A POSIX
+host has one shell, so its description names none.
+
+## Background jobs and stop
+
+A command that outlives the wait window keeps running as a background job, and
+is followed with the output tool and ended with the stop tool. **A stop ends the
+job and its descendants, not just the shell process.** That is what makes the
+job close: a child the command started inherits the job's stdio pipes, so a stop
+that ended only the shell would leave the child holding them, `close` would
+never fire, and the job would read as running for ever.
+
+- **POSIX** gives each command its own process group (`detached`), and a stop
+  sends `SIGTERM` to that group, so everything the command started receives it
+  too. A group that is already gone is not an error.
+- **Windows** runs `taskkill /PID <pid> /T /F`, which ends `pwsh.exe` and every
+  process below it. When `taskkill` cannot start at all, the stop falls back to
+  ending the shell process itself.
+
+A job that has already ended is never signalled: its pid may belong to another
+process by then.
 
 ## Lifecycle
 

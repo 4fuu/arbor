@@ -78,12 +78,36 @@ export interface Shell {
   readonly run: string;
   /** The direct tool that reads a background job's new output. */
   readonly output: string;
-  /** The direct tool that stops a background job. */
+  /** The direct tool that stops a background job and what it started. */
   readonly stop: string;
+  /**
+   * The shell edition `run`'s description names. It is not decoration: one
+   * executable can be one of two languages - PowerShell 7 reads `&&`, Windows
+   * PowerShell 5.1 does not - so a description that says "PowerShell" without
+   * the edition teaches the model syntax half of Windows refuses. Undefined
+   * when the host's shell has only one form.
+   */
+  readonly edition?: string;
   /** The executable to spawn. */
   readonly executable: string;
   /** The argv after the executable, for one command. */
   args(command: string): readonly string[];
+  /**
+   * Whether one command becomes its own process group, so `terminate` can end
+   * the whole tree through the group. True on POSIX, false on Windows, where
+   * the tree is ended by pid instead. The one job path spawns with it.
+   */
+  readonly detached: boolean;
+  /**
+   * End the command with this pid and everything it started. A stop means the
+   * job and its descendants, not the one shell process: a child that inherits
+   * the stdio pipes and outlives its parent keeps Node's `close` from firing,
+   * so stopping only the shell leaves the job running for ever.
+   *
+   * The caller never calls this for a job that has already ended, so a pid
+   * that now belongs to another process is never signalled.
+   */
+  terminate(pid: number): void;
 }
 
 /**
@@ -116,6 +140,18 @@ function powershellExecutable(env: NodeJS.ProcessEnv): string {
 }
 
 /**
+ * The edition a PowerShell executable speaks.
+ *
+ * The two are not the same language, so the description has to name the one
+ * `shellFor` resolved rather than the family: `&&` and `||` exist only in 7,
+ * and a model told "PowerShell" writes them for 5.1 too. The executable's own
+ * name is the answer: `pwsh` is 7, Windows PowerShell is `powershell.exe`.
+ */
+function powershellEdition(executable: string): string {
+  return /(^|[\\/])pwsh(\.exe)?$/i.test(executable) ? "PowerShell 7" : "Windows PowerShell 5.1";
+}
+
+/**
  * The shell for one host platform.
  *
  * `platform` and `env` are parameters so the Windows resolution is a pure
@@ -131,14 +167,28 @@ export function shellFor(
       output: "bash_output",
       stop: "bash_stop",
       executable: "/bin/sh",
+      detached: true,
       args: (command) => ["-c", command],
+      // The command is its own process group, so the signal reaches it and
+      // everything it started: nothing outlives the stop holding the pipes.
+      terminate: (pid) => {
+        try {
+          process.kill(-pid, "SIGTERM");
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      },
     };
   }
+  const executable = powershellExecutable(env);
   return {
     run: "pwsh",
     output: "pwsh_output",
     stop: "pwsh_stop",
-    executable: powershellExecutable(env),
+    edition: powershellEdition(executable),
+    executable,
+    // No process group on Windows: the tree is ended by pid with taskkill.
+    detached: false,
     args: (command) => [
       "-NoLogo",
       "-NoProfile",
@@ -146,6 +196,24 @@ export function shellFor(
       "-Command",
       `${POWERSHELL_PREAMBLE}${command}`,
     ],
+    // `child.kill` ends only pwsh.exe. A grandchild it started inherits the
+    // stdio pipes, so it keeps them open and the job never closes; taskkill
+    // /T ends pwsh.exe and every process below it.
+    terminate: (pid) => {
+      const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      // taskkill itself could not start: the process itself is the most that
+      // can be ended without it.
+      killer.on("error", () => {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // Already gone.
+        }
+      });
+    },
   };
 }
 
@@ -185,11 +253,16 @@ export class FileToolGroup implements ToolGroup {
 
   tools(): readonly DirectToolSpec[] {
     const table = this.services.table;
+    // The run tool's description says which shell the model actually gets:
+    // `shellFor` falls back from PowerShell 7 to Windows PowerShell 5.1, and
+    // the two differ in what they read, so the edition is filled here.
+    const { edition } = this.shell;
+    const description: Record<string, string> = edition === undefined ? {} : { edition };
     return [
       toolSpec(table, this.shell.run, {
         command: { type: "string", required: true },
         timeout: { type: "number" },
-      }),
+      }, description),
       toolSpec(table, this.shell.output, { job: { type: "string", required: true } }),
       toolSpec(table, this.shell.stop, { job: { type: "string", required: true } }),
       toolSpec(table, "read", {
@@ -403,7 +476,14 @@ export class FileToolGroup implements ToolGroup {
     // implementation asks for - the ovnfs workspace's `ARBOR_WINDOW` and git
     // hook path. The extra variables reach no MCP server and no service
     // (docs/environment.md#what-a-subprocess-gets).
-    const child = spawn(this.shell.executable, this.shell.args(command), { cwd, env: bashEnvironment(cwd, extraEnv) });
+    const child = spawn(this.shell.executable, this.shell.args(command), {
+      cwd,
+      env: bashEnvironment(cwd, extraEnv),
+      // The shell owns how a stop reaches the command's descendants: a process
+      // group on POSIX, a pid on Windows.
+      detached: this.shell.detached,
+    });
+    const pid = child.pid;
     let end = (): void => {};
     const job: Job = {
       id,
@@ -414,7 +494,10 @@ export class FileToolGroup implements ToolGroup {
         end = resolve;
       }),
       stop: () => {
-        child.kill("SIGTERM");
+        // A job that has ended is left alone: its pid may already belong to
+        // another process, and signalling that one would be a bug of its own.
+        if (job.done || pid === undefined) return;
+        this.shell.terminate(pid);
       },
     };
     // Output lands on the job as it is written, so a running job's output can
