@@ -224,7 +224,11 @@ working where, and the judge takes it into account when dispatching
   This is a setting, not a task for a model: with no retention period set,
   nothing is ever reclaimed.
 - The period is counted from the end the journal recorded, not from the host's
-  start, so a restart in the middle of it reclaims on time. The plain directory
+  start, so a restart in the middle of it reclaims on time. The same holds for a
+  window a restart left resumable: its chain's directory waits out the period
+  from that stop, a resume cancels the reclaim, and a reclaim that fires first
+  ends the chain's resumability, so the next input opens a new chain
+  ([windows.md](windows.md#restart)). The plain directory
   workspace reclaims the chain's directory the same way, by `Workspace.refOf`
   and `Workspace.reclaim`. What it does not reclaim is a persistent directory:
   those live outside the windows' own directories and outlive the chain, the

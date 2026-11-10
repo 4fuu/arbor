@@ -257,6 +257,10 @@ interface ResumableWindow {
   label?: string;
   /** The stop's place in the journal, so the newest chain end wins a shared target. */
   endedAt: number;
+  /** The journal time of the stop, which the retention period is counted from. */
+  stoppedAt: number;
+  /** The chain root whose directory is waiting out the retention period, if it has one. */
+  root?: WindowRef;
 }
 
 /** One input waiting to enter a window, with what it would enter as. */
@@ -1019,12 +1023,23 @@ export class Arbor {
       // then, as a continuation of this window (docs/windows.md#restart).
       if (!(await this.wasMidTurn(event.window)) && openWork.length === 0 && gaps.length === 0) {
         const end = endOf.get(event.window);
-        this.resumable.set(event.window, {
+        const stoppedAt = end?.time ?? this.clock();
+        const waiting: ResumableWindow = {
           window: event.window,
           targets: [...new Set([...event.targets, ...(end?.targets ?? [])])],
           ...(label === "" ? {} : { label }),
           endedAt: end?.seq ?? 0,
+          stoppedAt,
+        };
+        // Its directory waits out the retention period counted from the stop;
+        // a resume cancels the reclaim, and one that fires first ends the
+        // chain's resumability (docs/windows.md#restart,
+        // docs/workspaces.md#lifecycle).
+        const stopped = event.window;
+        waiting.root = await this.reclaimAfter(stopped, stoppedAt, () => {
+          this.resumable.delete(stopped);
         });
+        this.resumable.set(event.window, waiting);
         continue;
       }
       await this.continueWindow(event.window, {
@@ -1252,6 +1267,9 @@ export class Arbor {
     const waiting = this.resumableFor(task.targets);
     if (waiting !== undefined) {
       this.resumable.delete(waiting.window);
+      // The chain is live again, so its directory is not going to be reclaimed
+      // while this continuation works in it (docs/windows.md#restart).
+      if (waiting.root !== undefined) this.cancelReclaim(waiting.root);
       let record: WindowRecord;
       try {
         record = await this.continueWindow(waiting.window, {
@@ -1264,8 +1282,12 @@ export class Arbor {
           task: task.ref,
         });
       } catch (error) {
-        // A hook refused the continuation, so the chain is still waiting for one.
-        this.resumable.set(waiting.window, waiting);
+        // A hook refused the continuation, so the chain is still waiting for
+        // one and its directory still waits out its own deadline.
+        const root = await this.reclaimAfter(waiting.window, waiting.stoppedAt, () => {
+          this.resumable.delete(waiting.window);
+        });
+        this.resumable.set(waiting.window, root === undefined ? waiting : { ...waiting, root });
         throw error;
       }
       await this.insert(record, task);
@@ -2296,6 +2318,50 @@ export class Arbor {
   }
 
   /**
+   * Arm the reclaim of a chain's directory once its retention period has
+   * passed. The period is counted from the journal's own end, not this host's
+   * start, so a restart in the middle of it reclaims on time
+   * (docs/workspaces.md#lifecycle). Answers the chain root the deadline was kept
+   * for, when one could be armed, and calls `onReclaim` when it fires.
+   */
+  private async reclaimAfter(
+    window: WindowRef,
+    endedAt: number,
+    onReclaim?: () => void,
+  ): Promise<WindowRef | undefined> {
+    const workspace = this.options.workspace;
+    const retentionMs = this.retentionMs();
+    if (workspace === undefined || retentionMs === undefined) return undefined;
+    const reclaims = workspace.reclaimable === undefined ? true : await workspace.reclaimable();
+    if (!reclaims) return undefined;
+    const root = await this.chainRoot(window);
+    if (this.retentionTimers.has(root)) return root;
+    const ref = await workspace.refOf(root);
+    // A chain no window ever touched files in has no directory to reclaim.
+    if (ref === undefined) return root;
+    this.retentionTimers.set(
+      root,
+      this.timers.setTimeout(() => {
+        this.retentionTimers.delete(root);
+        onReclaim?.();
+        void workspace.reclaim(ref).catch(() => {});
+      }, Math.max(0, endedAt + retentionMs - this.clock())),
+    );
+    return root;
+  }
+
+  /**
+   * A chain is live again, so its directory is not going to be reclaimed by a
+   * deadline that was waiting for it (docs/windows.md#restart).
+   */
+  private cancelReclaim(root: WindowRef): void {
+    const timer = this.retentionTimers.get(root);
+    if (timer === undefined) return;
+    this.timers.clearTimeout(timer);
+    this.retentionTimers.delete(root);
+  }
+
+  /**
    * A chain's last window ended: its directory stays where it is for the
    * retention period, and the host reclaims it once that has passed. A restart
    * keeps the deadline, because the end it is counted from is in the journal
@@ -2308,23 +2374,7 @@ export class Arbor {
    * a deadline for it: nothing is reclaimed and no failure is recorded.
    */
   private async retire(window: WindowRef, endedAt: number): Promise<void> {
-    const workspace = this.options.workspace;
-    const retentionMs = this.retentionMs();
-    if (workspace === undefined || retentionMs === undefined) return;
-    const reclaims = workspace.reclaimable === undefined ? true : await workspace.reclaimable();
-    if (!reclaims) return;
-    const root = await this.chainRoot(window);
-    if (this.retentionTimers.has(root)) return;
-    const ref = await workspace.refOf(root);
-    // A chain no window ever touched files in has no directory to reclaim.
-    if (ref === undefined) return;
-    this.retentionTimers.set(
-      root,
-      this.timers.setTimeout(() => {
-        this.retentionTimers.delete(root);
-        void workspace.reclaim(ref).catch(() => {});
-      }, Math.max(0, endedAt + retentionMs - this.clock())),
-    );
+    await this.reclaimAfter(window, endedAt);
   }
 
   /** A window that never reached a model still ends, and its work goes on. */

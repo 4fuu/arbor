@@ -280,7 +280,12 @@ effects already made are not made again. A window that was idle when it was
 stopped is not continued at `start`: its chain stays resumable, and the first
 task the dispatcher routes to its targets opens the continuation then, as a
 continuation of that window - the same `window_start` link, the same working
-directory, and the reason a restart records. A window another window's
+directory, and the reason a restart records. A resumable chain keeps its
+directory for `workspaces.retentionMs` counted from its stop; resuming it
+cancels that reclaim, and a reclaim that fires first ends its resumability, so
+the next input opens a new chain. With no retention period set, nothing is
+reclaimed and the chain stays resumable
+([workspaces.md](workspaces.md#lifecycle)). A window another window's
 `window_start` already names as the one it continues is not unfinished: only
 the chain's live end is continued, so recovery opens at most one continuation
 per chain end, however many restarts the chain has been through and whether

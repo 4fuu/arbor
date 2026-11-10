@@ -1005,6 +1005,98 @@ describe("one window end to end", () => {
     assert.equal(started.items[1]?.window, "c2");
   });
 
+  it("keeps a resumable chain's directory until its deadline, and a resume cancels the reclaim", async () => {
+    const retentionMs = 60_000;
+    const { arbor, journal, backend, root } = await host({ retentionMs });
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "第一轮" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+    assert.ok(existsSync(join(root, "ws1")));
+    // The deadline is counted from the stop the journal recorded, not from the
+    // host clock the test drives.
+    const stoppedAt = (await journal.list({ kinds: ["window_end"], limit: 1 })).items[0]?.time ?? 0;
+
+    const timers = new ManualTimers();
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers,
+      now: () => stoppedAt,
+      workspace: new DirectoryWorkspace({ root }),
+      settings: { workspaces: { retentionMs } },
+    });
+    backend.attach(reopened.windowControl());
+    await reopened.start();
+    // The idle chain's directory waits out the period counted from its stop.
+    assert.deepEqual(timers.delays(), [retentionMs], "the idle chain's directory waits out its deadline");
+
+    backend.script([
+      { tool: "read", args: { path: "notes.txt" } },
+      { text: "读到了" },
+    ]);
+    const routed = await reopened.dispatch(task);
+    await backend.finished();
+    assert.equal(routed.window, "c2");
+    assert.equal(backend.opened[1]?.continuation?.previous, "c1");
+    assert.ok(!timers.delays().includes(retentionMs), "the resume cancelled the reclaim");
+    const read = await journal.list({ window: "c2", kinds: ["tool_result"] });
+    assert.ok(read.items[0]?.body?.includes("work in progress"));
+    assert.equal(await readFile(join(root, "ws1", "notes.txt"), "utf8"), "work in progress");
+  });
+
+  it("stops a chain being resumable when its deadline reclaims the directory first", async () => {
+    const retentionMs = 60_000;
+    const { arbor, journal, backend, root } = await host({ retentionMs });
+    backend.script([
+      { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
+      { text: "第一轮" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+    const stoppedAt = (await journal.list({ kinds: ["window_end"], limit: 1 })).items[0]?.time ?? 0;
+
+    const timers = new ManualTimers();
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers,
+      now: () => stoppedAt,
+      workspace: new DirectoryWorkspace({ root }),
+      settings: { workspaces: { retentionMs } },
+    });
+    backend.attach(reopened.windowControl());
+    await reopened.start();
+    assert.deepEqual(timers.delays(), [retentionMs]);
+
+    // The deadline fires before any input: the directory goes, and the chain is
+    // no longer resumable.
+    timers.fireAll();
+    for (let attempt = 0; attempt < 500 && existsSync(join(root, "ws1")); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(existsSync(join(root, "ws1")), false);
+
+    backend.script([
+      { tool: "write", args: { path: "fresh.txt", text: "new chain" } },
+      { text: "新链" },
+    ]);
+    const routed = await reopened.dispatch(task);
+    await backend.finished();
+    assert.equal(routed.window, "c2");
+    assert.equal(backend.opened[1]?.continuation, undefined, "a reclaimed chain is not resumed");
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2);
+    const opened = started.items[1];
+    assert.ok(opened !== undefined);
+    assert.equal(readString(opened, "continuation"), "");
+    assert.equal(await readFile(join(root, "ws2", "fresh.txt"), "utf8"), "new chain");
+  });
+
   it("runs a module call from a script through the same service call", async () => {
     const { arbor, journal, backend } = await host();
     await journal.append({ kind: "input", window: "c1", body: "部署上线流程已确认", targets: ["qq:group:1"] });
