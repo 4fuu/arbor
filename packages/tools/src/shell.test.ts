@@ -68,7 +68,7 @@ async function until<T>(probe: () => Promise<T | undefined> | T | undefined, ms 
   for (;;) {
     const value = await probe();
     if (value !== undefined) return value;
-    if (Date.now() > deadline) throw new Error("timed out waiting for the stop to land");
+    if (Date.now() > deadline) throw new Error("timed out waiting for the condition to hold");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
@@ -177,21 +177,32 @@ describe("the shell tool on this host", () => {
     const root = await tempDir();
     const shell = shellFor();
     const group = new FileToolGroup(servicesFor(root), shell);
+    // PowerShell's own start-up can outlast a short wait window on a cold
+    // runner, so the job's first output is waited for rather than read once at
+    // the moment the wait ends. The command sleeps far past the read, so the
+    // job is still running when its output arrives.
     const command = process.platform === "win32"
-      ? "Write-Output begun; Start-Sleep -Seconds 5; Write-Output done"
-      : "echo begun; sleep 5; echo done";
-    const started = await call(group, shell.run, { command, timeout: 300 });
+      ? "Write-Output begun; Start-Sleep -Seconds 60; Write-Output done"
+      : "echo begun; sleep 60; echo done";
+    const started = await call(group, shell.run, { command, timeout: 500 });
     assert.equal(started.ok, true, started.content);
     const job = /b\d+/.exec(started.content)?.[0] ?? "";
     assert.notEqual(job, "", `the result names a job: ${started.content}`);
-    const running = await call(group, shell.output, { job });
-    assert.equal(running.ok, true, running.content);
-    assert.ok(running.content.includes("begun"));
-    const stopped = await call(group, shell.stop, { job });
-    assert.ok(stopped.ok);
-    const missing = await call(group, shell.output, { job: "b999" });
-    assert.equal(missing.ok, false);
-    assert.equal(missing.error?.rule, `${shell.run}.job.not_found`);
+    try {
+      const running = await until(async () => {
+        const result = await call(group, shell.output, { job });
+        return result.content.includes("begun") ? result : undefined;
+      }, 15000);
+      assert.equal(running.ok, true, running.content);
+      assert.ok(running.content.includes("仍在运行"), running.content);
+      const stopped = await call(group, shell.stop, { job });
+      assert.ok(stopped.ok);
+      const missing = await call(group, shell.output, { job: "b999" });
+      assert.equal(missing.ok, false);
+      assert.equal(missing.error?.rule, `${shell.run}.job.not_found`);
+    } finally {
+      await call(group, shell.stop, { job });
+    }
   });
 
   it("never signals a job that already ended", async () => {
