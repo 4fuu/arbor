@@ -1,6 +1,6 @@
 {
   "name": "@4fu/arbor-tools",
-  "version": "2026.1109.1",
+  "version": "2026.1110.0",
   "private": true,
   "type": "module",
   "description": "The entry points: direct tools, code mode modules and the one tool catalog that routes both through the service layer.",
