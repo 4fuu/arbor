@@ -164,6 +164,24 @@ const DEFAULT_HANDOFF_FLOOR = 0.6;
  */
 const MAX_TASK_LOOKUP = MAX_PAGE_LIMIT;
 
+/**
+ * The journal events that mean a window had turn work after its last
+ * `run_ended` - or, for one that never ended a run, that a turn or an input
+ * reached it. A restart reads them to tell a run it cut short from a window
+ * that was only idle (docs/windows.md#restart).
+ */
+const TURN_EVENTS = new Set([
+  "tool_call",
+  "tool_result",
+  "assistant",
+  "usage",
+  "delivery",
+  "reminder",
+  "send",
+  "board_line",
+  "board_expect",
+]);
+
 /** The timers the host needs, so a test drives them by hand. */
 export interface Timers {
   setTimeout(handler: () => void, ms: number): Timer;
@@ -226,6 +244,19 @@ export interface WindowRecord {
   idleTimer?: Timer;
   protectionUntil: number | null;
   finalReminderSent: boolean;
+}
+
+/**
+ * A chain end a restart found stopped while its window was idle and had nothing
+ * open. Its continuation opens when the next task is routed to its targets, not
+ * at `start` (docs/windows.md#restart).
+ */
+interface ResumableWindow {
+  window: WindowRef;
+  targets: readonly Target[];
+  label?: string;
+  /** The stop's place in the journal, so the newest chain end wins a shared target. */
+  endedAt: number;
 }
 
 /** One input waiting to enter a window, with what it would enter as. */
@@ -314,7 +345,8 @@ export class Arbor {
   private readonly timers: Timers;
   /** The service layer the tools call. One implementation of every operation. */
   readonly services: ToolServices;
-  private started = false;
+  /** The `start` in progress, so a task that arrives during it waits for it. */
+  private starting?: Promise<void>;
   /** True once `close` released this host, so nothing new opens a session. */
   private closed = false;
   /** The model a window gets when settings map no tier. */
@@ -322,7 +354,13 @@ export class Arbor {
   /** The judge. Jev by default; a deployment replaces it. */
   private readonly judge: Judge | undefined;
   /** New windows the backend's rate limits are holding back. */
-  private readonly held: { task: TaskInput; tier?: string }[] = [];
+  private readonly held: { task: Task; tier?: string }[] = [];
+  /**
+   * Chain ends a restart found stopped while their window was idle with nothing
+   * open, by the window that was stopped. The next task routed to one of its
+   * targets opens its continuation (docs/windows.md#restart).
+   */
+  private readonly resumable = new Map<WindowRef, ResumableWindow>();
   private retryTimer?: Timer;
   /** Every judge decision, so a threshold is tuned from real decisions. */
   private readonly decisions: DecisionRecord[] = [];
@@ -922,14 +960,17 @@ export class Arbor {
   }
 
   /**
-   * Rebuild the host from the journal: continue every window that was running
-   * when the host stopped, and every window a `close` stopped, the way the hard
-   * limit does (docs/windows.md#restart). Effects already made are not made
-   * again.
+   * Rebuild the host from the journal: continue every window that was mid-turn
+   * or left unfinished work when it stopped, the way the hard limit does, and
+   * leave an idle window for the first task routed to its targets
+   * (docs/windows.md#restart). Effects already made are not made again.
    */
-  async start(): Promise<void> {
-    if (this.started) return;
-    this.started = true;
+  start(): Promise<void> {
+    this.starting ??= this.startHost();
+    return this.starting;
+  }
+
+  private async startHost(): Promise<void> {
     this.refs = await RefAllocator.from(this.journal);
     // A host restart starts every installed service again, the way the framework
     // guarantees (docs/environment.md#services).
@@ -948,6 +989,10 @@ export class Arbor {
         .filter((event) => event.window !== null && readString(event, "reason") !== "host_restart")
         .map((event) => event.window as WindowRef),
     );
+    const endOf = new Map<WindowRef, Event>();
+    for (const event of ended.items) {
+      if (event.window !== null) endOf.set(event.window, event);
+    }
     // A window another window already continues is not unfinished: the
     // continuation is the chain's live end, and continuing the window it
     // continues as well would open two windows for one piece of work. A
@@ -960,12 +1005,28 @@ export class Arbor {
       const previous = continuedWindow(event.body);
       if (previous !== undefined) continued.add(previous);
     }
+    this.resumable.clear();
     for (const event of started.items) {
       if (event.window === null || finished.has(event.window) || continued.has(event.window)) continue;
       // What the embedding said this window serves rides on its own start
       // event, so a restart hands it to the continuation it opens
       // (docs/windows.md#what-a-window-serves).
       const label = readString(event, "label");
+      const openWork = await this.refreshOpenWork(event.window);
+      const gaps = await this.journal.targetsBehind(event.window);
+      // An idle window a `close` stopped is not continued here: its chain waits
+      // for the first task routed to its targets, which opens the continuation
+      // then, as a continuation of this window (docs/windows.md#restart).
+      if (!(await this.wasMidTurn(event.window)) && openWork.length === 0 && gaps.length === 0) {
+        const end = endOf.get(event.window);
+        this.resumable.set(event.window, {
+          window: event.window,
+          targets: [...new Set([...event.targets, ...(end?.targets ?? [])])],
+          ...(label === "" ? {} : { label }),
+          endedAt: end?.seq ?? 0,
+        });
+        continue;
+      }
       await this.continueWindow(event.window, {
         midTaskReset: true,
         ...(label === "" ? {} : { label }),
@@ -1042,6 +1103,10 @@ export class Arbor {
 
   /** Open a window for one task, at a model tier. */
   async open(task: TaskInput & { ref?: TaskRef }, tier?: string): Promise<WindowRecord> {
+    // A window opened while `start` is rebuilding the host waits for it, so it
+    // is built over the recovered state and not a half-built one
+    // (docs/windows.md#restart).
+    await this.starting;
     await this.load();
     // The tools a backend or a plugin declares may have moved since the last
     // window opened: read them again before this window's prefix and its request
@@ -1100,6 +1165,11 @@ export class Arbor {
    * judge that may be unreachable.
    */
   async dispatch(task: TaskInput): Promise<DispatchResult> {
+    // A task that arrives while `start` is rebuilding the host waits for it, so
+    // it is routed against the recovered windows - and the chains waiting for
+    // their next task - and nothing is lost in the half-built view
+    // (docs/windows.md#restart).
+    await this.starting;
     return this.dispatcher.dispatch(task);
   }
 
@@ -1167,12 +1237,40 @@ export class Arbor {
   }
 
   /**
-   * Open a window for a task, at a tier. There is no cap on windows: while the
-   * backend reports rate limits the task waits in the queue, ordered by priority
-   * and age, and is dispatched again when the limit clears
-   * (docs/dispatch.md#backpressure).
+   * Open a window for a task, at a tier. A task whose target reaches a chain a
+   * `close` stopped while it was idle opens that chain's continuation instead,
+   * and goes in as its first inserted input; otherwise this opens a new chain.
+   * There is no cap on windows: while the backend reports rate limits the task
+   * waits in the queue, ordered by priority and age, and is dispatched again
+   * when the limit clears (docs/dispatch.md#backpressure).
    */
-  private async openWindow(task: TaskInput, tier?: string): Promise<WindowRecord | null> {
+  private async openWindow(task: Task, tier?: string): Promise<WindowRecord | null> {
+    // A chain a `close` stopped while it was idle is resumed by the first task
+    // routed to its targets, not by `start`: opening its continuation now is
+    // what an already-open idle window would have been
+    // (docs/windows.md#restart).
+    const waiting = this.resumableFor(task.targets);
+    if (waiting !== undefined) {
+      this.resumable.delete(waiting.window);
+      let record: WindowRecord;
+      try {
+        record = await this.continueWindow(waiting.window, {
+          targets: waiting.targets,
+          ...(waiting.label === undefined ? {} : { label: waiting.label }),
+          ...(tier === undefined ? {} : { tier }),
+          // The host ended this chain at a restart, so its continuation is told
+          // what a restarted window is told (docs/windows.md#restart).
+          midTaskReset: true,
+          task: task.ref,
+        });
+      } catch (error) {
+        // A hook refused the continuation, so the chain is still waiting for one.
+        this.resumable.set(waiting.window, waiting);
+        throw error;
+      }
+      await this.insert(record, task);
+      return record;
+    }
     const rateLimit = await this.backend.rateLimits?.();
     const plan = await this.scheduler.admission({
       running: this.live().length,
@@ -1188,6 +1286,27 @@ export class Arbor {
     return this.open(task, tier);
   }
 
+  /**
+   * The newest chain end a task's targets reach, when one is waiting for its
+   * continuation. Windows are numbered in the one global order, so the highest
+   * window is the one whose `window_end` came last (docs/windows.md#restart).
+   */
+  private resumableFor(targets: readonly string[]): ResumableWindow | undefined {
+    let found: ResumableWindow | undefined;
+    for (const candidate of this.resumable.values()) {
+      if (!candidate.targets.some((target) => targets.includes(target))) continue;
+      if (found !== undefined) {
+        const newer =
+          candidate.endedAt > found.endedAt ||
+          (candidate.endedAt === found.endedAt &&
+            Number(candidate.window.slice(1)) > Number(found.window.slice(1)));
+        if (!newer) continue;
+      }
+      found = candidate;
+    }
+    return found;
+  }
+
   /** Ask the backend about its rate limits again, and open what it lets open. */
   private armRetry(afterMs?: number): void {
     if (this.retryTimer !== undefined) return;
@@ -1200,7 +1319,7 @@ export class Arbor {
   /** Open the held windows the backend will take now, in the order they came. */
   private async drainHeld(): Promise<void> {
     while (this.held.length > 0) {
-      const next = this.held[0] as { task: TaskInput; tier?: string };
+      const next = this.held[0] as { task: Task; tier?: string };
       const rateLimit = await this.backend.rateLimits?.();
       const plan = await this.scheduler.admission({
         running: this.live().length,
@@ -1522,6 +1641,7 @@ export class Arbor {
     for (const timer of this.retentionTimers.values()) this.timers.clearTimeout(timer);
     this.retentionTimers.clear();
     this.held.length = 0;
+    this.resumable.clear();
     this.closed = true;
     this.scheduler.close?.();
     await this.unsubscribePushSources();
@@ -2015,9 +2135,11 @@ export class Arbor {
       // stays down does not chain windows for ever.
       (reason === "failed" && record.interrupted !== true);
     // The chain's last window ended: its directory waits out the retention
-    // period and is then reclaimed (docs/workspaces.md#lifecycle).
+    // period and is then reclaimed (docs/workspaces.md#lifecycle). A `close`
+    // stop is not the chain's end: the window may still be resumed by the next
+    // input, so its directory is not reclaimed (docs/windows.md#restart).
     if (!continues) {
-      await this.retire(record.window, this.clock());
+      if (reason !== "host_restart") await this.retire(record.window, this.clock());
       return;
     }
     await this.continueWindow(record.window, {
@@ -2047,10 +2169,16 @@ export class Arbor {
       tier?: string;
       /** What the embedding says this chain serves; a continuation keeps it. */
       label?: string;
+      /**
+       * The task a routed input opened this continuation for, so the window
+       * names that task's record instead of a synthetic one
+       * (docs/windows.md#restart).
+       */
+      task?: TaskRef;
     },
   ): Promise<WindowRecord> {
     const window = this.refs.nextWindow();
-    const taskRef = this.refs.nextTask();
+    const taskRef = options.task ?? this.refs.nextTask();
     const reason = textOf(this.table, "continuation.reason", { window: previous });
     // The tools a backend or a plugin declares may have moved since this chain's
     // last window opened: read them again before the continuation's prefix and
@@ -2421,6 +2549,27 @@ export class Arbor {
     const mount = await workspace.mount(ref);
     if (record !== undefined) record.mount = mount;
     return mount;
+  }
+
+  /**
+   * Whether a window had turn work after its last `run_ended`, or a turn or an
+   * input when it never ended one. A run that a `close` cut short leaves its
+   * events and no `run_ended`; an idle window's last turn ended, so the events
+   * after its `run_ended` are none (docs/windows.md#restart).
+   */
+  private async wasMidTurn(window: WindowRef): Promise<boolean> {
+    const first = await this.journal.list({ window, limit: MAX_PAGE_LIMIT });
+    // A long window needs its last page, not its first: the run that just
+    // ended, or the work that has not, is at the end of the record.
+    const events =
+      first.total > first.items.length
+        ? (await this.journal.list({ window, limit: MAX_PAGE_LIMIT, offset: first.total - MAX_PAGE_LIMIT })).items
+        : first.items;
+    let endedAt = -1;
+    for (let index = 0; index < events.length; index += 1) {
+      if (events[index]?.kind === "run_ended") endedAt = index;
+    }
+    return events.slice(endedAt + 1).some((event) => TURN_EVENTS.has(event.kind));
   }
 
   /**

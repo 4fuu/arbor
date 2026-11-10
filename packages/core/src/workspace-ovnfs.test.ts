@@ -136,6 +136,36 @@ describe("the ovnfs workspace through the host", () => {
     assert.ok((continuation.firstInput ?? "").includes("c1-app"), "the continuation's first input listed the checkout");
   });
 
+  it("continues an idle window at start while its checkout is unapplied", async () => {
+    const { arbor, journal, backend, workspace } = await host();
+    backend.script([
+      { tool: "code_exec", args: { script: "return await workspace.checkout({ name: 'c1-app', dir: 'proj' })" } },
+      { text: "待合回" },
+    ]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+
+    // The window was idle at the close, but its checkout holds changes not yet
+    // applied: the next start continues it without waiting for an input.
+    const reopened = new Arbor({
+      journal,
+      backend,
+      timers: new ManualTimers(),
+      now: () => 1_700_000_000_000,
+      workspace,
+      judge: quietJudge(),
+    });
+    backend.attach(reopened.windowControl());
+    backend.script([{ text: "继续" }]);
+    await reopened.start();
+    await opened(backend, 2);
+    const continuation = backend.opened[1];
+    if (continuation === undefined) throw new Error("a continuation window opened");
+    assert.equal(continuation.continuation?.previous, "c1");
+    assert.ok((continuation.firstInput ?? "").includes("c1-app"));
+  });
+
   it("names an unapplied checkout in the reminder and on the board", async () => {
     const { arbor, journal, backend } = await host();
     backend.script([

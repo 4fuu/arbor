@@ -21,6 +21,7 @@ import type {
   Workspace,
   WorkspaceRef,
 } from "@4fu/arbor-interfaces";
+import type { OpenWorkItem } from "@4fu/arbor-interfaces";
 import { Arbor } from "./host.ts";
 import { readString } from "./board.ts";
 import { RefAllocator } from "./refs.ts";
@@ -182,6 +183,57 @@ class ForeignWorkspace extends DirectoryWorkspace {
   override async refOf(window: WindowRef): Promise<WorkspaceRef | undefined> {
     this.asked.push(window);
     return super.refOf(window);
+  }
+}
+
+/**
+ * A workspace that always reports an unapplied checkout, so a window that was
+ * idle at the close still has unfinished work for the next start to continue
+ * (docs/windows.md#restart).
+ */
+class OpenWorkWorkspace extends DirectoryWorkspace {
+  async openWork(): Promise<readonly OpenWorkItem[]> {
+    return [{ name: "c1-app", detail: "未合回" }];
+  }
+}
+
+/**
+ * A tool whose call is still running when the host closes, so the window was
+ * mid-turn and the restart has to continue it (docs/windows.md#restart).
+ */
+class GateGroup implements ToolGroup {
+  readonly id = "gate";
+  readonly entered: Promise<void>;
+  private readonly gate: Promise<void>;
+  private markEntered: () => void = () => {};
+  private releaseGate: () => void = () => {};
+
+  constructor() {
+    this.entered = new Promise((resolve) => {
+      this.markEntered = resolve;
+    });
+    this.gate = new Promise((resolve) => {
+      this.releaseGate = resolve;
+    });
+  }
+
+  tools(): readonly DirectToolSpec[] {
+    return [{ name: "gate", description: "等待测试放行。", parameters: {} }];
+  }
+
+  modules(): readonly [] {
+    return [];
+  }
+
+  async call(request: ToolCall): Promise<ToolResult> {
+    this.markEntered();
+    await this.gate;
+    return { callId: request.callId, ok: true, content: "放行" };
+  }
+
+  /** Let the call finish, after the host has stopped the window. */
+  release(): void {
+    this.releaseGate();
   }
 }
 
@@ -681,9 +733,8 @@ describe("one window end to end", () => {
     assert.equal(started.items.length, 2);
     assert.ok(started.items.every((event) => readString(event, "label") === "dsh-session-7"));
 
-    // A restart rebuilds the window from the journal, and the label the journal
-    // recorded reaches the continuation's own prefix.
-    backend.script([{ text: "第三轮" }]);
+    // A restart leaves the idle window for the next input, and the label the
+    // journal recorded reaches the continuation that input opens.
     const reopened = new Arbor({
       journal,
       backend,
@@ -691,23 +742,33 @@ describe("one window end to end", () => {
       now: () => 1700000000000,
       plugins: [{ name: "embedding", promptSection: section }],
     });
+    backend.attach(reopened.windowControl());
     await reopened.start();
+    assert.equal(backend.opened.length, 2, "an idle window is not continued at start");
+    backend.script([{ text: "第三轮" }]);
+    await reopened.dispatch(task);
     await backend.finished();
     assert.ok(
       (backend.opened[2]?.prompt.system ?? "").includes("本窗口服务于 dsh-session-7。"),
       "the restart hands the label on",
     );
+    assert.equal(seen.at(-1), "dsh-session-7", "the continuation keeps the chain's label");
   });
 
   it("says there is no handoff and gives the order to recover", async () => {
     const { arbor, journal, backend } = await host();
-    backend.script([{ text: "第一轮" }, { text: "第二轮" }]);
+    backend.script([{ text: "第一轮" }]);
     await arbor.open(task);
     await backend.finished();
-    // The host stopped without ending the window, so the restart continues it
-    // with no handoff to carry.
+    await arbor.close();
+    // The host stopped without ending the window, so the continuation the next
+    // input opens has no handoff to carry.
     const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(reopened.windowControl());
     await reopened.start();
+    assert.equal(backend.opened.length, 1, "an idle window is not continued at start");
+    backend.script([{ text: "第二轮" }]);
+    await reopened.dispatch(task);
     await backend.finished();
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.previous === "c1");
@@ -716,7 +777,7 @@ describe("one window end to end", () => {
     assert.ok(opened?.firstInput?.includes("窗口 c1 在任务中途被主机结束"));
   });
 
-  it("stops the windows on close without opening a continuation, and the next start continues the work", async () => {
+  it("stops the windows on close and resumes the chain when an input arrives", async () => {
     const { arbor, journal, backend, root } = await host();
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
@@ -737,9 +798,8 @@ describe("one window end to end", () => {
     assert.equal(JSON.parse(ended.items[0]?.body ?? "{}").reason, "host_restart");
     assert.equal(arbor.live().length, 0);
 
-    // The next start on the same journal continues the stopped window, the way
-    // the restart section describes: in the directory it worked in, which the
-    // window chain in the journal names.
+    // The window was idle at the close, so the start leaves its chain for the
+    // next input rather than opening a continuation by itself.
     const reopened = new Arbor({
       journal,
       backend,
@@ -748,15 +808,26 @@ describe("one window end to end", () => {
       workspace: new DirectoryWorkspace({ root }),
     });
     backend.attach(reopened.windowControl());
+    await reopened.start();
+    assert.equal(backend.opened.length, 1, "an idle window is not continued at start");
+    assert.equal((await journal.list({ kinds: ["window_start"] })).items.length, 1);
+
+    // The input opens exactly one continuation, in the directory the window
+    // worked in, which the window chain in the journal names.
     backend.script([
       { tool: "read", args: { path: "notes.txt" } },
       { text: "读到了" },
     ]);
-    await reopened.start();
+    const routed = await reopened.dispatch(task);
     await backend.finished();
+    assert.equal(routed.window, "c2");
     const continued = await journal.list({ kinds: ["window_start"] });
     assert.equal(continued.items.length, 2);
     assert.equal(continued.items[1]?.window, "c2");
+    const link = continued.items[1];
+    assert.ok(link !== undefined);
+    assert.equal(readString(link, "continuation"), "c1");
+    assert.equal(readString(link, "doing"), textOf(zhTextTable, "continuation.reason", { window: "c1" }));
     const opened = backend.opened[1];
     assert.ok(opened?.continuation?.previous === "c1");
     assert.ok(opened?.continuation?.midTaskReset === true);
@@ -768,14 +839,23 @@ describe("one window end to end", () => {
   });
 
   it("opens one continuation per unfinished window across two restarts", async () => {
-    const { arbor, journal, backend } = await host();
+    const root = await tempDir("arbor-core-");
+    const workspace = new OpenWorkWorkspace({ root });
+    const { arbor, journal, backend } = await host({ root, workspace });
     backend.script([{ text: "第一轮" }]);
     await arbor.open(task);
     await backend.finished();
     await arbor.close();
 
-    // The first restart continues c1 as c2, the way a `close` stop is recovered.
-    const second = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    // The first restart continues c1 as c2, the way a `close` stop is recovered
+    // while the chain still has work open.
+    const second = new Arbor({
+      journal,
+      backend,
+      timers: new ManualTimers(),
+      now: () => 1700000000000,
+      workspace,
+    });
     backend.attach(second.windowControl());
     backend.script([{ text: "第二轮" }]);
     await second.start();
@@ -787,7 +867,13 @@ describe("one window end to end", () => {
     // c2's start already names c1 as the window it continues. Only the chain's
     // live end, c2, is continued: two windows for one piece of work would mean
     // two turns on it (docs/windows.md#restart).
-    const third = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    const third = new Arbor({
+      journal,
+      backend,
+      timers: new ManualTimers(),
+      now: () => 1700000000000,
+      workspace,
+    });
     backend.attach(third.windowControl());
     backend.script([{ text: "第三轮" }]);
     await third.start();
@@ -796,6 +882,127 @@ describe("one window end to end", () => {
     assert.deepEqual(started.items.map((event) => event.window), ["c1", "c2", "c3"]);
     assert.deepEqual(third.live().map((one) => one.window), ["c3"]);
     await third.close();
+  });
+
+  it("leaves an idle window stopped by close for the next input, not for a restart", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+
+    const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(reopened.windowControl());
+    await reopened.start();
+    await settle();
+    assert.equal(backend.opened.length, 1, "an idle window is not continued at start");
+    assert.equal(reopened.live().length, 0);
+    assert.equal((await journal.list({ kinds: ["window_start"] })).items.length, 1);
+
+    // The first task routed to the chain's target opens exactly one
+    // continuation of the stopped window and goes in as its inserted input.
+    backend.script([{ text: "第二轮" }]);
+    const routed = await reopened.dispatch(task);
+    await backend.finished();
+    assert.equal(routed.window, "c2");
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2, "the task opens exactly one continuation");
+    assert.equal(started.items[1]?.window, "c2");
+    const link = started.items[1];
+    assert.ok(link !== undefined);
+    assert.equal(readString(link, "continuation"), "c1");
+    assert.equal(readString(link, "doing"), textOf(zhTextTable, "continuation.reason", { window: "c1" }));
+    const opened = backend.opened[1];
+    assert.ok(opened?.continuation?.previous === "c1");
+    const delivered = await journal.list({ window: "c2", kinds: ["delivery"] });
+    assert.ok(delivered.items[0]?.body?.includes("CI 红了"), "the routed input reached the continuation");
+  });
+
+  it("delivers a task that arrives while the host is starting to the continuation", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+
+    const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(reopened.windowControl());
+    backend.script([{ text: "第二轮" }]);
+    // The task is dispatched before `start` has finished rebuilding the host.
+    const starting = reopened.start();
+    const routed = await reopened.dispatch(task);
+    await starting;
+    await backend.finished();
+    assert.equal(routed.window, "c2");
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2);
+    assert.equal(backend.opened[1]?.continuation?.previous, "c1");
+    const delivered = await journal.list({ window: "c2", kinds: ["delivery"] });
+    assert.ok(delivered.items[0]?.body?.includes("CI 红了"), "the task reached the continuation");
+  });
+
+  it("opens no continuation across restarts with no input, then exactly one for the first task", async () => {
+    const { arbor, journal, backend } = await host();
+    backend.script([{ text: "第一轮" }]);
+    await arbor.open(task);
+    await backend.finished();
+    await arbor.close();
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const reopened = new Arbor({
+        journal,
+        backend,
+        timers: new ManualTimers(),
+        now: () => 1700000000000 + attempt,
+      });
+      backend.attach(reopened.windowControl());
+      await reopened.start();
+      await settle();
+      assert.equal(
+        (await journal.list({ kinds: ["window_start"] })).items.length,
+        1,
+        "no restart continues an idle window",
+      );
+      assert.equal(reopened.live().length, 0);
+      await reopened.close();
+    }
+    assert.equal(backend.opened.length, 1);
+
+    const last = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000100 });
+    backend.attach(last.windowControl());
+    await last.start();
+    backend.script([{ text: "第二轮" }]);
+    await last.dispatch(task);
+    await backend.finished();
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2, "the first task opens one continuation");
+    assert.equal(started.items[1]?.window, "c2");
+    assert.equal(backend.opened[1]?.continuation?.previous, "c1");
+  });
+
+  it("continues a window that was mid-turn at the close", async () => {
+    const gate = new GateGroup();
+    const { arbor, journal, backend } = await host({ groups: [gate] });
+    backend.script([{ tool: "gate", args: {} }, { text: "完成" }]);
+    await arbor.open(task);
+    await gate.entered;
+    // The tool call is recorded and no run has ended, so this close cuts a turn
+    // short and the restart has to continue it.
+    await arbor.close();
+    gate.release();
+    await settle();
+
+    const reopened = new Arbor({ journal, backend, timers: new ManualTimers(), now: () => 1700000000000 });
+    backend.attach(reopened.windowControl());
+    backend.script([{ text: "继续" }]);
+    await reopened.start();
+    await backend.finished();
+    assert.equal(backend.opened.length, 2);
+    assert.equal(backend.opened[1]?.continuation?.previous, "c1");
+    assert.ok(backend.opened[1]?.continuation?.midTaskReset === true);
+    const started = await journal.list({ kinds: ["window_start"] });
+    assert.equal(started.items.length, 2);
+    assert.equal(started.items[1]?.window, "c2");
   });
 
   it("runs a module call from a script through the same service call", async () => {
@@ -1195,22 +1402,24 @@ describe("one window end to end", () => {
     assert.equal(JSON.parse(last?.body ?? "{}").reason, "idle_timeout");
   });
 
-  it("rebuilds a running window from the journal after a restart", async () => {
-    const { arbor, journal, backend, root } = await host();
+  it("rebuilds an unfinished window from the journal after a restart", async () => {
+    const root = await tempDir("arbor-core-");
+    const { arbor, journal, backend } = await host({ root, workspace: new OpenWorkWorkspace({ root }) });
     backend.script([
       { tool: "write", args: { path: "notes.txt", text: "work in progress" } },
       { text: "第一轮" },
     ]);
     const record = await arbor.open(task);
     await backend.finished();
-    // The host stopped without ending the window: only window_start is there.
+    // The host stopped without ending the window: only window_start is there,
+    // and the workspace reports the checkout it left unapplied.
     const timers = new ManualTimers();
     const reopened = new Arbor({
       journal,
       backend,
       timers,
       now: () => 1700000000000,
-      workspace: new DirectoryWorkspace({ root }),
+      workspace: new OpenWorkWorkspace({ root }),
     });
     // A restart is a new host, so the backend takes its control, the way pi does.
     backend.attach(reopened.windowControl());

@@ -71,8 +71,10 @@ process by then.
    ([dispatch.md](dispatch.md#insertion-timing)).
 5. **End.** The idle time runs out, the model ends the window, or the window
    reaches its hard limit. An ended window is never reopened; work goes on in
-   a new window. A `close()` is not an end of that kind: it stops the window and
-   the next `start()` continues it ([restart](#restart)).
+   a new window. A `close()` is not an end of that kind: it stops the window,
+   and a window that was mid-turn or had unfinished work is continued by the
+   next `start()`, while one that was idle waits for the next input routed to
+   its targets to open its continuation ([restart](#restart)).
 
 ## Prompt layout
 
@@ -268,15 +270,21 @@ The host's own timers - a window's idle end, a chain's retention reclaim, a
 held window's retry - do not keep the process alive: how long the process runs
 is the embedder's to decide, through its channels or its own lifetime. A
 process that ends without `close()` loses nothing the journal does not hold;
-the next host's `start()` continues what was running.
+the next host's `start()` continues what was running and what had unfinished
+work, and leaves an idle window for the next input that routes to it.
 
 A host restart is a new host over the same journal. Its `start()` continues
-every window that was still running and every window a `close` stopped, the way
-the hard limit does; effects already made are not made again. A window another
-window's `window_start` already names as the one it continues is not
-unfinished: only the chain's live end is continued, so recovery opens at most
-one continuation per unfinished window, however many restarts the chain has
-been through. A continued window
+only a window that was mid-turn or has unfinished work - an unmerged checkout,
+a target with events the window has not seen - the way the hard limit does;
+effects already made are not made again. A window that was idle when it was
+stopped is not continued at `start`: its chain stays resumable, and the first
+task the dispatcher routes to its targets opens the continuation then, as a
+continuation of that window - the same `window_start` link, the same working
+directory, and the reason a restart records. A window another window's
+`window_start` already names as the one it continues is not unfinished: only
+the chain's live end is continued, so recovery opens at most one continuation
+per chain end, however many restarts the chain has been through and whether
+that continuation opens at `start` or with that first task. A continued window
 works in the directory its predecessor worked in, which the window chain in the
 journal names ([workspaces.md](workspaces.md#what-the-framework-guarantees)); a
 window that never touched files has none, and its continuation starts a fresh
